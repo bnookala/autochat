@@ -1,0 +1,36 @@
+{
+  "name": "lolchat",
+  "version": "0.1.0",
+  "description": "Ephemeral, serverless terminal chat rooms for people whose Copilot CLI is on autopilot",
+  "type": "module",
+  "bin": {
+    "lolchat": "bin/lolchat.js"
+  },
+  "files": [
+    "bin",
+    "src"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "keywords": [
+    "copilot",
+    "autopilot",
+    "chat",
+    "p2p",
+    "hyperswarm",
+    "terminal"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "b4a": "^1.9.0",
+    "hypercore-crypto": "^3.7.0",
+    "hyperswarm": "^4.17.2"
+  },
+  "devDependencies": {
+    "hyperdht": "^6.34.1"
+  }
+}
