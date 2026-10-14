@@ -8,9 +8,8 @@ export const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const shq = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'"
 const asq = (s) => '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"'
 
-function uiCommand (extra = []) {
+function uiCommand (extra = [], envs = []) {
   // Terminals launched via `open`/AppleScript don't inherit our env, so pass it explicitly.
-  const envs = []
   for (const k of ['LOLCHAT_HOME', 'COPILOT_HOME', 'LOLCHAT_BOOTSTRAP']) {
     if (process.env[k]) envs.push(`${k}=${process.env[k]}`)
   }
@@ -43,7 +42,7 @@ function detached (cmd, args, env = process.env) {
 
 export function launchUI ({ cfg, env, roomDisplay }) {
   const method = pickMethod(cfg, env)
-  const cmd = uiCommand()
+  const cmd = uiCommand([], method === 'ghostty' ? ['LOLCHAT_GHOSTTY=1'] : [])
   if (process.env.LOLCHAT_LAUNCH_RECORD) {
     fs.appendFileSync(process.env.LOLCHAT_LAUNCH_RECORD, JSON.stringify({ method, cmd }) + '\n')
     return method
@@ -55,8 +54,9 @@ export function launchUI ({ cfg, env, roomDisplay }) {
       break
     }
     case 'ghostty':
+      // A dedicated instance (-n); the UI quits it on exit (see closeOwnTerminal).
       detached('open', ['-na', 'Ghostty.app', '--args', '--title=lolchat', '--window-width=100', '--window-height=30',
-        '--quit-after-last-window-closed=true', '-e', ...cmd])
+        '--quit-after-last-window-closed=true', '--confirm-close-surface=false', '-e', ...cmd])
       break
     case 'iterm':
       detached('osascript', ['-e', `tell application "iTerm" to create window with default profile command ${asq(cmd.map(shq).join(' '))}`])
@@ -88,6 +88,23 @@ export function notify (title, message) {
     detached('osascript', ['-e', `display notification ${asq(message)} with title ${asq(title)}`])
   } else if (process.platform === 'linux' && has('notify-send')) {
     detached('notify-send', [title, message])
+  }
+}
+
+// macOS Ghostty keeps a `-e` instance alive after the command exits, so the UI
+// quits the dedicated lolchat instance it was launched in (never any other window).
+export function closeOwnTerminal () {
+  if (!process.env.LOLCHAT_GHOSTTY || process.platform !== 'darwin') return
+  let pid = process.ppid
+  for (let i = 0; i < 6 && pid > 1; i++) {
+    const r = spawnSync('ps', ['-o', 'ppid=,command=', '-p', String(pid)], { encoding: 'utf8' })
+    const m = /^\s*(\d+)\s+(.*)$/.exec(r.stdout || '')
+    if (!m) return
+    if (/Ghostty\.app\/Contents\/MacOS\/ghostty/.test(m[2]) && m[2].includes('--title=lolchat') && m[2].includes(BIN)) {
+      detached('sh', ['-c', `sleep 0.4; kill ${pid}`])
+      return
+    }
+    pid = Number(m[1])
   }
 }
 

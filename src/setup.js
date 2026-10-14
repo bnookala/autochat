@@ -24,8 +24,10 @@ export function buildHooksConfig () {
     version: 1,
     hooks: {
       userPromptSubmitted: [entry('userPromptSubmitted')],
-      postToolUse: [entry('postToolUse')],
-      preToolUse: [entry('preToolUse', { matcher: 'ask_user' })],
+      // preToolUse fires before every tool (so the room opens right away, even when the
+      // first tool runs for minutes); postToolUse is only needed to catch task_complete.
+      preToolUse: [entry('preToolUse')],
+      postToolUse: [entry('postToolUse', { matcher: 'task_complete' })],
       notification: [entry('notification', { matcher: 'permission_prompt|elicitation_dialog' })],
       agentStop: [entry('agentStop')],
       sessionEnd: [entry('sessionEnd')]

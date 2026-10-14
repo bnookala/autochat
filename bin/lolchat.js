@@ -192,6 +192,8 @@ async function ui () {
     tui.stop()
     server.close()
     await controller.shutdown()
+    const { closeOwnTerminal } = await import('../src/launcher.js')
+    closeOwnTerminal()
     process.exit(0)
   }
   controller.on('exit', exit)

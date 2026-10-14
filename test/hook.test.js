@@ -111,6 +111,7 @@ test('setup writes fail-safe hooks for the right events', async () => {
   const cfg = buildHooksConfig()
   assert.equal(cfg.version, 1)
   assert.deepEqual(Object.keys(cfg.hooks).sort(), ['agentStop', 'notification', 'postToolUse', 'preToolUse', 'sessionEnd', 'userPromptSubmitted'])
-  assert.equal(cfg.hooks.preToolUse[0].matcher, 'ask_user')
+  assert.equal(cfg.hooks.preToolUse[0].matcher, undefined, 'preToolUse sees every tool so rooms open immediately')
+  assert.equal(cfg.hooks.postToolUse[0].matcher, 'task_complete')
   for (const [, entries] of Object.entries(cfg.hooks)) assert.match(entries[0].bash, /\|\| true$/)
 })
