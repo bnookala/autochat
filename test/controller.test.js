@@ -106,3 +106,32 @@ test('ctrl-c leave opts the session out; a new session brings you back', { timeo
   c.handle(hook('a2', 'activity'))
   assert.equal(c.phase, 'room')
 })
+
+test('late non-autopilot requests and log-only completions pull you out', { timeout: 60000 }, async (t) => {
+  const testnet = await createTestnet(3)
+  t.after(() => testnet.destroy())
+  const c = mk(testnet, 'lc1-ctl-late-' + Math.random().toString(36).slice(2, 12))
+  t.after(() => c.shutdown())
+  c.handle(hook('r1', 'activity'))
+  assert.equal(c.phase, 'room')
+  c.handle(hook('r1', 'request', { mode: 'interactive', request: { title: 'x', message: 'y' } }))
+  assert.equal(c.phase, 'reality', 'request after autopilot ended does not keep you in')
+  assert.equal(c.sessions.size, 0, 'finished sessions are retired')
+})
+
+test('completion logged before the UI tracked the session is not missed', { timeout: 60000 }, async (t) => {
+  const testnet = await createTestnet(3)
+  t.after(() => testnet.destroy())
+  const sid = 'race-' + Math.random().toString(36).slice(2, 8)
+  const dir = path.join(process.env.COPILOT_HOME, 'session-state', sid)
+  fs.mkdirSync(dir, { recursive: true })
+  const trigger = Date.now() - 2000
+  fs.writeFileSync(path.join(dir, 'events.jsonl'),
+    JSON.stringify({ type: 'session.mode_changed', data: { newMode: 'autopilot' }, timestamp: new Date(trigger - 1000).toISOString() }) + '\n' +
+    JSON.stringify({ type: 'session.task_complete', data: { summary: 'raced' }, timestamp: new Date(trigger + 500).toISOString() }) + '\n')
+  const c = new Controller({ identity: ephemeralIdentity(), config: { room: 'lc1-ctl-race-' + sid, idleMs: 400, announce: false }, auto: true, bootstrap: testnet.bootstrap, roomOpts: FAST, focus: () => {}, notify: () => {}, bannerMs: 300 })
+  t.after(() => c.shutdown())
+  c.handle({ ...hook(sid, 'activity'), ts: trigger })
+  assert.equal(c.phase, 'reality')
+  assert.equal(c.banner.summary, 'raced')
+})

@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { EventEmitter } from 'node:events'
 import { sessionEventsPath, sessionDir, cacheDir, ensureDir, isValidSessionId } from './paths.js'
+import { sanitize } from './protocol.js'
 
 const HEAD = 200
 const CHUNK = 1024 * 1024
@@ -120,11 +121,18 @@ export class SessionLog extends EventEmitter {
     this.timer = null
   }
 
-  start () {
-    const res = scanEvents(this.file, 0, (t) => t === 'session.mode_changed', (e) => {
-      if (typeof e.data?.newMode === 'string') this.mode = e.data.newMode
+  /** `since` (ms): also replay lifecycle events logged at or after this time. */
+  start ({ since = Infinity } = {}) {
+    const replay = []
+    const res = scanEvents(this.file, 0, (t) => t === 'session.mode_changed' || (since !== Infinity && WATCHED.has(t)), (e) => {
+      if (e.type === 'session.mode_changed' && typeof e.data?.newMode === 'string') this.mode = e.data.newMode
+      if (since !== Infinity && Date.parse(e.timestamp) >= since) replay.push(e)
     })
     this.offset = res.offset
+    const startMode = this.mode
+    this.mode = null
+    for (const e of replay) this._event(e)
+    this.mode = startMode
     this.timer = setInterval(() => this.poll(), this.pollMs)
     this.timer.unref?.()
     return this
@@ -145,7 +153,7 @@ export class SessionLog extends EventEmitter {
         }
         break
       case 'session.task_complete':
-        this.emit('task-complete', { summary: typeof d.summary === 'string' ? d.summary : '' })
+        this.emit('task-complete', { summary: typeof d.summary === 'string' ? sanitize(d.summary, 2000) : '' })
         break
       case 'abort':
         this.emit('abort', d.reason || 'abort')

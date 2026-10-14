@@ -41,7 +41,25 @@ export function generatePrivateCode () {
 
 export const topicFor = (room) => sha('lolchat:v1:topic:' + room.canonical)
 export const roomKeyFor = (room) => sha('lolchat:v1:roomkey:' + room.canonical)
+// Bound into every signed message so it can't be replayed into another room.
+export const roomTagFor = (room) => sha('lolchat:v1:roomtag:' + roomKeyFor(room).toString('hex')).toString('hex').slice(0, 32)
 export const DIRECTORY_TOPIC = sha('lolchat:v1:directory')
+
+const instClaim = (roomTag, inst) => b4a.from(`lolchat:v1:inst:${roomTag}:${inst.iid}:${inst.createdAt}:${inst.hostId}`)
+
+// A room instance is a claim signed by its host, so nobody can make someone else (or a ghost) host.
+export function signInst (identity, roomTag, inst) {
+  return { ...inst, sig: b4a.toString(hcrypto.sign(instClaim(roomTag, inst), identity.secretKey), 'hex') }
+}
+
+export function verifyInst (roomTag, inst) {
+  if (!inst || typeof inst !== 'object' || typeof inst.sig !== 'string' || !/^[0-9a-f]{128}$/.test(inst.sig)) return false
+  if (typeof inst.hostId !== 'string' || !/^[0-9a-f]{64}$/.test(inst.hostId)) return false
+  if (typeof inst.iid !== 'string' || !/^[0-9a-f]{16}$/.test(inst.iid) || !Number.isFinite(inst.createdAt)) return false
+  try {
+    return hcrypto.verify(instClaim(roomTag, inst), b4a.from(inst.sig, 'hex'), b4a.from(inst.hostId, 'hex'))
+  } catch { return false }
+}
 
 // Both sides of a connection derive the same proof only if they share the room key,
 // without revealing the key (or the private code) to non-members.

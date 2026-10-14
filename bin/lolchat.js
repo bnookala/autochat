@@ -178,10 +178,10 @@ async function ui () {
   } finally {
     if (values.auto) releaseLaunchLock()
   }
+  // Hooks that fire while a UI is starting (or a second launch loses the race) queue events in the spool.
   const drain = () => { for (const m of readSpool()) if (Date.now() - (m.ts || 0) < 60000) controller.handle(m) }
   drain()
-  const drainTimer = setInterval(drain, 500)
-  setTimeout(() => clearInterval(drainTimer), 10000).unref()
+  const drainTimer = setInterval(drain, 1000)
 
   const tui = new TUI({ controller, hooksInstalled: hooksInstalled() })
   let exiting = false

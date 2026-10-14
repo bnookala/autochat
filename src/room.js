@@ -2,13 +2,20 @@ import { EventEmitter } from 'node:events'
 import Hyperswarm from 'hyperswarm'
 import {
   PROTOCOL_VERSION, MAX_LINE, DIRECTORY_TOPIC,
-  topicFor, roomKeyFor, proofFor, seal, open, randomId, sanitize
+  topicFor, roomKeyFor, roomTagFor, proofFor, seal, open, randomId, sanitize, signInst, verifyInst
 } from './protocol.js'
 import { handleFor, colorFor } from './identity.js'
 
 const ACTIVE = new Set(['active', 'needed'])
 const STATUSES = new Set(['active', 'needed', 'away'])
+const TYPES = new Set(['state', 'chat', 'bye'])
 const MAX_SKEW = 5 * 60 * 1000
+const MAX_INST_AGE = 7 * 24 * 60 * 60 * 1000
+const MAX_MEMBERS = 256
+const MAX_SEEN = 5000
+const MAX_TOMBS = 512
+const BUDGET_WINDOW_MS = 10000
+const CONN_LINES_PER_SEC = 200
 
 const isHex = (s, n) => typeof s === 'string' && s.length === n && /^[0-9a-f]+$/.test(s)
 
@@ -18,8 +25,8 @@ export function olderInst (a, b) {
   return a.iid < b.iid
 }
 
-function validInst (i) {
-  return i && isHex(i.iid, 16) && Number.isFinite(i.createdAt) && isHex(i.hostId, 64)
+function capMap (map, max) {
+  while (map.size > max) map.delete(map.keys().next().value)
 }
 
 /**
@@ -49,12 +56,16 @@ export class Room extends EventEmitter {
     this.refreshMs = refreshMs
     this.refreshEveryMs = refreshEveryMs
     this.chatRate = chatRate
+    // Per-sender budget for all signed messages: heartbeats plus chat plus generous slack.
+    this.senderBudget = Math.max(20, Math.ceil(BUDGET_WINDOW_MS / heartbeatMs) * 2 + chatRate.count * 2)
     this.now = now
     this.topic = topicFor(room)
     this.roomKey = roomKeyFor(room)
+    this.roomTag = roomTagFor(room)
     this.inst = null
     this.members = new Map()
     this.tombs = new Map()
+    this.budgets = new Map()
     this.conns = new Set()
     this.seen = new Map()
     this.timers = []
@@ -122,7 +133,7 @@ export class Room extends EventEmitter {
   say (text) {
     const clean = sanitize(text)
     if (!clean || this.status === 'away' || this.left) return false
-    const body = { t: 'chat', v: PROTOCOL_VERSION, from: this.me, tag: this.tag, mid: randomId(), ts: this.now(), text: clean }
+    const body = { t: 'chat', v: PROTOCOL_VERSION, room: this.roomTag, from: this.me, tag: this.tag, mid: randomId(), ts: this.now(), text: clean }
     this._broadcast(body)
     this.emit('chat', { from: this.me, handle: this.identity.handle, color: this.identity.color, text: clean, ts: body.ts, self: true })
     return true
@@ -132,7 +143,7 @@ export class Room extends EventEmitter {
     if (this.left) return
     this.left = true
     if (!this.dead) {
-      this._broadcast({ t: 'bye', v: PROTOCOL_VERSION, from: this.me, tag: this.tag, mid: randomId(), ts: this.now(), reason: String(reason).slice(0, 32) })
+      this._broadcast({ t: 'bye', v: PROTOCOL_VERSION, room: this.roomTag, from: this.me, tag: this.tag, mid: randomId(), ts: this.now(), reason: String(reason).slice(0, 32) })
     }
     for (const t of this.timers) { clearTimeout(t); clearInterval(t) }
     this.timers = []
@@ -153,17 +164,20 @@ export class Room extends EventEmitter {
 
   _createInstIfNone () {
     if (this.inst || this.left) return
-    this.inst = { iid: randomId(8), createdAt: this.now(), hostId: this.me }
+    this.inst = signInst(this.identity, this.roomTag, { iid: randomId(8), createdAt: this.now(), hostId: this.me })
     this.emit('inst', this.inst, { created: true, wasHost: false })
     this._broadcastState()
     this.emit('change')
   }
 
   _considerInst (inst) {
-    if (!validInst(inst)) return
+    if (!inst || typeof inst !== 'object') return
     if (this.inst && (this.inst.iid === inst.iid || !olderInst(inst, this.inst))) return
+    if (!verifyInst(this.roomTag, inst)) return
+    const t = this.now()
+    if (inst.createdAt > t + MAX_SKEW || inst.createdAt < t - MAX_INST_AGE) return
     const wasHost = this.isHost
-    this.inst = { iid: inst.iid, createdAt: inst.createdAt, hostId: inst.hostId }
+    this.inst = { iid: inst.iid, createdAt: inst.createdAt, hostId: inst.hostId, sig: inst.sig }
     this.emit('inst', this.inst, { created: false, wasHost })
     this._broadcastState()
   }
@@ -179,18 +193,18 @@ export class Room extends EventEmitter {
 
   _broadcast (body, except = null) {
     const line = seal(this.identity, body)
-    this.seen.set(body.mid, this.now())
+    this._markSeen(body.mid)
     for (const c of this.conns) if (c.mate && c !== except) this._write(c, line)
     return line
   }
 
   _broadcastState () {
     if (this.left) return
-    this._broadcast({ t: 'state', v: PROTOCOL_VERSION, from: this.me, tag: this.tag, mid: randomId(), ts: this.now(), status: this.status, inst: this.inst })
+    this._broadcast({ t: 'state', v: PROTOCOL_VERSION, room: this.roomTag, from: this.me, tag: this.tag, mid: randomId(), ts: this.now(), status: this.status, inst: this.inst })
   }
 
   _onConnection (conn) {
-    const c = { conn, buf: '', mate: false, remoteKey: null, dir: null }
+    const c = { conn, buf: '', mate: false, remoteKey: null, dir: null, lines: 0, window: 0 }
     this.conns.add(c)
     conn.on('error', () => {})
     conn.on('data', (chunk) => {
@@ -200,6 +214,9 @@ export class Room extends EventEmitter {
       while ((i = c.buf.indexOf('\n')) !== -1) {
         const line = c.buf.slice(0, i)
         c.buf = c.buf.slice(i + 1)
+        const sec = Math.floor(this.now() / 1000)
+        if (sec !== c.window) { c.window = sec; c.lines = 0 }
+        if (++c.lines > CONN_LINES_PER_SEC) { conn.destroy(); return }
         if (line && line.length <= MAX_LINE) this._onLine(c, line)
       }
     })
@@ -243,26 +260,58 @@ export class Room extends EventEmitter {
     this.emit('peers')
   }
 
+  _markSeen (mid) {
+    this.seen.set(mid, this.now())
+    capMap(this.seen, MAX_SEEN)
+  }
+
+  _withinBudget (key) {
+    const t = this.now()
+    const times = (this.budgets.get(key) || []).filter(x => t - x < BUDGET_WINDOW_MS)
+    if (times.length >= this.senderBudget) return false
+    times.push(t)
+    this.budgets.delete(key)
+    this.budgets.set(key, times)
+    capMap(this.budgets, MAX_MEMBERS * 4)
+    return true
+  }
+
+  // Validate everything (room binding, type, membership, rate limits) *before* relaying,
+  // so a hostile member can't use the mesh to amplify junk.
   _onSigned (c, body, line) {
     if (!isHex(body.mid, 16) || this.seen.has(body.mid)) return
-    this.seen.set(body.mid, this.now())
+    this._markSeen(body.mid)
+    if (body.v !== PROTOCOL_VERSION || body.room !== this.roomTag || !TYPES.has(body.t)) return
     if (!Number.isFinite(body.ts) || Math.abs(this.now() - body.ts) > MAX_SKEW) return
     if (!isHex(body.tag, 8)) return
     if (body.from === this.me && body.tag === this.tag) return
-    for (const o of this.conns) if (o !== c && o.mate) this._write(o, line)
     const key = body.from + ':' + body.tag
+    const m = this.members.get(key)
+    if (body.t === 'state' && !STATUSES.has(body.status)) return
+    if ((body.t === 'chat' || body.t === 'bye') && !m) return
+    if (body.t === 'chat' && !this._chatAllowed(m)) return
+    if (!this._withinBudget(key)) return
+    for (const o of this.conns) if (o !== c && o.mate) this._write(o, line)
     if (body.t === 'state') this._applyState(key, body, line)
-    else if (body.t === 'chat') this._applyChat(key, body)
-    else if (body.t === 'bye') this._applyBye(key, body)
+    else if (body.t === 'chat') this._applyChat(m, body)
+    else this._applyBye(key, body)
+  }
+
+  _chatAllowed (m) {
+    const t = this.now()
+    m.chatTimes = m.chatTimes.filter(x => t - x < this.chatRate.perMs)
+    if (m.chatTimes.length >= this.chatRate.count) return false
+    m.chatTimes.push(t)
+    return true
   }
 
   _applyState (key, body, line) {
-    if (!STATUSES.has(body.status)) return
     const tomb = this.tombs.get(key)
     if (tomb && body.ts <= tomb) return
     let m = this.members.get(key)
     if (m && body.ts <= m.ts) return
     const isNew = !m
+    if (isNew && this.members.size >= MAX_MEMBERS) return
     if (!m) {
       m = { key, from: body.from, tag: body.tag, handle: handleFor(body.from), color: colorFor(body.from), joinedAt: this.now(), chatTimes: [] }
       this.members.set(key, m)
@@ -279,22 +328,16 @@ export class Room extends EventEmitter {
     this._checkAlive()
   }
 
-  _applyChat (key, body) {
+  _applyChat (m, body) {
     const text = sanitize(body.text)
     if (!text) return
-    const m = this.members.get(key)
-    if (m) {
-      const t = this.now()
-      m.lastSeen = t
-      m.chatTimes = m.chatTimes.filter(x => t - x < this.chatRate.perMs)
-      if (m.chatTimes.length >= this.chatRate.count) return
-      m.chatTimes.push(t)
-    }
+    m.lastSeen = this.now()
     this.emit('chat', { from: body.from, handle: handleFor(body.from), color: colorFor(body.from), text, ts: body.ts, self: false })
   }
 
   _applyBye (key, body) {
     this.tombs.set(key, body.ts)
+    capMap(this.tombs, MAX_TOMBS)
     const m = this.members.get(key)
     if (!m) return
     this.members.delete(key)

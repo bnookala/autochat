@@ -30,7 +30,10 @@ class Line {
   add (text, style = '') {
     let chunk = ''
     for (const ch of text) {
-      const w = charWidth(ch.codePointAt(0))
+      const cp = ch.codePointAt(0)
+      // Last line of defense: never let control characters (ESC, etc.) reach the terminal.
+      if (cp < 32 || (cp >= 0x7f && cp < 0xa0)) continue
+      const w = charWidth(cp)
       if (this.used + w > this.width) break
       this.used += w
       chunk += ch
@@ -200,7 +203,14 @@ export function renderScreen (view, cols, rows) {
   rows = Math.max(8, rows)
   if (!['room', 'spectating'].includes(view.phase)) return bannerScreen(view, cols, rows)
 
-  const top = [...modal(view, cols), header(view, cols), ...memberLines(view, cols), GREY + '─'.repeat(cols) + RESET]
+  // Fit the layout into small terminals: shrink the modal, then drop the member list.
+  let box = modal(view, cols)
+  let members = memberLines(view, cols)
+  const fixed = () => box.length + 1 + members.length + 1 + 3 + 1
+  if (fixed() > rows && box.length > 3) box = [box[0], box[box.length - 3], box[box.length - 1]]
+  if (fixed() > rows) members = []
+  if (fixed() > rows) box = []
+  const top = [...box, header(view, cols), ...members, GREY + '─'.repeat(cols) + RESET]
   const bottom = []
   bottom.push(GREY + '─'.repeat(cols) + RESET)
   let cursor = null
@@ -213,7 +223,7 @@ export function renderScreen (view, cols, rows) {
     let shown = view.input
     while (strWidth(shown) > room) shown = Array.from(shown).slice(1).join('')
     bottom.push(new Line(cols).add(prompt, BOLD).add(shown).toString())
-    cursor = { row: top.length + 0, col: strWidth(prompt) + strWidth(shown) + 1 }
+    cursor = { row: 0, col: strWidth(prompt) + strWidth(shown) + 1 }
     bottom.push(new Line(cols).add(' ⏎ send · ctrl-g go to copilot · pgup/pgdn scroll · ctrl-c leave room', DIM).toString())
   }
   const avail = Math.max(1, rows - top.length - bottom.length)
@@ -223,6 +233,7 @@ export function renderScreen (view, cols, rows) {
   while (visible.length < avail) visible.unshift('')
   const lines = [...top, ...visible, ...bottom].slice(0, rows)
   if (cursor) cursor.row = top.length + avail + 2
+  if (cursor && cursor.row > rows) cursor = null
   return { lines, cursor }
 }
 

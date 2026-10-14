@@ -3,13 +3,15 @@ import path from 'node:path'
 import { quickMode } from './session.js'
 import { send } from './ipc.js'
 import { loadConfig } from './config.js'
-import { launchUI } from './launcher.js'
+import { launchUI, pickMethod, notify } from './launcher.js'
 import { runDir, ensureDir, isValidSessionId } from './paths.js'
 import { parseRoom, sanitize } from './protocol.js'
 
 export const HOOK_EVENTS = ['sessionStart', 'userPromptSubmitted', 'preToolUse', 'postToolUse', 'agentStop', 'notification', 'sessionEnd']
 const REQUEST_NOTIFICATIONS = new Set(['permission_prompt', 'elicitation_dialog'])
 const LOCK_STALE_MS = 15000
+const SPOOL_TTL_MS = 2 * 60 * 1000
+const NOTIFY_COOLDOWN_MS = 30 * 60 * 1000
 const OPTOUT_TTL_MS = 2 * 60 * 60 * 1000
 
 const optoutFile = (sid) => path.join(runDir(), 'optout-' + sid)
@@ -90,7 +92,7 @@ export function buildMessage (event, p, env, mode) {
     event,
     sessionId,
     mode,
-    cwd: typeof p.cwd === 'string' ? p.cwd : undefined,
+    cwd: typeof p.cwd === 'string' ? sanitize(p.cwd, 300) : undefined,
     ts: Date.now(),
     origin: { tmux: env.TMUX, tmuxPane: env.TMUX_PANE, termProgram: env.TERM_PROGRAM, bundleId: env.__CFBundleIdentifier },
     kind: 'notice'
@@ -158,8 +160,6 @@ function readStdin (timeoutMs = 3000) {
   })
 }
 
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
-
 /**
  * Entry point for Copilot CLI hooks. Must never fail or print: preToolUse
  * command hooks are fail-closed, so any error here could block a tool call.
@@ -177,24 +177,52 @@ export async function runHook (event, env = process.env) {
   if (msg.kind === 'complete' || msg.kind === 'end') clearOptout(sid)
 
   if (await send(msg, 600)) return { action: 'delivered' }
+  // A UI is being launched right now: queue *every* event (including completions) for it.
+  if (launchPending()) { spool(msg); return { action: 'spooled' } }
   if (!shouldLaunch(msg)) return { action: 'ignored' }
   if (optedOut(sid)) return { action: 'opted-out' }
 
-  if (!acquireLock()) {
-    // Another hook is starting the UI right now; hand our event to it once it's up.
-    for (let i = 0; i < 15; i++) {
-      await sleep(200)
-      if (await send(msg, 300)) return { action: 'delivered' }
-    }
-    return { action: 'dropped' }
-  }
-  const spool = path.join(runDir(), `spool-${Date.now()}-${process.pid}.json`)
-  fs.writeFileSync(spool, JSON.stringify(msg), { mode: 0o600 })
   let roomDisplay = cfg.room
   try { roomDisplay = parseRoom(cfg.room).display } catch {}
-  const method = launchUI({ cfg, env, roomDisplay })
-  if (method === 'notify' || method === 'off') releaseLaunchLock()
+  const method = pickMethod(cfg, env)
+  if (method === 'off') return { action: 'disabled' }
+  if (method === 'notify') {
+    // No terminal we can open: nudge once per session rather than on every tool call.
+    if (!cooledDown(sid)) return { action: 'ignored' }
+    notify('lolchat', `Autopilot engaged. Run \`lolchat\` to join ${roomDisplay}.`)
+    return { action: 'launched', method }
+  }
+  if (!acquireLock()) { spool(msg); return { action: 'spooled' } }
+  spool(msg)
+  launchUI({ cfg, env, method })
   return { action: 'launched', method }
+}
+
+function launchPending () {
+  try { return Date.now() - fs.statSync(lockFile()).mtimeMs < LOCK_STALE_MS } catch { return false }
+}
+
+function cooledDown (sid) {
+  const f = path.join(runDir(), 'notified-' + sid)
+  try { if (Date.now() - fs.statSync(f).mtimeMs < NOTIFY_COOLDOWN_MS) return false } catch {}
+  ensureDir(runDir())
+  fs.writeFileSync(f, '')
+  return true
+}
+
+function spool (msg) {
+  ensureDir(runDir())
+  const now = Date.now()
+  // Drop leftovers from launches that never came up.
+  try {
+    for (const f of fs.readdirSync(runDir())) {
+      if (!f.startsWith('spool-')) continue
+      const p = path.join(runDir(), f)
+      try { if (now - fs.statSync(p).mtimeMs > SPOOL_TTL_MS) fs.unlinkSync(p) } catch {}
+    }
+  } catch {}
+  const name = `spool-${String(now).padStart(15, '0')}-${process.pid}-${Math.random().toString(36).slice(2, 8)}.json`
+  fs.writeFileSync(path.join(runDir(), name), JSON.stringify(msg), { mode: 0o600 })
 }
 
 export function readSpool () {

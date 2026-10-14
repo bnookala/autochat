@@ -40,8 +40,7 @@ function detached (cmd, args, env = process.env) {
   child.unref()
 }
 
-export function launchUI ({ cfg, env, roomDisplay }) {
-  const method = pickMethod(cfg, env)
+export function launchUI ({ cfg, env, method = pickMethod(cfg, env) }) {
   const cmd = uiCommand([], method === 'ghostty' ? ['LOLCHAT_GHOSTTY=1'] : [])
   if (process.env.LOLCHAT_LAUNCH_RECORD) {
     fs.appendFileSync(process.env.LOLCHAT_LAUNCH_RECORD, JSON.stringify({ method, cmd }) + '\n')
@@ -72,9 +71,6 @@ export function launchUI ({ cfg, env, roomDisplay }) {
       break
     case 'wt':
       detached('wt', ['new-tab', process.execPath, BIN, 'ui', '--auto'])
-      break
-    case 'notify':
-      notify('lolchat', `Autopilot engaged. Run \`lolchat\` to join ${roomDisplay}.`)
       break
     default:
       return 'off'

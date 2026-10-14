@@ -41,7 +41,7 @@ test('hook never fails or prints, even on garbage input', () => {
   }
 })
 
-test('hook launches the UI only for sessions in autopilot', () => {
+test('hook launches the UI only for sessions in autopilot', async () => {
   writeSession('s-interactive', 'interactive')
   writeSession('s-auto', 'autopilot')
   let r = hook('postToolUse', { sessionId: 's-interactive', toolName: 'bash', cwd: '/x' })
@@ -60,12 +60,24 @@ test('hook launches the UI only for sessions in autopilot', () => {
   assert.equal(l.length, 1)
   assert.ok(l[0].cmd.includes('ui') && l[0].cmd.includes('--auto'))
 
-  // A second hook while the first launch is still pending waits instead of launching twice.
-  r = hook('postToolUse', { sessionId: 's-auto', toolName: 'view' })
-  assert.equal(r.result.action, 'dropped')
+  // While the first launch is pending, every event (even completions) is queued, never dropped.
+  r = hook('preToolUse', { sessionId: 's-auto', toolCalls: [{ name: 'view', args: {} }] })
+  assert.equal(r.result.action, 'spooled')
+  r = hook('postToolUse', { sessionId: 's-auto', toolName: 'task_complete', toolArgs: { summary: 'quick' } })
+  assert.equal(r.result.action, 'spooled')
   assert.equal(launches().length, 1)
-  const spool = fs.readdirSync(path.join(env.LOLCHAT_HOME, 'run')).filter(f => f.startsWith('spool-'))
-  assert.equal(spool.length, 1)
+  const { readSpool } = await import('../src/hook.js')
+  assert.deepEqual(readSpool().map(m => m.kind), ['activity', 'activity', 'complete'], 'spool drains in order')
+})
+
+test('notify-only launches nudge once per session', () => {
+  const home = path.join(tmp, 'lc-notify')
+  spawnSync(process.execPath, [BIN, 'config', 'launch', 'notify'], { env: { ...env, LOLCHAT_HOME: home } })
+  const e = { LOLCHAT_HOME: home }
+  assert.equal(hook('preToolUse', { sessionId: 's-auto', toolCalls: [{ name: 'bash' }] }, e).result.action, 'launched')
+  assert.equal(hook('preToolUse', { sessionId: 's-auto', toolCalls: [{ name: 'bash' }] }, e).result.action, 'ignored')
+  const run = fs.readdirSync(path.join(home, 'run'))
+  assert.equal(run.filter(f => f.startsWith('spool-')).length, 0, 'no spool files pile up')
 })
 
 test('hook picks tmux when inside tmux', () => {

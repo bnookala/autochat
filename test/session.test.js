@@ -53,6 +53,20 @@ test('SessionLog emits lifecycle events appended after start', async () => {
   assert.deepEqual(got, [['activity', 'assistant.turn_start'], ['done', 'new'], ['abort'], ['mode', 'interactive']])
 })
 
+test('SessionLog.start({since}) replays lifecycle events logged after the trigger', () => {
+  const at = (type, data, ms) => JSON.stringify({ type, data, timestamp: new Date(ms).toISOString() }) + '\n'
+  const t0 = Date.now()
+  fs.writeFileSync(file, at('session.mode_changed', { newMode: 'autopilot' }, t0 - 5000) + at('session.task_complete', { summary: 'old run' }, t0 - 4000) +
+    at('assistant.turn_start', {}, t0 + 10) + at('session.task_complete', { summary: '\x1b]52;c;evil\x07new run' }, t0 + 20))
+  const log = new SessionLog(sid)
+  const got = []
+  log.on('task-complete', (x) => got.push(x.summary))
+  log.start({ since: t0 })
+  log.stop()
+  assert.deepEqual(got, ['new run'], 'only post-trigger events, sanitized')
+  assert.equal(log.mode, 'autopilot')
+})
+
 test('objectiveStatus reads autopilot-objective.json', () => {
   assert.equal(objectiveStatus(sid), null)
   fs.writeFileSync(path.join(dir, 'autopilot-objective.json'), JSON.stringify({ current: { status: 'active' } }))

@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { Room } from './room.js'
 import { SessionLog, objectiveStatus } from './session.js'
-import { parseRoom } from './protocol.js'
+import { parseRoom, sanitize } from './protocol.js'
 import { setOptout } from './hook.js'
 import { focusOrigin as defaultFocus, notify as defaultNotify } from './launcher.js'
 
@@ -66,6 +66,7 @@ export class Controller extends EventEmitter {
         else this._run(s, 'running', null)
         break
       case 'request': {
+        if (leftAutopilot) { this._finish(s, 'mode'); break }
         // preToolUse(ask_user) and the elicitation notification describe the same question;
         // keep whichever text is richer (the former includes the choices).
         let req = msg.request || { title: 'Copilot needs you', message: '' }
@@ -85,6 +86,9 @@ export class Controller extends EventEmitter {
         this._finish(s, 'end')
         break
     }
+    // Start tailing only now, replaying lifecycle events logged since this hook fired
+    // (e.g. a task_complete that landed while the UI was still launching).
+    if (s.log && !s.log.timer && this.sessions.get(s.sid) === s) s.log.start({ since: msg.ts })
     return true
   }
 
@@ -92,15 +96,12 @@ export class Controller extends EventEmitter {
     const s = { sid: msg.sessionId, cwd: msg.cwd, origin: msg.origin, state: 'idle', request: null, idleTimer: null, summary: '', doneAt: 0, optout: false, log: null }
     this.sessions.set(s.sid, s)
     if (this.watchLogs) {
-      s.log = new SessionLog(s.sid).start()
+      s.log = new SessionLog(s.sid)
       s.log.on('task-complete', ({ summary }) => this._finish(s, 'complete', summary))
       s.log.on('abort', () => this._finish(s, 'abort'))
       s.log.on('shutdown', () => this._finish(s, 'end'))
       s.log.on('mode', (m) => { if (m !== 'autopilot') this._finish(s, 'mode') })
-      s.log.on('activity', () => {
-        if (RUNNING.has(s.state)) { this._clearIdle(s); return }
-        if (s.state === 'done' && s.log.mode === 'autopilot' && !s.optout) this._run(s, 'running', null)
-      })
+      s.log.on('activity', () => { if (RUNNING.has(s.state)) this._clearIdle(s) })
     }
     return s
   }
@@ -147,11 +148,14 @@ export class Controller extends EventEmitter {
     s.idleTimer.unref?.()
   }
 
+  // Finished sessions are retired; if the same session goes autopilot again, hooks re-track it.
   _finish (s, reason, summary) {
-    if (summary) s.summary = summary
-    if (s.state === 'done' || s.state === 'idle') { s.state = 'done'; return }
+    if (summary) s.summary = sanitize(summary, 2000)
     this._clearIdle(s)
     clearTimeout(s.reqTimer)
+    s.log?.stop()
+    if (this.sessions.get(s.sid) === s) this.sessions.delete(s.sid)
+    if (s.state === 'done' || s.state === 'idle') { s.state = 'done'; return }
     s.state = 'done'
     s.request = null
     s.reason = reason

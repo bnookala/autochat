@@ -112,6 +112,50 @@ test('simultaneous joiners converge on a single instance', { timeout: 60000 }, a
   await Promise.all([a.leave(), b.leave()])
 })
 
+test('rejects cross-room replays, non-member chat and forged host claims', async () => {
+  const { seal, open, randomId, roomTagFor, signInst } = await import('../src/protocol.js')
+  const me = ephemeralIdentity()
+  const peer = ephemeralIdentity()
+  const victim = ephemeralIdentity()
+  const r = new Room({ room: parseRoom('lc1-aaaa-bbbb-cccccccc'), identity: me })
+  const chats = []
+  r.on('chat', (m) => chats.push(m.text))
+  const relayed = []
+  const src = { mate: true, conn: { write () {} } }
+  const other = { mate: true, conn: { write: (l) => relayed.push(l) } }
+  r.conns.add(src)
+  r.conns.add(other)
+  let ts = Date.now()
+  const send = (t, extra = {}) => {
+    const line = seal(peer, { t, v: 1, room: r.roomTag, from: peer.publicKey, tag: 'aaaaaaaa', mid: randomId(), ts: ++ts, ...extra })
+    r._onSigned(src, open(JSON.parse(line)), line)
+  }
+  send('chat', { text: 'not a member yet' })
+  assert.deepEqual(chats, [])
+  assert.equal(relayed.length, 0, 'invalid messages are not relayed')
+  send('state', { status: 'active', inst: null })
+  assert.equal(r.members.size, 1)
+  send('chat', { text: 'wrong room', room: roomTagFor(parseRoom('lc1-other-room-dddddddd')) })
+  send('nonsense', { text: 'x' })
+  send('chat', { text: 'hi' })
+  assert.deepEqual(chats, ['hi'])
+
+  const forged = signInst(peer, r.roomTag, { iid: randomId(8), createdAt: Date.now() - 1000, hostId: victim.publicKey })
+  send('state', { status: 'active', inst: forged })
+  assert.equal(r.inst, null, 'cannot name someone else as host')
+  const otherRoom = signInst(peer, roomTagFor(parseRoom('lc1-other-room-dddddddd')), { iid: randomId(8), createdAt: Date.now() - 1000, hostId: peer.publicKey })
+  send('state', { status: 'active', inst: otherRoom })
+  assert.equal(r.inst, null, 'instance claims are bound to the room')
+  const real = signInst(peer, r.roomTag, { iid: randomId(8), createdAt: Date.now() - 1000, hostId: peer.publicKey })
+  send('state', { status: 'active', inst: real })
+  assert.equal(r.inst?.iid, real.iid)
+  assert.equal(r.hostHandle, peer.handle)
+
+  for (let i = 0; i < 60; i++) send('state', { status: 'active', inst: real })
+  const fromPeer = relayed.filter(l => open(JSON.parse(l))?.from === peer.publicKey)
+  assert.equal(fromPeer.length, r.senderBudget, 'per-sender budget caps relaying')
+})
+
 test('forged and tampered messages are ignored', async () => {
   const { seal, open } = await import('../src/protocol.js')
   const id = ephemeralIdentity()

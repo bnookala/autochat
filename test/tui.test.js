@@ -63,3 +63,14 @@ test('spectator view has no input; banners for reality and death', () => {
   const dead = plain(renderScreen({ ...base, phase: 'dead', banner: { kind: 'dead' } }, 80, 24)).join('\n')
   assert.match(dead, /the room died/)
 })
+
+test('tiny terminals keep the cursor on screen; control chars never render', () => {
+  for (const rows of [8, 9, 10, 12]) {
+    const r = renderScreen({ ...base, request: { title: 'Permission needed', message: 'x '.repeat(200), cwd: '/a' } }, 60, rows)
+    assert.equal(r.lines.length, rows)
+    if (r.cursor) assert.ok(r.cursor.row <= rows, `cursor row ${r.cursor.row} > ${rows}`)
+    assert.ok(r.cursor, 'input prompt still visible')
+  }
+  const evil = renderScreen({ ...base, messages: [{ kind: 'sys', text: 'a\x1b]52;c;Zm9v\x07b\x1b[2Jc', ts: 0 }] }, 80, 24)
+  for (const l of evil.lines) assert.doesNotMatch(stripAnsi(l), /\x1b|\x07/)
+})
