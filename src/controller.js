@@ -17,9 +17,10 @@ const RUNNING = new Set(['running', 'needed'])
 export class Controller extends EventEmitter {
   constructor ({
     identity, config, auto = false, bootstrap, roomOpts = {},
-    focus = defaultFocus, notify = defaultNotify, bannerMs = 6000, watchLogs = true
+    focus = defaultFocus, notify = defaultNotify, bannerMs = 6000, watchLogs = true, requestLingerMs = 20000
   }) {
     super()
+    this.requestLingerMs = requestLingerMs
     this.identity = identity
     this.config = config
     this.auto = auto
@@ -64,9 +65,15 @@ export class Controller extends EventEmitter {
         if (leftAutopilot) this._finish(s, 'mode')
         else this._run(s, 'running', null)
         break
-      case 'request':
-        this._run(s, 'needed', msg.request || { title: 'Copilot needs you', message: '' })
+      case 'request': {
+        // preToolUse(ask_user) and the elicitation notification describe the same question;
+        // keep whichever text is richer (the former includes the choices).
+        let req = msg.request || { title: 'Copilot needs you', message: '' }
+        const prev = s.request
+        if (prev && Date.now() - prev.at < 5000 && (prev.message || '').startsWith(req.message || '')) req = { ...req, message: prev.message }
+        this._run(s, 'needed', req)
         break
+      }
       case 'complete':
         this._finish(s, 'complete', msg.summary)
         break
@@ -101,7 +108,23 @@ export class Controller extends EventEmitter {
   _run (s, state, request) {
     this._clearIdle(s)
     s.state = state
-    s.request = request
+    if (request) {
+      clearTimeout(s.reqTimer)
+      s.request = { ...request, at: Date.now(), resolved: false }
+      // Autopilot answers questions on its own within milliseconds; keep the modal up
+      // long enough to read, then let it go once the agent has moved on.
+      const linger = () => {
+        s.reqTimer = setTimeout(() => {
+          if (!s.request) return
+          if (s.request.resolved) { s.request = null; this._changed() } else linger()
+        }, this.requestLingerMs)
+        s.reqTimer.unref?.()
+      }
+      linger()
+    } else if (s.request) {
+      if (Date.now() - s.request.at >= this.requestLingerMs) s.request = null
+      else s.request.resolved = true
+    }
     this._update()
   }
 
@@ -128,6 +151,7 @@ export class Controller extends EventEmitter {
     if (summary) s.summary = summary
     if (s.state === 'done' || s.state === 'idle') { s.state = 'done'; return }
     this._clearIdle(s)
+    clearTimeout(s.reqTimer)
     s.state = 'done'
     s.request = null
     s.reason = reason
@@ -143,8 +167,13 @@ export class Controller extends EventEmitter {
   }
 
   currentRequest () {
-    const s = this.runningSessions().find(x => x.state === 'needed')
+    const s = this.runningSessions().find(x => x.state === 'needed' && x.request) || this.runningSessions().find(x => x.request)
     return s ? { ...s.request, cwd: s.cwd, sid: s.sid } : null
+  }
+
+  dismissRequest () {
+    for (const s of this.sessions.values()) { s.request = null; clearTimeout(s.reqTimer) }
+    this._changed()
   }
 
   _update () {
@@ -284,7 +313,7 @@ export class Controller extends EventEmitter {
 
   async shutdown () {
     clearTimeout(this.bannerTimer)
-    for (const s of this.sessions.values()) { this._clearIdle(s); s.log?.stop() }
+    for (const s of this.sessions.values()) { this._clearIdle(s); clearTimeout(s.reqTimer); s.log?.stop() }
     if (this.room) { const r = this.room; this.room = null; await r.leave('left').catch(() => {}) }
   }
 }

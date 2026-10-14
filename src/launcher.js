@@ -97,8 +97,8 @@ export function closeOwnTerminal () {
   if (!process.env.LOLCHAT_GHOSTTY || process.platform !== 'darwin') return
   let pid = process.ppid
   for (let i = 0; i < 6 && pid > 1; i++) {
-    const r = spawnSync('ps', ['-o', 'ppid=,command=', '-p', String(pid)], { encoding: 'utf8' })
-    const m = /^\s*(\d+)\s+(.*)$/.exec(r.stdout || '')
+    const r = spawnSync('ps', ['-ww', '-o', 'ppid=,command=', '-p', String(pid)], { encoding: 'utf8' })
+    const m = /^(\d+)\s+(.*)$/.exec((r.stdout || '').trim())
     if (!m) return
     if (/Ghostty\.app\/Contents\/MacOS\/ghostty/.test(m[2]) && m[2].includes('--title=lolchat') && m[2].includes(BIN)) {
       detached('sh', ['-c', `sleep 0.4; kill ${pid}`])

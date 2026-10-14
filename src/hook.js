@@ -61,7 +61,7 @@ function describeQuestion (args) {
   if (Array.isArray(args.choices) && args.choices.length) text += ' [' + args.choices.join(' / ') + ']'
   const props = args.requestedSchema?.properties
   if (props && typeof props === 'object') {
-    const fields = Object.values(props).map(p => p?.title).filter(Boolean)
+    const fields = Object.values(props).filter(p => p && p.title).map(p => Array.isArray(p.enum) ? `${p.title}: ${p.enum.join(' / ')}` : p.title)
     if (fields.length) text += ' (' + fields.join(', ') + ')'
   }
   return text
@@ -72,10 +72,19 @@ function parseArgs (a) {
   return a
 }
 
+// Real CLI payloads differ from the docs: preToolUse batches `toolCalls: [{name, args}]`
+// and notifications use `notificationType`. Accept every shape we've seen.
+function toolCalls (p) {
+  if (Array.isArray(p.toolCalls)) return p.toolCalls.filter(c => c && typeof c === 'object').map(c => ({ name: c.name || c.toolName, args: parseArgs(c.args ?? c.arguments ?? c.toolArgs) }))
+  const name = p.toolName || p.tool_name
+  return name ? [{ name, args: parseArgs(p.toolArgs ?? p.tool_input) }] : []
+}
+
 export function buildMessage (event, p, env, mode) {
   const sessionId = p.sessionId || p.session_id || env.COPILOT_AGENT_SESSION_ID
   if (!isValidSessionId(sessionId)) return null
-  const toolName = p.toolName || p.tool_name
+  const calls = toolCalls(p)
+  const find = (n) => calls.find(c => c.name === n)
   const msg = {
     type: 'hook',
     event,
@@ -93,25 +102,24 @@ export function buildMessage (event, p, env, mode) {
       break
     case 'postToolUse':
     case 'PostToolUse':
-      if (toolName === 'task_complete') {
-        msg.kind = 'complete'
-        msg.summary = sanitize(parseArgs(p.toolArgs ?? p.tool_input)?.summary || '', 2000)
-      } else {
-        msg.kind = 'activity'
-      }
-      break
     case 'preToolUse':
-    case 'PreToolUse':
-      if (toolName === 'ask_user') {
+    case 'PreToolUse': {
+      const done = find('task_complete')
+      const ask = find('ask_user')
+      if (done && /^post/i.test(event)) {
+        msg.kind = 'complete'
+        msg.summary = sanitize(done.args?.summary || '', 2000)
+      } else if (ask && /^pre/i.test(event)) {
         msg.kind = 'request'
-        msg.request = { title: 'Copilot has a question for you', message: sanitize(describeQuestion(parseArgs(p.toolArgs ?? p.tool_input)), 600) }
+        msg.request = { title: 'Copilot has a question for you', message: sanitize(describeQuestion(ask.args), 600) }
       } else {
         msg.kind = 'activity'
       }
       break
+    }
     case 'notification':
     case 'Notification': {
-      const t = p.notification_type
+      const t = p.notification_type || p.notificationType
       if (REQUEST_NOTIFICATIONS.has(t)) {
         msg.kind = 'request'
         msg.request = {

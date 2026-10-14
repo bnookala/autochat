@@ -83,7 +83,7 @@ function modal (view, cols) {
   const body = []
   if (req.cwd) body.push({ text: 'in ' + path.basename(req.cwd), style: GREY })
   for (const l of wrap(req.message || 'Your copilot is waiting for your input.', inner).slice(0, 4)) body.push({ text: l, style: '' })
-  body.push({ text: '⏎ on an empty line or ctrl-g jumps back to your copilot', style: DIM })
+  body.push({ text: req.resolved ? 'autopilot carried on without you · esc dismiss' : '⏎ on an empty line or ctrl-g jumps to your copilot · esc dismiss', style: DIM })
   for (const b of body) {
     const line = new Line(w).add('│ ', YELLOW).add(b.text, b.style)
     line.add(' '.repeat(Math.max(0, w - 2 - line.used))).add(' │', YELLOW)
@@ -310,7 +310,8 @@ export class TUI {
       if (ch === '\x1b') {
         const m = /^\x1b(\[[0-9;?]*[@-~]|O.|.)?/.exec(s.slice(i))
         const seq = m[0]
-        if (seq === '\x1b[5~') this.scroll += 5
+        if (seq === '\x1b') this.c.dismissRequest()
+        else if (seq === '\x1b[5~') this.scroll += 5
         else if (seq === '\x1b[6~') this.scroll = Math.max(0, this.scroll - 5)
         i += seq.length || 1
         continue

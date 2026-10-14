@@ -39,6 +39,7 @@ function mk (testnet, room, auto = true) {
     focus: (o) => focused.push(o),
     notify: () => {},
     bannerMs: 300,
+    requestLingerMs: 500,
     watchLogs: false
   })
   c.focused = focused
@@ -71,7 +72,8 @@ test('autopilot drives room membership, requests, pull-back, spectating and deat
   assert.equal(guest.currentRequest().message, 'run tests?')
   await waitFor(() => [...host.room.members.values()][0]?.status === 'needed', 5000, 'needed visible')
   guest.handle(hook('g1', 'activity'))
-  assert.equal(guest.currentRequest(), null, 'request clears when the agent moves on')
+  assert.equal(guest.currentRequest().resolved, true, 'auto-answered request lingers so it can be read')
+  await waitFor(() => guest.currentRequest() === null, 3000, 'lingering request clears')
 
   // Host's autopilot finishes: host is pulled back to reality but keeps watching.
   host.handle(hook('h1', 'complete', { summary: 'done' }))
