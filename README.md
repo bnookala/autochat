@@ -117,8 +117,25 @@ LOLCHAT_DEBUG=1 lolchat hook preToolUse < payload.json
 Env overrides: `LOLCHAT_HOME` (default `~/.lolchat`), `COPILOT_HOME` (default `~/.copilot`),
 `LOLCHAT_BOOTSTRAP=host:port,...` (custom DHT bootstrap).
 
+## Troubleshooting: "lolchat didn't open"
+
+Copilot CLI loads hooks **once, when its process starts**. Any session whose process was already
+running when you ran `lolchat setup` (including ones resumed inside that process) never calls lolchat.
+`lolchat doctor` lists the active sessions and flags the ones affected:
+
+```
+✘ 9d0957f3 autopilot, running · ~/code/my-project
+    its Copilot process started before lolchat's hooks were installed, so it can't open lolchat.
+    fix: run /restart in that session (or exit and `copilot --resume=…`). meanwhile, run `lolchat` to join manually.
+```
+
+Once it's open, the lolchat UI also scans `~/.copilot/session-state` every 3s. It follows any live autopilot
+session, with or without hooks, so running `lolchat` yourself always works. Without hooks, the request
+modal isn't available for that session. Sessions from the Copilot desktop app don't record autopilot mode
+in their log, so lolchat can't detect them.
+
 ## Limitations
 
 - Networks that block outbound UDP can't hole-punch. `lolchat doctor` will tell you.
 - Windows launch and focus are best effort and untested.
-- Hooks load when a session starts, so sessions that were already running don't trigger lolchat.
+- Hooks load when the Copilot process starts. See *Troubleshooting* above.

@@ -107,6 +107,38 @@ test('ctrl-c leave opts the session out; a new session brings you back', { timeo
   assert.equal(c.phase, 'room')
 })
 
+test('adopts unhooked autopilot sessions from the session scan, without flip-flopping', { timeout: 60000 }, async (t) => {
+  const testnet = await createTestnet(3)
+  t.after(() => testnet.destroy())
+  const c = mk(testnet, 'lc1-ctl-adopt-' + Math.random().toString(36).slice(2, 12), false)
+  t.after(() => c.shutdown())
+  const now = Date.now()
+  const live = (over = {}) => [{ sid: 'u1', pid: 1, mode: 'autopilot', cwd: '/w/u1', running: true, lastStart: now - 1000, scannedAt: now, ...over }]
+
+  c.adopt(live({ running: false }))
+  assert.equal(c.phase, 'lounge', 'idle sessions are not adopted')
+  c.adopt(live())
+  assert.equal(c.phase, 'room')
+  assert.equal(c.sessions.get('u1').adopted, true)
+
+  c.adopt(live({ running: false }))
+  assert.equal(c.phase, 'reality', 'released once the scan says it stopped')
+  await waitFor(() => c.phase === 'lounge', 3000, 'back to lounge')
+  c.adopt(live())
+  assert.equal(c.phase, 'lounge', 'no re-adoption without new activity')
+  c.adopt(live({ lastStart: Date.now() + 1 }))
+  assert.equal(c.phase, 'room', 'new user message → back in')
+
+  c.adopt([])
+  assert.equal(c.phase, 'reality', 'process exited')
+
+  // Hooks win: a hooked session isn't released by the scanner.
+  await waitFor(() => c.phase === 'lounge', 3000, 'lounge again')
+  c.handle(hook('h9', 'activity'))
+  c.adopt([{ sid: 'h9', mode: 'autopilot', running: false, lastStart: 0, scannedAt: Date.now() }])
+  assert.equal(c.phase, 'room')
+})
+
 test('late non-autopilot requests and log-only completions pull you out', { timeout: 60000 }, async (t) => {
   const testnet = await createTestnet(3)
   t.after(() => testnet.destroy())

@@ -32,6 +32,7 @@ export class Controller extends EventEmitter {
     this.watchLogs = watchLogs
     this.roomInfo = parseRoom(config.room)
     this.sessions = new Map()
+    this.finished = new Map()
     this.messages = []
     this.phase = 'lounge'
     this.room = null
@@ -56,6 +57,8 @@ export class Controller extends EventEmitter {
       if (!(msg.mode === 'autopilot' && (msg.kind === 'activity' || msg.kind === 'request'))) return false
       s = this._track(msg)
     }
+    if (msg.via === 'scan') s.adopted = true
+    else s.hooked = true
     if (msg.cwd) s.cwd = msg.cwd
     if (msg.origin && (msg.origin.tmuxPane || msg.origin.bundleId || msg.origin.termProgram)) s.origin = msg.origin
     if (s.optout && msg.kind !== 'complete' && msg.kind !== 'end') return true
@@ -155,6 +158,8 @@ export class Controller extends EventEmitter {
     clearTimeout(s.reqTimer)
     s.log?.stop()
     if (this.sessions.get(s.sid) === s) this.sessions.delete(s.sid)
+    this.finished.set(s.sid, Date.now())
+    if (this.finished.size > 200) this.finished.delete(this.finished.keys().next().value)
     if (s.state === 'done' || s.state === 'idle') { s.state = 'done'; return }
     s.state = 'done'
     s.request = null
@@ -162,6 +167,34 @@ export class Controller extends EventEmitter {
     s.doneAt = Date.now()
     this.lastFinished = s
     this._update()
+  }
+
+  /**
+   * Pick up autopilot sessions that never call our hooks (their Copilot process started
+   * before `lolchat setup`), using liveSessions() from scan.js. Hooks stay authoritative
+   * for sessions that have them; adopted ones are released when they go idle or exit.
+   */
+  adopt (live) {
+    const seen = new Set()
+    for (const l of live) {
+      seen.add(l.sid)
+      const s = this.sessions.get(l.sid)
+      if (s) {
+        if (s.adopted && !s.hooked && RUNNING.has(s.state) && !l.running) {
+          // Let the log report *why* it stopped (task_complete + summary, abort, mode) first.
+          s.log?.poll()
+          if (RUNNING.has(s.state)) this._finish(s, l.mode === 'autopilot' ? 'idle' : 'mode')
+        }
+        continue
+      }
+      if (!l.running) continue
+      const done = this.finished.get(l.sid)
+      if (done && l.lastStart <= done) continue
+      this.handle({ type: 'hook', via: 'scan', event: 'scan', kind: 'activity', mode: 'autopilot', sessionId: l.sid, cwd: l.cwd, ts: l.scannedAt })
+    }
+    for (const s of this.sessions.values()) {
+      if (s.adopted && !s.hooked && !s.manual && RUNNING.has(s.state) && !seen.has(s.sid)) this._finish(s, 'end')
+    }
   }
 
   // --- room lifecycle ----------------------------------------------------------

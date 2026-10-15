@@ -183,12 +183,19 @@ async function ui () {
   drain()
   const drainTimer = setInterval(drain, 1000)
 
+  // Also follow autopilot sessions whose Copilot process predates the hooks.
+  const { liveSessions } = await import('../src/scan.js')
+  const scan = () => { try { controller.adopt(liveSessions({ idleMs: controller.config.idleMs })) } catch {} }
+  scan()
+  const scanTimer = setInterval(scan, 3000)
+
   const tui = new TUI({ controller, hooksInstalled: hooksInstalled() })
   let exiting = false
   const exit = async () => {
     if (exiting) return
     exiting = true
     clearInterval(drainTimer)
+    clearInterval(scanTimer)
     tui.stop()
     server.close()
     await controller.shutdown()
@@ -244,6 +251,19 @@ async function doctor () {
   const cfg = loadConfig()
   ok(true, `room ${parseRoom(cfg.room).display}, launch=${cfg.launch}`)
   ok(true, `UI ${(await send({ type: 'ping' }, 500)) ? 'running' : 'not running'}`)
+  const { liveSessions, processStartMs } = await import('../src/scan.js')
+  const { hooksInstalledAt } = await import('../src/setup.js')
+  const installedAt = hooksInstalledAt()
+  const live = liveSessions({ idleMs: cfg.idleMs })
+  console.log(`… ${live.length} Copilot session${live.length === 1 ? '' : 's'} active in the last 30 min`)
+  for (const l of live) {
+    const started = processStartMs(l.pid)
+    const hooked = installedAt !== null && started !== null && started > installedAt
+    const what = `${l.sid.slice(0, 8)} ${l.mode || 'unknown mode'}${l.running ? ', running' : ''} · ${l.cwd || '?'}`
+    if (hooked) ok(true, `${what} (hooks loaded)`)
+    else if (started === null || installedAt === null) ok(true, `${what} (hooks: unknown)`)
+    else ok(false, `${what}\n    its Copilot process started before lolchat's hooks were installed, so it can't open lolchat.\n    fix: run /restart in that session (or exit and \`copilot --resume=${l.sid}\`). meanwhile, run \`lolchat\` to join manually.`)
+  }
   console.log('… testing P2P (two local peers via the public DHT, up to 40s)')
   const topic = crypto.createHash('sha256').update('lolchat-doctor-' + crypto.randomBytes(8).toString('hex')).digest()
   const a = new Hyperswarm({ bootstrap: bootstrap() })

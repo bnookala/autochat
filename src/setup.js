@@ -37,9 +37,17 @@ export function buildHooksConfig () {
 
 export function installHooks () {
   const file = hooksFile()
+  const next = JSON.stringify(buildHooksConfig(), null, 2) + '\n'
   ensureDir(path.dirname(file))
-  fs.writeFileSync(file, JSON.stringify(buildHooksConfig(), null, 2) + '\n')
+  // Keep the mtime when nothing changed: doctor compares it with Copilot process start times.
+  let prev = null
+  try { prev = fs.readFileSync(file, 'utf8') } catch {}
+  if (prev !== next) fs.writeFileSync(file, next)
   return file
+}
+
+export function hooksInstalledAt () {
+  try { return fs.statSync(hooksFile()).mtimeMs } catch { return null }
 }
 
 export function uninstallHooks () {
