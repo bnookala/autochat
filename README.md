@@ -55,7 +55,8 @@ New Copilot CLI sessions pick up the hooks. The next time you run `/autopilot` (
 a chat opens:
 
 - **in tmux:** a split pane under your copilot
-- **in Ghostty, iTerm2, or Terminal.app (macOS):** a new window
+- **in Ghostty (macOS):** one new window in your running Ghostty, opened via Ghostty's AppleScript support (1.3+). It closes by itself when you're pulled back.
+- **in iTerm2 or Terminal.app (macOS):** a new window
 - **on Linux with a desktop:** `x-terminal-emulator` or `gnome-terminal`
 - **otherwise:** a desktop notification asks you to run `lolchat`
 

@@ -40,8 +40,33 @@ function detached (cmd, args, env = process.env) {
   child.unref()
 }
 
+// Ghostty ≥ 1.3 is scriptable: ask the running Ghostty for exactly one new window.
+// Starting a second Ghostty instance instead makes macOS restore every saved
+// Ghostty window/tab into it. The window closes itself when lolchat exits.
+const GHOSTTY_NEW_WINDOW = [
+  'on run argv',
+  'tell application id "com.mitchellh.ghostty"',
+  'new window with configuration {command:(item 1 of argv), wait after command:false}',
+  'activate',
+  'end tell',
+  'end run'
+]
+
+function ghosttyNewWindow (cmd) {
+  const r = spawnSync('osascript', [...GHOSTTY_NEW_WINDOW.flatMap(l => ['-e', l]), cmd.map(shq).join(' ')], { stdio: 'ignore', timeout: 5000 })
+  return r.status === 0
+}
+
+// Fallback for Ghostty without AppleScript: a dedicated instance that the UI quits on exit
+// (closeOwnTerminal). window-save-state=never stops it restoring all saved windows/tabs.
+function ghosttyInstance () {
+  detached('open', ['-na', 'Ghostty.app', '--args', '--title=lolchat', '--window-width=100', '--window-height=30',
+    '--window-save-state=never', '--quit-after-last-window-closed=true', '--confirm-close-surface=false',
+    '-e', ...uiCommand([], ['LOLCHAT_GHOSTTY=1'])])
+}
+
 export function launchUI ({ cfg, env, method = pickMethod(cfg, env) }) {
-  const cmd = uiCommand([], method === 'ghostty' ? ['LOLCHAT_GHOSTTY=1'] : [])
+  const cmd = uiCommand()
   if (process.env.LOLCHAT_LAUNCH_RECORD) {
     fs.appendFileSync(process.env.LOLCHAT_LAUNCH_RECORD, JSON.stringify({ method, cmd }) + '\n')
     return method
@@ -53,9 +78,7 @@ export function launchUI ({ cfg, env, method = pickMethod(cfg, env) }) {
       break
     }
     case 'ghostty':
-      // A dedicated instance (-n); the UI quits it on exit (see closeOwnTerminal).
-      detached('open', ['-na', 'Ghostty.app', '--args', '--title=lolchat', '--window-width=100', '--window-height=30',
-        '--quit-after-last-window-closed=true', '--confirm-close-surface=false', '-e', ...cmd])
+      if (!ghosttyNewWindow(cmd)) ghosttyInstance()
       break
     case 'iterm':
       detached('osascript', ['-e', `tell application "iTerm" to create window with default profile command ${asq(cmd.map(shq).join(' '))}`])
@@ -87,8 +110,8 @@ export function notify (title, message) {
   }
 }
 
-// macOS Ghostty keeps a `-e` instance alive after the command exits, so the UI
-// quits the dedicated lolchat instance it was launched in (never any other window).
+// The fallback Ghostty instance stays alive after its command exits, so the UI quits the
+// dedicated lolchat instance it was launched in (never any other window).
 export function closeOwnTerminal () {
   if (!process.env.LOLCHAT_GHOSTTY || process.platform !== 'darwin') return
   let pid = process.ppid
