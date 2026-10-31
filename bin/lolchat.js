@@ -52,7 +52,7 @@ const HELP = `lolchat: ephemeral, serverless chat rooms for people whose Copilot
   lolchat rooms              list live public rooms (asks peers, ~8s)
   lolchat status             what the running lolchat UI is doing
   lolchat daemon             headless core for the macOS menu bar app (docs/protocol.md)
-  lolchat config [k] [v]     show/set config (launch: auto|tmux|ghostty|iterm|terminal|notify|off,
+  lolchat config [k] [v]     show/set config (launch: auto|app|tmux|ghostty|iterm|terminal|notify|off,
                              countdown: seconds in the room after autopilot ends, 0 = none)
   lolchat doctor             check hooks + P2P connectivity
   lolchat sim [--room C] [--seconds N] [--say T]   a throwaway bot peer, for testing
@@ -141,6 +141,10 @@ ${inviteText(room)}`)
         const v = rest[1]
         const val = /^\d+$/.test(v) ? Number(v) : v === 'true' ? true : v === 'false' ? false : v
         if (k === 'room') parseRoom(v)
+        if (k === 'launch') {
+          const { LAUNCH_METHODS } = await import('../src/launcher.js')
+          if (!LAUNCH_METHODS.includes(v)) throw new Error('usage: lolchat config launch ' + LAUNCH_METHODS.join('|'))
+        }
         if (k === 'countdownSeconds' && !(Number.isInteger(val) && val <= 3600)) throw new Error('usage: lolchat config countdown <seconds> (0-3600, 0 = no countdown)')
         console.log(JSON.stringify(saveConfig({ [k]: val }), null, 2))
       } else {
@@ -308,8 +312,18 @@ async function doctor () {
   ok(hooksInstalled(), `hooks ${hooksInstalled() ? 'installed' : 'missing (run lolchat setup)'}: ${hooksFile()}`)
   ok(true, `identity ${loadIdentity().handle}`)
   const cfg = loadConfig()
-  ok(true, `room ${parseRoom(cfg.room).display}, launch=${cfg.launch}`)
-  ok(true, `UI ${(await send({ type: 'ping' }, 500)) ? 'running' : 'not running'}`)
+  const { pickMethod, appInstalled } = await import('../src/launcher.js')
+  const method = pickMethod(cfg, process.env)
+  ok(true, `room ${parseRoom(cfg.room).display}, launch=${cfg.launch}${cfg.launch === 'auto' ? ` (→ ${method})` : ''}`)
+  const app = appInstalled()
+  if (process.platform === 'darwin' || app) {
+    if (app) ok(true, `LolChat.app installed: ${app}${method === 'app' ? '' : ` (not used: launch=${cfg.launch})`}`)
+    else console.log('… LolChat.app not installed: hooks open a terminal instead')
+  }
+  const ping = await send({ type: 'ping' }, 500)
+  if (ping?.daemon) ok(true, `lolchat daemon running (pid ${ping.pid}, ${ping.phase})`)
+  else if (ping) ok(true, `lolchat UI running in a terminal (${ping.phase})`)
+  else console.log(`… lolchat not running${method === 'app' ? ': LolChat.app starts its daemon on the next autopilot run' : ''}`)
   const { liveSessions, processStartMs } = await import('../src/scan.js')
   const { hooksInstalledAt } = await import('../src/setup.js')
   const installedAt = hooksInstalledAt()

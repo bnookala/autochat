@@ -48,12 +48,13 @@ Things we learned against Copilot CLI 1.0.97, which differ from or aren't in the
 ```sh
 npm i -g github:bnookala/lolchat   # needs Node ≥ 18
 lolchat setup                      # writes ~/.copilot/hooks/lolchat.json
-lolchat doctor                     # optional: checks hooks + P2P connectivity
+lolchat doctor                     # optional: checks hooks, the menu bar app, P2P connectivity
 ```
 
 New Copilot CLI sessions pick up the hooks. The next time you run `/autopilot` (or `copilot --autopilot`),
 a chat opens:
 
+- **with the LolChat menu bar app installed (macOS):** no terminal at all. The hook wakes `LolChat.app` in the background (`open -g -b com.bnookala.lolchat`), even inside tmux.
 - **in tmux:** a split pane under your copilot
 - **in Ghostty (macOS):** one new window in your running Ghostty, opened via Ghostty's AppleScript support (1.3+). It closes by itself when you're pulled back.
 - **in iTerm2 or Terminal.app (macOS):** a new window
@@ -61,7 +62,7 @@ a chat opens:
 - **otherwise:** a desktop notification asks you to run `lolchat`
 
 You can also keep `lolchat` open in a side pane (the *lounge*). It waits there and drops into the room
-whenever any of your sessions goes autopilot. Override the launcher with `lolchat config launch tmux|ghostty|iterm|terminal|notify|off`.
+whenever any of your sessions goes autopilot. Override the launcher with `lolchat config launch app|tmux|ghostty|iterm|terminal|notify|off`.
 `off` pauses lolchat entirely.
 
 ## Rooms & discovery
@@ -118,7 +119,8 @@ lolchat daemon  # headless core for GUI clients; protocol in docs/protocol.md
 ```
 
 Env overrides: `LOLCHAT_HOME` (default `~/.lolchat`), `COPILOT_HOME` (default `~/.copilot`),
-`LOLCHAT_BOOTSTRAP=host:port,...` (custom DHT bootstrap).
+`LOLCHAT_BOOTSTRAP=host:port,...` (custom DHT bootstrap), `LOLCHAT_COUNTDOWN_MS` (exit countdown length),
+`LOLCHAT_APP_DIRS` (where to look for `LolChat.app`, default `/Applications:~/Applications`).
 
 ## Troubleshooting: "lolchat didn't open"
 

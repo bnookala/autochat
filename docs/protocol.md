@@ -30,6 +30,14 @@ lolchat daemon            # or: node <install>/bin/lolchat.js daemon
 - It drains hook events spooled while it was starting and releases the hook launch lock,
   so the hook that woke the app is never lost.
 
+How the app gets woken: when a hook fires and nothing is listening on the socket, the hook
+(with `launch` = `app`, the default on macOS when `LolChat.app` with bundle id
+`com.bnookala.lolchat` is in `/Applications` or `~/Applications`) runs
+`open -g -b com.bnookala.lolchat` and spools the event. Further hook events are spooled too
+for up to 15 s (then the next one runs `open` again). The app should start
+`lolchat daemon` right away; the daemon replays spooled events that are under 60 s old.
+No terminal window is ever opened.
+
 Environment (all optional):
 
 | Variable | Meaning |

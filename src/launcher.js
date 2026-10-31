@@ -1,9 +1,12 @@
 import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'lolchat.js')
+export const APP_BUNDLE_ID = 'com.bnookala.lolchat'
+export const LAUNCH_METHODS = ['auto', 'app', 'tmux', 'ghostty', 'iterm', 'terminal', 'x-terminal-emulator', 'gnome-terminal', 'wt', 'notify', 'off']
 
 const shq = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'"
 const asq = (s) => '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"'
@@ -16,21 +19,42 @@ function uiCommand (extra = [], envs = []) {
   return ['/usr/bin/env', ...envs, process.execPath, BIN, 'ui', '--auto', ...extra]
 }
 
+// Wake the menu bar app in the background (no focus steal). It starts or attaches to
+// `lolchat daemon`, which drains the events the hook spooled meanwhile.
+const appCommand = () => ['open', '-g', '-b', APP_BUNDLE_ID]
+
 const has = (cmd) => spawnSync('sh', ['-c', `command -v ${cmd}`], { stdio: 'ignore' }).status === 0
 
-export function pickMethod (cfg, env) {
+// LOLCHAT_APP_DIRS (path-delimited) replaces the default search dirs, for tests.
+const appDirs = (env) => env.LOLCHAT_APP_DIRS !== undefined
+  ? env.LOLCHAT_APP_DIRS.split(path.delimiter).filter(Boolean)
+  : ['/Applications', path.join(os.homedir(), 'Applications')]
+
+// Path to LolChat.app if installed. Its Info.plist holds the bundle id as plain ASCII,
+// in both XML and binary plists.
+export function appInstalled (env = process.env) {
+  for (const dir of appDirs(env)) {
+    const app = path.join(dir, 'LolChat.app')
+    try { if (fs.readFileSync(path.join(app, 'Contents', 'Info.plist')).includes(APP_BUNDLE_ID)) return app } catch {}
+  }
+  return null
+}
+
+export function pickMethod (cfg, env, platform = process.platform) {
   if (cfg.launch && cfg.launch !== 'auto') return cfg.launch
+  // With the menu bar app installed, hooks never open a terminal.
+  if (platform === 'darwin' && appInstalled(env)) return 'app'
   if (env.TMUX && env.TMUX_PANE) return 'tmux'
-  if (process.platform === 'darwin') {
+  if (platform === 'darwin') {
     if (env.TERM_PROGRAM === 'ghostty' && fs.existsSync('/Applications/Ghostty.app')) return 'ghostty'
     if (env.TERM_PROGRAM === 'iTerm.app') return 'iterm'
     return 'terminal'
   }
-  if (process.platform === 'linux' && env.DISPLAY) {
+  if (platform === 'linux' && env.DISPLAY) {
     if (has('x-terminal-emulator')) return 'x-terminal-emulator'
     if (has('gnome-terminal')) return 'gnome-terminal'
   }
-  if (process.platform === 'win32') return 'wt'
+  if (platform === 'win32') return 'wt'
   return 'notify'
 }
 
@@ -66,12 +90,15 @@ function ghosttyInstance () {
 }
 
 export function launchUI ({ cfg, env, method = pickMethod(cfg, env) }) {
-  const cmd = uiCommand()
+  const cmd = method === 'app' ? appCommand() : uiCommand()
   if (process.env.LOLCHAT_LAUNCH_RECORD) {
     fs.appendFileSync(process.env.LOLCHAT_LAUNCH_RECORD, JSON.stringify({ method, cmd }) + '\n')
     return method
   }
   switch (method) {
+    case 'app':
+      detached(cmd[0], cmd.slice(1))
+      break
     case 'tmux': {
       const args = ['split-window', cfg.tmuxSplit === 'h' ? '-h' : '-v', '-l', '40%', '-t', env.TMUX_PANE, cmd.map(shq).join(' ')]
       detached('tmux', args, { ...process.env, TMUX: env.TMUX })
