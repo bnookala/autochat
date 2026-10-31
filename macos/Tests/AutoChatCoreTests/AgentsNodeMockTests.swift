@@ -60,6 +60,7 @@ struct AgentsNodeMockTests {
         #expect(s.threads.contains { $0.status == .open })
         #expect(s.messages.contains { $0.kind == .handoff && $0.thread == nil })
         #expect(s.messages.contains { $0.kind == .note && $0.text.contains("**No API impact**") })
+        #expect(s.messages.filter { $0.kind == .sys && $0.text.hasSuffix(" joined") }.count == 3)
         #expect(AgentsRules.messages(in: .thread(resolved.id), of: s).map(\.kind) == [.question, .reply, .proposal, .reply, .decision])
         #expect(lounge.value.last?.agents == LoungeAgents(present: 2, openThreads: 1))
 
@@ -68,17 +69,23 @@ struct AgentsNodeMockTests {
         #expect(refused.error == "ack-required")
         #expect(try await client.send(.agentsAck).ok)
         #expect(await eventually { snapshots.value.last?.ack == true })
-        let said = try await client.send(.agentsSay(text: "keep the public API stable", thread: resolved.id, to: []))
+        // Like the daemon, a resolved thread is closed; the open one takes interventions.
+        let closed = try await client.send(.agentsSay(text: "too late", thread: resolved.id, to: []))
+        #expect(closed.error == "thread \(resolved.id) is resolved")
+        let open = try #require(s.threads.first { !$0.isResolved })
+        let said = try await client.send(.agentsSay(text: "keep the public API stable", thread: open.id, to: []))
         #expect(said.ok, "say failed: \(said.error ?? "")")
         #expect(await eventually {
-            snapshots.value.last?.messages.contains { $0.kind == .human && $0.intervention && $0.thread == resolved.id && $0.text == "keep the public API stable" } == true
+            snapshots.value.last?.messages.contains { $0.kind == .human && $0.intervention && $0.thread == open.id && $0.text == "keep the public API stable" } == true
         })
         #expect(await eventually(timeout: 5) {
             snapshots.value.last.map { s in s.messages.last?.kind == .reply && s.messages.last?.replyTo == s.messages.first { $0.kind == .human }?.seq } ?? false
         })
         let unknownThread = try await client.send(.agentsSay(text: "x", thread: "nope", to: []))
-        #expect(!unknownThread.ok)
+        #expect(unknownThread.error == "unknown thread: nope")
         let empty = try await client.send(.agentsSay(text: "  ", thread: nil, to: []))
-        #expect(empty.error == "empty message")
+        #expect(empty.error == "text is empty")
+        let loungeCommand = try await client.send(.say("hi"))
+        #expect(loungeCommand.error == "unknown command")
     }
 }

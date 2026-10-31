@@ -294,6 +294,7 @@ function agentJoin (name, harness, branch, extra = {}) {
     state: 'exploring', summary: null, focus: { issue: null, components: [], paths: [] },
     present: true, joinedAt: now, updatedAt: now, overlaps: [], ...extra
   })
+  postAgentMessage({ kind: 'sys', text: `${name} joined` })
   recomputeOverlaps()
   changed()
   agentsChanged()
@@ -457,10 +458,11 @@ function runAgents (t) {
 function agentsSay (msg) {
   if (!room.ack) return { ok: false, error: 'ack-required' }
   const text = typeof msg.text === 'string' ? msg.text.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, '').trim().slice(0, MAX_SAY) : ''
-  if (!text) return { ok: false, error: 'empty message' }
+  if (!text) return { ok: false, error: 'text is empty' }
   const thread = typeof msg.thread === 'string' && msg.thread ? msg.thread : null
   const t = thread && room.threads.get(thread)
-  if (thread && !t) return { ok: false, error: 'unknown thread' }
+  if (thread && !t) return { ok: false, error: `unknown thread: ${thread}` }
+  if (t?.status === 'resolved') return { ok: false, error: `thread ${thread} is resolved` }
   const to = Array.isArray(msg.to) ? msg.to.filter(n => typeof n === 'string' && room.cards.has(n)) : []
   const said = postAgentMessage({
     kind: 'human', intervention: true, thread, to, text,
@@ -488,7 +490,7 @@ function command (msg, stream = 'lounge') {
       case 'agents.say':
         return agentsSay(msg)
       default:
-        return { ok: false, error: 'unknown command: ' + String(msg.cmd) }
+        return { ok: false, error: 'unknown command' }
     }
   }
   switch (msg.cmd) {
