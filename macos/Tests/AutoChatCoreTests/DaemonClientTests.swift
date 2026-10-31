@@ -6,7 +6,7 @@ import Testing
 @Suite("DaemonClient against an in-process mock socket server", .serialized)
 struct DaemonClientTests {
     @Test func subscribeSnapshotSayReplySnapshot() async throws {
-        let paths = try makeTestHome()
+        let paths = try makeTestHome(minSockPathBytes: 120)
         defer { removeTestHome(paths) }
         #expect(paths.sockPath.utf8.count > 103, "test home should exercise the long-path connectat route")
         let server = MockDaemonServer(path: paths.sockPath)
