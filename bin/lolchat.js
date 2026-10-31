@@ -21,7 +21,7 @@ const { loadIdentity, ephemeralIdentity } = await import('../src/identity.js')
 const { loadConfig, saveConfig } = await import('../src/config.js')
 const { parseRoom, generatePrivateCode, DEFAULT_ROOM } = await import('../src/protocol.js')
 
-const REPO = 'github:bhnook_microsoft/lolchat'
+const REPO = 'github:bnookala/lolchat'
 const bold = (s) => process.stdout.isTTY ? `\x1b[1m${s}\x1b[0m` : s
 const dim = (s) => process.stdout.isTTY ? `\x1b[2m${s}\x1b[0m` : s
 

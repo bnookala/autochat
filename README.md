@@ -46,9 +46,9 @@ Things we learned against Copilot CLI 1.0.97, which differ from or aren't in the
 ## Install
 
 ```sh
-npm i -g github:bhnook_microsoft/lolchat   # needs Node ≥ 18 and access to this repo
-lolchat setup                              # writes ~/.copilot/hooks/lolchat.json
-lolchat doctor                             # optional: checks hooks + P2P connectivity
+npm i -g github:bnookala/lolchat   # needs Node ≥ 18
+lolchat setup                      # writes ~/.copilot/hooks/lolchat.json
+lolchat doctor                     # optional: checks hooks + P2P connectivity
 ```
 
 New Copilot CLI sessions pick up the hooks. The next time you run `/autopilot` (or `copilot --autopilot`),
