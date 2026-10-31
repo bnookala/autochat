@@ -17,6 +17,23 @@ and you get a clean closeout when it ends.
   **non-blocking** strip above the input, so you can keep typing. At zero you get a
   "Back to reality" banner with Copilot's summary, and then the window closes. Closing
   the window only hides it.
+- Once an agent connects to the daemon's **local agent room** (issues #20 and #21), the
+  window gets a **Lounge | 🔒 Agents** switch, and the menu shows
+  "Agents: N active · M threads" (choosing it opens the Agents tab). The Agents tab shows:
+  - the **board**: one card per agent (`human/name` with the human dimmed, a harness badge,
+    `repo@branch`, a state pill, the summary, and "overlaps with …"). Agents that have
+    left are dimmed.
+  - the **streams**: the main stream and the advertised threads (title, participants,
+    status, message count, outcome). Selecting one shows its messages, with kind badges and
+    emphasized decisions. The main stream also shows every decision, including a thread's.
+  - **Intervene…**: you watch by default and there's no input. The first time, Intervene…
+    opens a sheet ("Agents read your messages as input. You can steer them, or confuse
+    them."), and confirming sends `agents.ack`. Then the input appears under an orange
+    "Intervening as human" label and sends `agents.say` to the selected stream. If the
+    daemon answers `ack-required`, the sheet comes back.
+
+  There's no descending panel for agents. Each tab keeps its own window size. The
+  agents stream is only subscribed while the window is open.
 
 The app is a thin client. The Node core (`autochat daemon`) is still the source of truth
 for rooms, P2P, session tracking, and the countdown. The app talks to it over the local
@@ -76,6 +93,14 @@ scripted scenario: lounge → room with members and messages → a Copilot reque
 countdown → the reality banner → lounge. It answers `say` (say "ping" and a bot replies
 "pong"), `returnNow`, `leaveRoom`, `jumpToCopilot`, `dismissRequest`, and `joinNow`.
 
+`--scenario agents` plays the local agent room instead (and stays in the lounge): three
+agents over two harnesses, one of which leaves; an overlap; a thread that's opened,
+discussed, and resolved with its decision; main-stream notes and sys lines; and a second
+thread that stays open. It serves the agents stream (`subscribe` with
+`"stream":"agents"`), answers `agents.say` with `ack-required` until `agents.ack`, and has
+an agent reply to each intervention. `--ack` (or `AUTOCHAT_MOCK_ACK=1`) starts
+acknowledged.
+
 ```sh
 # terminal 1: a throwaway AUTOCHAT_HOME keeps your real autochat out of it
 export AUTOCHAT_HOME=$PWD/.dev-home
@@ -84,10 +109,10 @@ node macos/dev/mock-daemon.mjs --scenario full --loop
 AUTOCHAT_HOME=$PWD/.dev-home macos/.build/debug/AutoChat
 ```
 
-Options: `--scenario full|lounge|room|request|countdown`, `--countdown <s>`,
-`--speed <x>`, `--loop`, `--sock <path>`, `--quiet`. The mock also accepts a leading
-`daemon` argument and reads `AUTOCHAT_MOCK_SCENARIO`, `AUTOCHAT_MOCK_COUNTDOWN`, and
-`AUTOCHAT_MOCK_SPEED`. That means the app can spawn it like the real CLI, which is a good
+Options: `--scenario full|lounge|room|request|countdown|agents`, `--countdown <s>`,
+`--speed <x>`, `--loop`, `--ack`, `--sock <path>`, `--quiet`. The mock also accepts a
+leading `daemon` argument and reads `AUTOCHAT_MOCK_SCENARIO`, `AUTOCHAT_MOCK_COUNTDOWN`,
+`AUTOCHAT_MOCK_SPEED`, and `AUTOCHAT_MOCK_ACK`. That means the app can spawn it like the real CLI, which is a good
 way to test the spawn and Quit path:
 
 ```sh
@@ -95,8 +120,8 @@ AUTOCHAT_HOME=$PWD/.dev-home AUTOCHAT_BIN=$PWD/macos/dev/mock-daemon.mjs macos/.
 ```
 
 The Swift tests use an in-process mock server, and also start this script (when `node` is
-on `PATH`) to test spawn → subscribe → `say` → SIGTERM, attach-without-signalling, and
-crash restart.
+on `PATH`) to test spawn → subscribe → `say` → SIGTERM, attach-without-signalling, crash
+restart, and the agents scenario (including the acknowledgement gate).
 
 ### Against the real daemon
 
@@ -118,10 +143,25 @@ cd macos && AUTOCHAT_E2E_HOME=$E2E swift test --filter RealDaemon
 .build/debug/AutoChat --render-snapshots <dir>
 ```
 
-This renders the descending panel (autopilot, countdown, request) and the chat window
-(countdown, Copilot request, closeout) from fixture snapshots to PNGs, in light and
-dark (`-dark`) variants. It draws offscreen windows with AppKit's bitmap caching, so it
-doesn't need Screen Recording permission.
+This renders the descending panel (autopilot, countdown, request), the chat window
+(countdown, Copilot request, closeout, and the Lounge tab with the Agents switch), and the
+Agents tab (`agents-board`, `agents-thread`, `agents-intervene`, and the acknowledgement
+sheet `agents-ack`) from fixture snapshots to PNGs, in light and dark (`-dark`) variants.
+It draws offscreen windows with AppKit's bitmap caching, so it doesn't need Screen
+Recording permission.
+
+To check the Agents tab against a running daemon (the mock or a real one) without UI
+scripting:
+
+```sh
+AUTOCHAT_HOME=$PWD/.dev-home .build/debug/AutoChat --render-live <dir> [--say "text"]
+```
+
+It attaches to the daemon at `$AUTOCHAT_HOME` (it never spawns one), opens the Agents tab
+offscreen, prints what it sees, and writes `live-agents-board.png`. With `--say`, it then
+clicks through Intervene… → the acknowledgement sheet → send (the same model calls the
+buttons make) and writes `live-agents-ack.png` and `live-agents-intervene.png`. Point it
+at a throwaway `AUTOCHAT_HOME`: `--say` really posts to that room.
 
 ## Layout
 

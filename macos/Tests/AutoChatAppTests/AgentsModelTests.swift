@@ -1,0 +1,229 @@
+import Foundation
+import AutoChatCore
+import SwiftUI
+import Testing
+@testable import AutoChatApp
+
+/// Records commands and answers them from a script.
+@MainActor
+final class FakeAgentsDaemon {
+    var sent: [Command] = []
+    var replies: [String: Reply] = [:]
+
+    func send(_ command: Command) async throws -> Reply {
+        sent.append(command)
+        return replies[command.name] ?? Reply(id: sent.count, ok: true)
+    }
+}
+
+@Suite("App model: Agents tab")
+@MainActor
+struct AgentsTabTests {
+    @Test func theTabShowsOnceTheLoungeSnapshotReportsAgents() {
+        let model = connectedModel()
+        model.apply(Fixtures.lounge())
+        #expect(!model.showsAgentsTab)
+        model.selectTab(.agents)
+        #expect(model.effectiveTab == .lounge, "no agent room yet")
+        model.apply(Fixtures.agentsLounge())
+        #expect(model.showsAgentsTab)
+        #expect(model.effectiveTab == .agents)
+        // The daemon restarted (no agents since): back to the lounge, keeping the choice.
+        model.apply(Fixtures.lounge())
+        #expect(model.effectiveTab == .lounge)
+        model.apply(Fixtures.agentsLounge())
+        #expect(model.effectiveTab == .agents)
+        model.connectionChanged(.disconnected(nil))
+        #expect(!model.showsAgentsTab)
+        #expect(model.effectiveTab == .lounge)
+    }
+
+    @Test func openChatGoesToTheLoungeWhenAutopilotNeedsIt() {
+        let model = connectedModel()
+        model.apply(Fixtures.agentsLounge())
+        model.selectTab(.agents)
+        model.selectTabForOpening()
+        #expect(model.chatTab == .agents)
+        var request = Fixtures.request(now: Date())
+        request.agents = LoungeAgents(present: 1, openThreads: 0)
+        model.apply(request)
+        model.selectTabForOpening()
+        #expect(model.chatTab == .lounge)
+    }
+
+    @Test func theAgentsTabInFrontStillLetsLoungePanelsDescend() {
+        let model = connectedModel()
+        var countdown = Fixtures.countdown(now: Date(), remaining: 20)
+        countdown.agents = LoungeAgents(present: 2, openThreads: 1)
+        model.apply(countdown)
+        model.chatWindow = ChatWindowState(isVisible: true, isKey: true, appIsActive: true)
+        #expect(model.panelKind == nil, "the lounge is in front")
+        model.selectTab(.agents)
+        #expect(model.panelKind == .countdown)
+    }
+}
+
+@Suite("App model: intervening")
+@MainActor
+struct AgentsInterventionTests {
+    private func model(ack: Bool = false) -> (AgentsModel, FakeAgentsDaemon) {
+        let daemon = FakeAgentsDaemon()
+        let model = AgentsModel(send: { try await daemon.send($0) })
+        model.apply(Fixtures.agents(now: Date(), ack: ack))
+        return (model, daemon)
+    }
+
+    @Test func theInputStaysHiddenUntilTheSheetIsConfirmed() async {
+        let (model, daemon) = model()
+        #expect(!model.gate.inputVisible)
+        // Typing alone can't send anything.
+        model.draft = "hello"
+        await model.submit()
+        #expect(daemon.sent.isEmpty)
+
+        model.intervene()
+        #expect(model.gate.sheetShown)
+        #expect(!model.gate.inputVisible)
+        model.cancelAck()
+        #expect(!model.gate.sheetShown)
+        #expect(daemon.sent.isEmpty, "cancel sends nothing")
+
+        model.intervene()
+        await model.confirmAck()
+        #expect(daemon.sent == [.agentsAck])
+        #expect(model.gate.inputVisible)
+        #expect(!model.gate.sheetShown)
+
+        await model.submit()
+        #expect(daemon.sent.last == .agentsSay(text: "hello", thread: nil, to: []))
+        #expect(model.draft.isEmpty)
+    }
+
+    @Test func confirmingOnlyWorksFromTheSheet() async {
+        let (model, daemon) = model()
+        await model.confirmAck()
+        #expect(daemon.sent.isEmpty)
+        #expect(!model.gate.inputVisible)
+    }
+
+    @Test func aFailedAcknowledgementKeepsTheSheet() async {
+        let (model, daemon) = model()
+        daemon.replies["agents.ack"] = Reply(id: 1, ok: false, error: "config not writable")
+        model.intervene()
+        await model.confirmAck()
+        #expect(model.gate.sheetShown)
+        #expect(!model.gate.inputVisible)
+        #expect(model.ackError == "config not writable")
+    }
+
+    @Test func anAcknowledgedRoomSkipsTheSheet() async {
+        let (model, daemon) = model(ack: true)
+        model.intervene()
+        #expect(!model.gate.sheetShown)
+        #expect(model.gate.inputVisible)
+        #expect(daemon.sent.isEmpty, "no second agents.ack")
+        model.stopIntervening()
+        #expect(!model.gate.inputVisible)
+    }
+
+    @Test func ackRequiredShowsTheSheetAgainAndKeepsTheDraft() async {
+        let (model, daemon) = model(ack: true)
+        model.intervene()
+        daemon.replies["agents.say"] = Reply(id: 1, ok: false, error: "ack-required")
+        model.draft = "please keep the API stable"
+        await model.submit()
+        #expect(model.gate.sheetShown)
+        #expect(!model.gate.inputVisible)
+        #expect(model.draft == "please keep the API stable")
+        #expect(model.lastError == nil)
+        // A snapshot that still says ack doesn't bring the input back by itself.
+        model.apply(Fixtures.agents(now: Date(), ack: true))
+        #expect(!model.gate.inputVisible)
+
+        daemon.replies["agents.say"] = nil
+        await model.confirmAck()
+        #expect(model.gate.inputVisible)
+        await model.submit()
+        #expect(daemon.sent.map(\.name) == ["agents.say", "agents.ack", "agents.say"])
+        #expect(model.draft.isEmpty)
+    }
+
+    @Test func otherRefusalsShowAnError() async {
+        let (model, daemon) = model(ack: true)
+        model.intervene()
+        daemon.replies["agents.say"] = Reply(id: 1, ok: false, error: "rate limited")
+        model.draft = "hi"
+        await model.submit()
+        #expect(model.lastError == "rate limited")
+        #expect(model.gate.inputVisible)
+        #expect(model.draft == "hi")
+    }
+
+    @Test func interventionsGoToTheSelectedStream() async {
+        let (model, daemon) = model(ack: true)
+        model.intervene()
+        model.select(.thread(Fixtures.budgetThread))
+        #expect(model.stream == .thread(Fixtures.budgetThread))
+        #expect(model.messages.count == 2)
+        #expect(model.selectedThread?.title == "retry budget defaults")
+        model.draft = "  three is fine  "
+        await model.submit()
+        #expect(daemon.sent.last == .agentsSay(text: "three is fine", thread: Fixtures.budgetThread, to: []))
+        model.select(.main)
+        model.draft = "thanks all"
+        await model.submit()
+        #expect(daemon.sent.last == .agentsSay(text: "thanks all", thread: nil, to: []))
+    }
+
+    @Test func aVanishedThreadFallsBackToTheMainStream() {
+        let (model, _) = model()
+        model.select(.thread(Fixtures.authThread))
+        #expect(model.stream == .thread(Fixtures.authThread))
+        var next = Fixtures.agents(now: Date())
+        next.threads.removeAll { $0.id == Fixtures.authThread }
+        model.apply(next)
+        #expect(model.stream == .main)
+        #expect(model.selection == .main)
+        model.select(.thread("never-existed"))
+        #expect(model.selection == .main)
+    }
+
+    @Test func theDraftIsCapped() {
+        let (model, _) = model()
+        model.draft = String(repeating: "x", count: 2500)
+        #expect(model.draft.count == AgentsRules.maxSayLength)
+    }
+}
+
+@Suite("Agents: plain-text rendering")
+@MainActor
+struct AgentsPlainTextTests {
+    @Test func namesAndSendersAreLiteralAndLinkFree() {
+        let tricky = "**bold**/[x](https://evil.example)"
+        let name = AgentText.name(owner: "stormy-newt-59", name: tricky)
+        #expect(String(name.characters) == "stormy-newt-59/" + tricky)
+        #expect(name.runs.allSatisfy { $0.link == nil })
+        let human = AgentText.sender(AgentSenderLabel(name: "[me](https://x.example)", isHuman: true, isYou: true))
+        #expect(String(human.characters) == "[me](https://x.example) (you)")
+        #expect(human.runs.allSatisfy { $0.link == nil })
+        let agent = AgentText.sender(AgentSenderLabel(owner: nil, name: "codex-*x*"))
+        #expect(String(agent.characters) == "codex-*x*")
+    }
+
+    @Test func messageRowsHaveStableUniqueIDs() {
+        let s = Fixtures.agents(now: Date())
+        var messages = s.messages
+        messages.append(messages[3])
+        let rows = AgentMessageRowID.rows(messages)
+        #expect(Set(rows.map(\.id)).count == rows.count)
+        let trimmed = AgentMessageRowID.rows(Array(messages.dropFirst(2)))
+        #expect(Array(rows.dropFirst(2)).map(\.id) == trimmed.map(\.id))
+    }
+
+    @Test func emphasis() {
+        #expect(AgentMessageRow.emphasis(.decision) != nil)
+        #expect(AgentMessageRow.emphasis(.human) != nil)
+        #expect(AgentMessageRow.emphasis(.note) == nil)
+        #expect(AgentMessageRow.emphasis(.unknown("x")) == nil)
+    }
+}

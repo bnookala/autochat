@@ -4,25 +4,51 @@ import SwiftUI
 
 /// Native version of the TUI in src/tui.js. Every piece of peer text is rendered with
 /// `Text(verbatim:)` / plain `AttributedString(String)`: never markdown, never links.
+/// Once the daemon hosts an agent room, the window has a second tab: Agents (AgentsView).
 struct ChatView: View {
     @Bindable var model: AppModel
+    var onSelectTab: @MainActor (ChatTab) -> Void = { _ in }
 
     var body: some View {
-        let p = model.presentation
         VStack(spacing: 0) {
             if model.connected, let snapshot = model.snapshot {
-                if snapshot.phase.isInRoom || (snapshot.phase.isCloseout && !snapshot.messages.isEmpty) {
-                    roomBody(snapshot, p)
-                } else if snapshot.phase.isCloseout {
-                    Spacer(minLength: 0)
+                if model.showsAgentsTab {
+                    ChatTabStrip(selection: model.effectiveTab, onSelect: onSelectTab)
+                    Divider()
+                }
+                if model.effectiveTab == .agents {
+                    AgentsView(agents: model.agents)
                 } else {
-                    LoungeView(model: model, presentation: p)
+                    lounge(snapshot)
                 }
             } else {
                 DaemonStatusView(model: model)
             }
         }
         .frame(minWidth: 420, minHeight: 420)
+        .sheet(isPresented: ackSheetShown) {
+            AckSheet(agents: model.agents)
+        }
+    }
+
+    private var ackSheetShown: Binding<Bool> {
+        Binding(
+            get: { model.agents.gate.sheetShown },
+            set: { shown in if !shown { model.agents.cancelAck() } }
+        )
+    }
+
+    private func lounge(_ snapshot: Snapshot) -> some View {
+        let p = model.presentation
+        return VStack(spacing: 0) {
+            if snapshot.phase.isInRoom || (snapshot.phase.isCloseout && !snapshot.messages.isEmpty) {
+                roomBody(snapshot, p)
+            } else if snapshot.phase.isCloseout {
+                Spacer(minLength: 0)
+            } else {
+                LoungeView(model: model, presentation: p)
+            }
+        }
         .overlay {
             if let closeout = p.closeout {
                 CloseoutOverlay(closeout: closeout, secondsLeft: model.closeoutSecondsLeft, onKeepOpen: { model.cancelCloseout() })
@@ -57,6 +83,61 @@ struct ChatView: View {
         }
         .background(.bar)
         .animation(.smooth(duration: 0.25), value: snapshot.countdown == nil)
+    }
+}
+
+// MARK: - Tabs
+
+/// Lounge | Agents, as a scope bar under the toolbar. Only there once the daemon hosts an
+/// agent room.
+struct ChatTabStrip: View {
+    let selection: ChatTab
+    let onSelect: @MainActor (ChatTab) -> Void
+
+    var body: some View {
+        TabSwitch(selection: selection, onSelect: onSelect)
+            .fixedSize()
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity)
+    }
+}
+
+/// A native segmented control: unlike SwiftUI's segmented picker it shows the lock next to
+/// "Agents".
+private struct TabSwitch: NSViewRepresentable {
+    let selection: ChatTab
+    let onSelect: @MainActor (ChatTab) -> Void
+
+    func makeNSView(context: Context) -> NSSegmentedControl {
+        let control = NSSegmentedControl(labels: ["Lounge", "Agents"], trackingMode: .selectOne, target: context.coordinator, action: #selector(Coordinator.changed(_:)))
+        let lock = NSImage(systemSymbolName: "lock.fill", accessibilityDescription: "local")?
+            .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))
+        control.setImage(lock, forSegment: 1)
+        control.setImageScaling(.scaleNone, forSegment: 1)
+        control.setToolTip("The lounge: chat with people on autopilot", forSegment: 0)
+        control.setToolTip("The local agent room: your agents on this Mac. Nothing leaves it.", forSegment: 1)
+        control.setAccessibilityLabel("View")
+        return control
+    }
+
+    func updateNSView(_ control: NSSegmentedControl, context: Context) {
+        context.coordinator.onSelect = onSelect
+        control.selectedSegment = selection == .agents ? 1 : 0
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(onSelect: onSelect) }
+
+    @MainActor
+    final class Coordinator: NSObject {
+        var onSelect: @MainActor (ChatTab) -> Void
+
+        init(onSelect: @escaping @MainActor (ChatTab) -> Void) {
+            self.onSelect = onSelect
+        }
+
+        @objc func changed(_ sender: NSSegmentedControl) {
+            onSelect(sender.selectedSegment == 1 ? .agents : .lounge)
+        }
     }
 }
 
