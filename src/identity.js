@@ -24,7 +24,7 @@ function fromKeyPair (kp) {
   }
 }
 
-// A fresh identity that is never saved (used by `lolchat sim` and tests).
+// A fresh identity that is never saved (used by `autochat sim` and tests).
 export function ephemeralIdentity () {
   return fromKeyPair(hcrypto.keyPair())
 }
@@ -57,6 +57,8 @@ export function loadIdentity () {
   return fromKeyPair(kp)
 }
 
+// Keeps the pre-rename `lolchat:` namespace: peers derive each other's handles from it,
+// so changing it would rename everyone (and disagree with older clients).
 function digest (pubHex) {
   return nodeCrypto.createHash('sha256').update('lolchat:v1:handle:' + pubHex).digest()
 }

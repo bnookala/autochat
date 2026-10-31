@@ -4,9 +4,9 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lolchat-session-'))
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'autochat-session-'))
 process.env.COPILOT_HOME = path.join(tmp, 'copilot')
-process.env.LOLCHAT_HOME = path.join(tmp, 'lolchat')
+process.env.AUTOCHAT_HOME = path.join(tmp, 'autochat')
 const { quickMode, SessionLog, scanEvents, objectiveStatus } = await import('../src/session.js')
 
 const sid = 'abc-123'

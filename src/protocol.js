@@ -12,6 +12,7 @@ const sha = (s) => nodeCrypto.createHash('sha256').update(s).digest()
 
 // Public rooms are plain names (shown as #name). Private rooms are generated
 // invite codes with an `lc1-` prefix and enough randomness to be unguessable.
+// `lc1-` predates the autochat rename; it stays so existing invite codes keep working.
 const PUBLIC_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/
 const PRIVATE_RE = /^lc1-[a-z0-9-]{8,80}$/
 
@@ -39,13 +40,16 @@ export function generatePrivateCode () {
   return `lc1-${adj}-${animal}-${tail}`
 }
 
-export const topicFor = (room) => sha('lolchat:v1:topic:' + room.canonical)
-export const roomKeyFor = (room) => sha('lolchat:v1:roomkey:' + room.canonical)
+// Wire namespace from before the lolchat → autochat rename. It feeds the DHT topics, room
+// keys, room tags and signed host claims, so renaming it would split us from existing peers.
+const NS = 'lolchat:v1:'
+export const topicFor = (room) => sha(NS + 'topic:' + room.canonical)
+export const roomKeyFor = (room) => sha(NS + 'roomkey:' + room.canonical)
 // Bound into every signed message so it can't be replayed into another room.
-export const roomTagFor = (room) => sha('lolchat:v1:roomtag:' + roomKeyFor(room).toString('hex')).toString('hex').slice(0, 32)
-export const DIRECTORY_TOPIC = sha('lolchat:v1:directory')
+export const roomTagFor = (room) => sha(NS + 'roomtag:' + roomKeyFor(room).toString('hex')).toString('hex').slice(0, 32)
+export const DIRECTORY_TOPIC = sha(NS + 'directory')
 
-const instClaim = (roomTag, inst) => b4a.from(`lolchat:v1:inst:${roomTag}:${inst.iid}:${inst.createdAt}:${inst.hostId}`)
+const instClaim = (roomTag, inst) => b4a.from(`${NS}inst:${roomTag}:${inst.iid}:${inst.createdAt}:${inst.hostId}`)
 
 // A room instance is a claim signed by its host, so nobody can make someone else (or a ghost) host.
 export function signInst (identity, roomTag, inst) {

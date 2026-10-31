@@ -21,7 +21,7 @@ export function encodeState (state) {
 }
 
 /**
- * Local-only channel to the (single) lolchat process: the terminal UI or `lolchat daemon`.
+ * Local-only channel to the (single) autochat process: the terminal UI or `autochat daemon`.
  * Hooks send one-shot messages (one line in, one reply line out, then close).
  * Clients whose first line is {"type":"subscribe"} keep the connection: they get a
  * state snapshot now and after every publish() (≤ 20/s), and may send {"type":"cmd"}
@@ -113,9 +113,9 @@ export function serve (onMessage, { state, command, maxSubscribers = MAX_SUBSCRI
     const listen = (retried) => {
       server.once('error', async (err) => {
         if (err.code !== 'EADDRINUSE' || retried || process.platform === 'win32') return reject(err)
-        // Socket file exists: is another lolchat alive, or is it stale?
+        // Socket file exists: is another autochat alive, or is it stale?
         const alive = await send({ type: 'ping' }, 400)
-        if (alive) return reject(Object.assign(new Error('lolchat already running'), { code: 'ALREADY_RUNNING', info: alive }))
+        if (alive) return reject(Object.assign(new Error('autochat already running'), { code: 'ALREADY_RUNNING', info: alive }))
         try { fs.unlinkSync(p) } catch {}
         listen(true)
       })

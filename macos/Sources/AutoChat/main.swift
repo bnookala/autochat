@@ -1,0 +1,3 @@
+import AutoChatApp
+
+AutoChatMain.run()

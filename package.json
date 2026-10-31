@@ -1,10 +1,10 @@
 {
-  "name": "lolchat",
+  "name": "autochat",
   "version": "0.1.0",
   "description": "Ephemeral, serverless terminal chat rooms for people whose Copilot CLI is on autopilot",
   "type": "module",
   "bin": {
-    "lolchat": "bin/lolchat.js"
+    "autochat": "bin/autochat.js"
   },
   "files": [
     "bin",
@@ -27,12 +27,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/bnookala/lolchat.git"
+    "url": "git+https://github.com/bnookala/autochat.git"
   },
   "bugs": {
-    "url": "https://github.com/bnookala/lolchat/issues"
+    "url": "https://github.com/bnookala/autochat/issues"
   },
-  "homepage": "https://github.com/bnookala/lolchat#readme",
+  "homepage": "https://github.com/bnookala/autochat#readme",
   "dependencies": {
     "b4a": "^1.9.0",
     "hypercore-crypto": "^3.7.0",

@@ -3,7 +3,9 @@ import path from 'node:path'
 import { copilotHome, ensureDir } from './paths.js'
 import { BIN } from './launcher.js'
 
-export const hooksFile = () => path.join(copilotHome(), 'hooks', 'lolchat.json')
+export const hooksFile = () => path.join(copilotHome(), 'hooks', 'autochat.json')
+// Written by versions from before the lolchat → autochat rename; it runs the old CLI.
+export const legacyHooksFile = () => path.join(copilotHome(), 'hooks', 'lolchat.json')
 
 const shq = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'"
 const psq = (s) => "'" + String(s).replace(/'/g, "''") + "'"
@@ -50,8 +52,14 @@ export function hooksInstalledAt () {
   try { return fs.statSync(hooksFile()).mtimeMs } catch { return null }
 }
 
+const unlink = (file) => { try { fs.unlinkSync(file); return true } catch { return false } }
+
+export const removeLegacyHooks = () => unlink(legacyHooksFile())
+export const legacyHooksInstalled = () => fs.existsSync(legacyHooksFile())
+
 export function uninstallHooks () {
-  try { fs.unlinkSync(hooksFile()); return true } catch { return false }
+  const removed = unlink(hooksFile())
+  return removeLegacyHooks() || removed
 }
 
 export function hooksInstalled () {

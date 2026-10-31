@@ -1,14 +1,14 @@
 #!/usr/bin/env node
-// Mock `lolchat daemon` for developing and testing LolChat.app without P2P or Copilot.
+// Mock `autochat daemon` for developing and testing AutoChat.app without P2P or Copilot.
 // Speaks the v1 subscribe/state/cmd protocol from issue #2 over the same unix socket
-// path as src/paths.js sockPath() (respects LOLCHAT_HOME). No dependencies.
+// path as src/paths.js sockPath() (respects AUTOCHAT_HOME). No dependencies.
 //
 //   node macos/dev/mock-daemon.mjs [daemon] [--scenario full|lounge|room|request|countdown]
 //        [--countdown 30] [--speed 1] [--loop] [--sock PATH] [--quiet]
 //
 // The leading `daemon` argument is accepted and ignored, so the app can spawn this file
-// in place of the real CLI: LOLCHAT_BIN=macos/dev/mock-daemon.mjs. Options can also come
-// from LOLCHAT_MOCK_SCENARIO / LOLCHAT_MOCK_COUNTDOWN / LOLCHAT_MOCK_SPEED for that case.
+// in place of the real CLI: AUTOCHAT_BIN=macos/dev/mock-daemon.mjs. Options can also come
+// from AUTOCHAT_MOCK_SCENARIO / AUTOCHAT_MOCK_COUNTDOWN / AUTOCHAT_MOCK_SPEED for that case.
 import net from 'node:net'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -18,9 +18,9 @@ import { parseArgs } from 'node:util'
 const { values } = parseArgs({
   args: process.argv.slice(2).filter(a => a !== 'daemon'),
   options: {
-    scenario: { type: 'string', default: process.env.LOLCHAT_MOCK_SCENARIO || 'full' },
-    countdown: { type: 'string', default: process.env.LOLCHAT_MOCK_COUNTDOWN || '30' },
-    speed: { type: 'string', default: process.env.LOLCHAT_MOCK_SPEED || '1' },
+    scenario: { type: 'string', default: process.env.AUTOCHAT_MOCK_SCENARIO || 'full' },
+    countdown: { type: 'string', default: process.env.AUTOCHAT_MOCK_COUNTDOWN || '30' },
+    speed: { type: 'string', default: process.env.AUTOCHAT_MOCK_SPEED || '1' },
     loop: { type: 'boolean', default: false },
     sock: { type: 'string' },
     quiet: { type: 'boolean', default: false }
@@ -32,7 +32,8 @@ const MAX_SUBSCRIBERS = 8
 const BANNER_MS = 6000
 const speed = Math.max(0.05, Number(values.speed) || 1)
 const countdownSecs = Math.max(1, Number(values.countdown) || 30)
-const home = process.env.LOLCHAT_HOME || path.join(os.homedir(), '.lolchat')
+// LOLCHAT_HOME is the pre-rename fallback, as in src/env.js.
+const home = (process.env.AUTOCHAT_HOME ?? process.env.LOLCHAT_HOME) || path.join(os.homedir(), '.autochat')
 const sock = path.resolve(values.sock || path.join(home, 'run', 'ui.sock'))
 
 const log = (...a) => { if (!values.quiet) process.stderr.write(`[mock ${new Date().toISOString().slice(11, 19)}] ${a.join(' ')}\n`) }
