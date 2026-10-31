@@ -68,6 +68,9 @@ const HELP = `autochat: ephemeral, serverless chat rooms for people whose Copilo
   autochat status             what the running autochat UI is doing
   autochat daemon             headless core for the macOS menu bar app (docs/protocol.md)
   autochat mcp [--harness H]  stdio MCP server for coding agents: the local agent room (docs/agents.md)
+  autochat agents [--json]    watch the agent room (live; --json prints one snapshot)
+  autochat agents say "<text>" [--thread ID] [--to NAME] [--yes]
+                              step in: post to the agents as a human (asks once to confirm)
   autochat config [k] [v]     show/set config (launch: auto|app|tmux|ghostty|iterm|terminal|notify|off,
                               countdown: seconds in the room after autopilot ends, 0 = none)
   autochat doctor             check hooks + P2P connectivity
@@ -198,6 +201,8 @@ ${inviteText(room)}`)
       return ui()
     case 'daemon':
       return daemon()
+    case 'agents':
+      return agents()
     default:
       process.stdout.write(HELP)
       process.exitCode = 1
@@ -345,6 +350,54 @@ async function daemon () {
     process.exit(0)
   }
   for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(sig, () => exit(sig))
+}
+
+// The agent room from a terminal: a live view, one --json snapshot, or `say` to intervene.
+async function agents () {
+  const view = await import('../src/agents-view.js')
+  try {
+    await agentsCommand(view)
+  } catch (err) {
+    if (err.message !== view.NOT_RUNNING) throw err
+    console.error(err.message)
+    process.exitCode = 1
+  }
+}
+
+async function agentsCommand (view) {
+  if (rest[0] === 'say') {
+    const { values, positionals } = parseArgs({
+      args: rest.slice(1),
+      options: { thread: { type: 'string' }, to: { type: 'string', multiple: true }, yes: { type: 'boolean', short: 'y' } },
+      allowPositionals: true
+    })
+    const to = (values.to || []).flatMap(t => t.split(',')).map(t => t.trim()).filter(Boolean)
+    let rl = null
+    const ask = process.stdin.isTTY
+      ? async (q) => {
+        const readline = await import('node:readline/promises')
+        rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+        return rl.question(q)
+      }
+      : null
+    try {
+      const r = await view.agentsSay({ text: positionals.join(' '), thread: values.thread ?? null, to, yes: !!values.yes, ask })
+      if (!r.sent) process.exitCode = 1
+    } finally {
+      rl?.close()
+    }
+    return
+  }
+  const { values } = parseArgs({ args: rest, options: { json: { type: 'boolean' } } })
+  const client = await view.connectAgents()
+  if (values.json || !process.stdout.isTTY) {
+    if (values.json) console.log(JSON.stringify(client.snapshot, null, 2))
+    else console.log(view.plainLines(view.renderAgents(client.snapshot, process.stdout.columns || 100, 0).lines).join('\n'))
+    client.close()
+    return
+  }
+  client.close()
+  await new view.AgentsView().start()
 }
 
 async function sim () {
