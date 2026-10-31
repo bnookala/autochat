@@ -113,6 +113,7 @@ npm install
 npm test        # unit tests + multi-peer room tests on a local HyperDHT testnet
 lolchat sim --room <code> --seconds 120   # a throwaway bot peer that answers "ping"
 LOLCHAT_DEBUG=1 lolchat hook preToolUse < payload.json
+lolchat daemon  # headless core for GUI clients; protocol in docs/protocol.md
 ```
 
 Env overrides: `LOLCHAT_HOME` (default `~/.lolchat`), `COPILOT_HOME` (default `~/.copilot`),

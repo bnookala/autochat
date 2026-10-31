@@ -7,6 +7,18 @@ import { focusOrigin as defaultFocus, notify as defaultNotify } from './launcher
 
 const MAX_MESSAGES = 400
 const RUNNING = new Set(['running', 'needed'])
+const ANSI16 = ['000000', '800000', '008000', '808000', '000080', '800080', '008080', 'c0c0c0', '808080', 'ff0000', '00ff00', 'ffff00', '0000ff', 'ff00ff', '00ffff', 'ffffff']
+
+// xterm 256-color index (what the TUI uses) → "#rrggbb" for GUI clients.
+export function hexColor (n) {
+  if (!Number.isInteger(n) || n < 0 || n > 255) return null
+  if (n < 16) return '#' + ANSI16[n]
+  const hex = (v) => v.toString(16).padStart(2, '0')
+  if (n >= 232) return '#' + hex(8 + (n - 232) * 10).repeat(3)
+  const level = (v) => v ? 55 + v * 40 : 0
+  const i = n - 16
+  return '#' + hex(level(Math.floor(i / 36))) + hex(level(Math.floor(i / 6) % 6)) + hex(level(i % 6))
+}
 
 /**
  * Brain of the UI process: tracks Copilot sessions (via hook messages + session logs),
@@ -16,7 +28,7 @@ const RUNNING = new Set(['running', 'needed'])
  */
 export class Controller extends EventEmitter {
   constructor ({
-    identity, config, auto = false, bootstrap, roomOpts = {},
+    identity, config, auto = false, daemon = false, bootstrap, roomOpts = {},
     focus = defaultFocus, notify = defaultNotify, bannerMs = 6000, watchLogs = true, requestLingerMs = 20000
   }) {
     super()
@@ -24,6 +36,7 @@ export class Controller extends EventEmitter {
     this.identity = identity
     this.config = config
     this.auto = auto
+    this.daemon = daemon
     this.bootstrap = bootstrap
     this.roomOpts = roomOpts
     this.focus = focus
@@ -34,6 +47,7 @@ export class Controller extends EventEmitter {
     this.sessions = new Map()
     this.finished = new Map()
     this.messages = []
+    this.msgSeq = 0
     this.phase = 'lounge'
     this.room = null
     this.banner = null
@@ -45,7 +59,7 @@ export class Controller extends EventEmitter {
 
   handle (msg) {
     if (!msg || typeof msg !== 'object') return { ok: false }
-    if (msg.type === 'ping') return { pong: true, phase: this.phase }
+    if (msg.type === 'ping') return { pong: true, phase: this.phase, daemon: this.daemon, pid: process.pid }
     if (msg.type === 'status') return { phase: this.phase, room: this.roomInfo.display, sessions: [...this.sessions.values()].map(s => ({ sid: s.sid, state: s.state, cwd: s.cwd })) }
     if (msg.type === 'hook') return { tracked: this._onHook(msg) }
     return { ok: false }
@@ -339,6 +353,7 @@ export class Controller extends EventEmitter {
   }
 
   _push (m) {
+    m.id = ++this.msgSeq
     this.messages.push(m)
     if (this.messages.length > MAX_MESSAGES) this.messages.splice(0, this.messages.length - MAX_MESSAGES)
     this._changed()
@@ -346,6 +361,56 @@ export class Controller extends EventEmitter {
 
   _changed () {
     this.emit('change')
+  }
+
+  // --- GUI clients (docs/protocol.md) ----------------------------------------------
+
+  // Commands from subscribed clients. Throws to reply {ok:false, error}.
+  async command (msg) {
+    switch (msg.cmd) {
+      case 'say': {
+        if (typeof msg.text !== 'string' || !msg.text.trim()) throw new Error('empty message')
+        if (this.phase !== 'room' || !this.room) throw new Error('not in a room')
+        if (!this.say(msg.text)) throw new Error('message not sent')
+        return
+      }
+      case 'returnNow':
+        throw new Error('no countdown running')
+      case 'leaveRoom':
+        if (this.phase !== 'room' && this.phase !== 'spectating') throw new Error('not in a room')
+        return this.leaveRoom()
+      case 'jumpToCopilot':
+        return this.jumpToCopilot()
+      case 'dismissRequest':
+        return this.dismissRequest()
+      case 'joinNow':
+        return this.joinNow()
+      default:
+        throw new Error('unknown command')
+    }
+  }
+
+  // Full state for subscribed clients. Field names are a contract: add, never rename.
+  snapshot () {
+    const r = this.room
+    const req = this.currentRequest()
+    const b = this.banner
+    return {
+      type: 'state',
+      v: 1,
+      now: Date.now(),
+      phase: this.phase,
+      room: { display: this.roomInfo.display, isHost: !!r?.isHost, activeCount: r ? r.activeCount() : 0, hostHandle: r?.hostHandle ?? null, peers: r ? r.mateCount() : 0 },
+      me: { handle: this.identity.handle, color: hexColor(this.identity.color) },
+      members: r
+        ? r.memberList().map(m => ({ handle: m.handle, color: hexColor(m.color), status: m.status === 'away' ? 'away' : 'active', isHost: !!m.host, you: !!m.self, needed: m.status === 'needed' }))
+        : [],
+      messages: this.messages.map(m => ({ id: m.id, kind: m.kind, from: m.kind === 'chat' ? m.handle : null, text: m.text, ts: m.ts, color: hexColor(m.color), you: !!m.self })),
+      request: req ? { sid: req.sid, cwd: req.cwd ?? null, title: req.title || '', message: req.message || '', resolved: !!req.resolved } : null,
+      sessions: [...this.sessions.values()].map(s => ({ sid: s.sid, state: s.state, cwd: s.cwd ?? null })),
+      countdown: null,
+      banner: b ? { kind: b.kind, reason: b.reason ?? null, summary: b.summary || null, cwd: b.cwd ?? null } : null
+    }
   }
 
   async shutdown () {
