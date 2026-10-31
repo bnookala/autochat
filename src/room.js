@@ -59,6 +59,8 @@ export class Room extends EventEmitter {
     // Per-sender budget for all signed messages: heartbeats plus chat plus generous slack.
     this.senderBudget = Math.max(20, Math.ceil(BUDGET_WINDOW_MS / heartbeatMs) * 2 + chatRate.count * 2)
     this.now = now
+    // Derived from the pre-rename `lolchat:v1:` namespace (see protocol.js), so autochat
+    // peers still find and verify lolchat peers in the same room.
     this.topic = topicFor(room)
     this.roomKey = roomKeyFor(room)
     this.roomTag = roomTagFor(room)

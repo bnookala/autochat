@@ -3,9 +3,10 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { envVar } from './env.js'
 
-export const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'lolchat.js')
-export const APP_BUNDLE_ID = 'com.bnookala.lolchat'
+export const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'autochat.js')
+export const APP_BUNDLE_ID = 'com.bnookala.autochat'
 export const LAUNCH_METHODS = ['auto', 'app', 'tmux', 'ghostty', 'iterm', 'terminal', 'x-terminal-emulator', 'gnome-terminal', 'wt', 'notify', 'off']
 
 const shq = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'"
@@ -13,28 +14,32 @@ const asq = (s) => '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') +
 
 function uiCommand (extra = [], envs = []) {
   // Terminals launched via `open`/AppleScript don't inherit our env, so pass it explicitly.
-  for (const k of ['LOLCHAT_HOME', 'COPILOT_HOME', 'LOLCHAT_BOOTSTRAP']) {
-    if (process.env[k]) envs.push(`${k}=${process.env[k]}`)
+  const pass = { AUTOCHAT_HOME: envVar('HOME'), COPILOT_HOME: process.env.COPILOT_HOME, AUTOCHAT_BOOTSTRAP: envVar('BOOTSTRAP') }
+  for (const [k, v] of Object.entries(pass)) {
+    if (v) envs.push(`${k}=${v}`)
   }
   return ['/usr/bin/env', ...envs, process.execPath, BIN, 'ui', '--auto', ...extra]
 }
 
 // Wake the menu bar app in the background (no focus steal). It starts or attaches to
-// `lolchat daemon`, which drains the events the hook spooled meanwhile.
+// `autochat daemon`, which drains the events the hook spooled meanwhile.
 const appCommand = () => ['open', '-g', '-b', APP_BUNDLE_ID]
 
 const has = (cmd) => spawnSync('sh', ['-c', `command -v ${cmd}`], { stdio: 'ignore' }).status === 0
 
-// LOLCHAT_APP_DIRS (path-delimited) replaces the default search dirs, for tests.
-const appDirs = (env) => env.LOLCHAT_APP_DIRS !== undefined
-  ? env.LOLCHAT_APP_DIRS.split(path.delimiter).filter(Boolean)
-  : ['/Applications', path.join(os.homedir(), 'Applications')]
+// AUTOCHAT_APP_DIRS (path-delimited) replaces the default search dirs, for tests.
+function appDirs (env) {
+  const dirs = envVar('APP_DIRS', env)
+  return dirs !== undefined
+    ? dirs.split(path.delimiter).filter(Boolean)
+    : ['/Applications', path.join(os.homedir(), 'Applications')]
+}
 
-// Path to LolChat.app if installed. Its Info.plist holds the bundle id as plain ASCII,
+// Path to AutoChat.app if installed. Its Info.plist holds the bundle id as plain ASCII,
 // in both XML and binary plists.
 export function appInstalled (env = process.env) {
   for (const dir of appDirs(env)) {
-    const app = path.join(dir, 'LolChat.app')
+    const app = path.join(dir, 'AutoChat.app')
     try { if (fs.readFileSync(path.join(app, 'Contents', 'Info.plist')).includes(APP_BUNDLE_ID)) return app } catch {}
   }
   return null
@@ -66,7 +71,7 @@ function detached (cmd, args, env = process.env) {
 
 // Ghostty ≥ 1.3 is scriptable: ask the running Ghostty for exactly one new window.
 // Starting a second Ghostty instance instead makes macOS restore every saved
-// Ghostty window/tab into it. The window closes itself when lolchat exits.
+// Ghostty window/tab into it. The window closes itself when autochat exits.
 const GHOSTTY_NEW_WINDOW = [
   'on run argv',
   'tell application id "com.mitchellh.ghostty"',
@@ -84,15 +89,16 @@ function ghosttyNewWindow (cmd) {
 // Fallback for Ghostty without AppleScript: a dedicated instance that the UI quits on exit
 // (closeOwnTerminal). window-save-state=never stops it restoring all saved windows/tabs.
 function ghosttyInstance () {
-  detached('open', ['-na', 'Ghostty.app', '--args', '--title=lolchat', '--window-width=100', '--window-height=30',
+  detached('open', ['-na', 'Ghostty.app', '--args', '--title=autochat', '--window-width=100', '--window-height=30',
     '--window-save-state=never', '--quit-after-last-window-closed=true', '--confirm-close-surface=false',
-    '-e', ...uiCommand([], ['LOLCHAT_GHOSTTY=1'])])
+    '-e', ...uiCommand([], ['AUTOCHAT_GHOSTTY=1'])])
 }
 
 export function launchUI ({ cfg, env, method = pickMethod(cfg, env) }) {
   const cmd = method === 'app' ? appCommand() : uiCommand()
-  if (process.env.LOLCHAT_LAUNCH_RECORD) {
-    fs.appendFileSync(process.env.LOLCHAT_LAUNCH_RECORD, JSON.stringify({ method, cmd }) + '\n')
+  const record = envVar('LAUNCH_RECORD')
+  if (record) {
+    fs.appendFileSync(record, JSON.stringify({ method, cmd }) + '\n')
     return method
   }
   switch (method) {
@@ -129,7 +135,7 @@ export function launchUI ({ cfg, env, method = pickMethod(cfg, env) }) {
 }
 
 export function notify (title, message) {
-  if (process.env.LOLCHAT_LAUNCH_RECORD || process.env.LOLCHAT_NO_NOTIFY) return
+  if (envVar('LAUNCH_RECORD') || envVar('NO_NOTIFY')) return
   if (process.platform === 'darwin') {
     detached('osascript', ['-e', `display notification ${asq(message)} with title ${asq(title)}`])
   } else if (process.platform === 'linux' && has('notify-send')) {
@@ -138,15 +144,15 @@ export function notify (title, message) {
 }
 
 // The fallback Ghostty instance stays alive after its command exits, so the UI quits the
-// dedicated lolchat instance it was launched in (never any other window).
+// dedicated autochat instance it was launched in (never any other window).
 export function closeOwnTerminal () {
-  if (!process.env.LOLCHAT_GHOSTTY || process.platform !== 'darwin') return
+  if (!envVar('GHOSTTY') || process.platform !== 'darwin') return
   let pid = process.ppid
   for (let i = 0; i < 6 && pid > 1; i++) {
     const r = spawnSync('ps', ['-ww', '-o', 'ppid=,command=', '-p', String(pid)], { encoding: 'utf8' })
     const m = /^(\d+)\s+(.*)$/.exec((r.stdout || '').trim())
     if (!m) return
-    if (/Ghostty\.app\/Contents\/MacOS\/ghostty/.test(m[2]) && m[2].includes('--title=lolchat') && m[2].includes(BIN)) {
+    if (/Ghostty\.app\/Contents\/MacOS\/ghostty/.test(m[2]) && m[2].includes('--title=autochat') && m[2].includes(BIN)) {
       detached('sh', ['-c', `sleep 0.4; kill ${pid}`])
       return
     }
@@ -158,7 +164,7 @@ const APPS = { ghostty: 'Ghostty', 'iTerm.app': 'iTerm', Apple_Terminal: 'Termin
 
 // "Pull back to reality": put focus back on the terminal running Copilot.
 export function focusOrigin (origin) {
-  if (!origin || process.env.LOLCHAT_LAUNCH_RECORD || process.env.LOLCHAT_NO_FOCUS) return
+  if (!origin || envVar('LAUNCH_RECORD') || envVar('NO_FOCUS')) return
   if (origin.tmux && origin.tmuxPane) {
     const env = { ...process.env, TMUX: origin.tmux }
     spawnSync('tmux', ['select-window', '-t', origin.tmuxPane], { env, stdio: 'ignore' })

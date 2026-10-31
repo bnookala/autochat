@@ -10,7 +10,7 @@ import { parseRoom, sanitize } from './protocol.js'
 export const HOOK_EVENTS = ['sessionStart', 'userPromptSubmitted', 'preToolUse', 'postToolUse', 'agentStop', 'notification', 'sessionEnd']
 const REQUEST_NOTIFICATIONS = new Set(['permission_prompt', 'elicitation_dialog'])
 // How long a launch may take before another hook tries again. Events in between are
-// spooled for the new process. Covers a cold LolChat.app start (~2-3 s) plus its daemon.
+// spooled for the new process. Covers a cold AutoChat.app start (~2-3 s) plus its daemon.
 const LOCK_STALE_MS = 15000
 const SPOOL_TTL_MS = 2 * 60 * 1000
 const NOTIFY_COOLDOWN_MS = 30 * 60 * 1000
@@ -191,7 +191,7 @@ export async function runHook (event, env = process.env) {
   if (method === 'notify') {
     // No terminal we can open: nudge once per session rather than on every tool call.
     if (!cooledDown(sid)) return { action: 'ignored' }
-    notify('lolchat', `Autopilot engaged. Run \`lolchat\` to join ${roomDisplay}.`)
+    notify('autochat', `Autopilot engaged. Run \`autochat\` to join ${roomDisplay}.`)
     return { action: 'launched', method }
   }
   if (!acquireLock()) { spool(msg); return { action: 'spooled' } }

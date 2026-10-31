@@ -8,9 +8,9 @@ import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import createTestnet from 'hyperdht/testnet.js'
 
-const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'lolchat.js')
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lolchat-daemon-'))
-process.env.LOLCHAT_HOME = path.join(tmp, 'lc')
+const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'autochat.js')
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'autochat-daemon-'))
+process.env.AUTOCHAT_HOME = path.join(tmp, 'lc')
 process.env.COPILOT_HOME = path.join(tmp, 'copilot')
 const { serve, send, MAX } = await import('../src/ipc.js')
 const { sockPath } = await import('../src/paths.js')
@@ -126,20 +126,20 @@ test('snapshots stay under the line cap; servers without state refuse subscripti
   assert.equal((await b.next()).error, 'subscriptions not supported')
 })
 
-test('lolchat daemon: headless, driven by hooks and subscribers, clean SIGTERM', { timeout: 60000 }, async (t) => {
+test('autochat daemon: headless, driven by hooks and subscribers, clean SIGTERM', { timeout: 60000 }, async (t) => {
   const testnet = await createTestnet(3)
   t.after(() => testnet.destroy())
   const home = path.join(tmp, 'd')
   fs.mkdirSync(home, { recursive: true })
   fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ room: 'lc1-daemon-' + Math.random().toString(36).slice(2, 12), announce: false }))
-  process.env.LOLCHAT_HOME = home
+  process.env.AUTOCHAT_HOME = home
   const env = {
     ...process.env,
-    LOLCHAT_HOME: home,
-    LOLCHAT_BOOTSTRAP: testnet.bootstrap.map(b => `${b.host}:${b.port}`).join(','),
-    LOLCHAT_NO_NOTIFY: '1',
-    LOLCHAT_NO_FOCUS: '1',
-    LOLCHAT_COUNTDOWN_MS: '1500'
+    AUTOCHAT_HOME: home,
+    AUTOCHAT_BOOTSTRAP: testnet.bootstrap.map(b => `${b.host}:${b.port}`).join(','),
+    AUTOCHAT_NO_NOTIFY: '1',
+    AUTOCHAT_NO_FOCUS: '1',
+    AUTOCHAT_COUNTDOWN_MS: '1500'
   }
   const daemon = spawn(process.execPath, [BIN, 'daemon'], { env, stdio: ['ignore', 'ignore', 'pipe'] })
   let stderr = ''

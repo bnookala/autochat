@@ -98,7 +98,7 @@ function modal (view, cols) {
 
 function header (view, cols) {
   const l = new Line(cols)
-  l.add(' lolchat ', INV + BOLD).add(' ' + view.roomDisplay + ' ', INV)
+  l.add(' autochat ', INV + BOLD).add(' ' + view.roomDisplay + ' ', INV)
   const bits = []
   if (view.phase === 'spectating') bits.push('spectating')
   bits.push(`${view.activeCount} on autopilot`)
@@ -154,15 +154,15 @@ function bannerScreen (view, cols, rows) {
   let title
   let lines
   if (view.phase === 'lounge') {
-    title = 'lolchat: waiting for autopilot'
+    title = 'autochat: waiting for autopilot'
     lines = [
       `you are ${view.handle}`,
       `your room: ${view.roomDisplay}`,
       '',
       'When a Copilot CLI session goes into autopilot, you drop into the room here.',
-      'Change rooms: lolchat join <code> · lolchat host · lolchat rooms'
+      'Change rooms: autochat join <code> · autochat host · autochat rooms'
     ]
-    if (view.hooksInstalled === false) lines.push('', '! hooks not installed: run `lolchat setup`')
+    if (view.hooksInstalled === false) lines.push('', '! hooks not installed: run `autochat setup`')
     lines.push('', 'ctrl-c to quit')
   } else if (b.kind === 'dead') {
     title = 'the room died'
@@ -280,7 +280,7 @@ export class TUI {
   }
 
   start () {
-    this.stdout.write('\x1b[?1049h\x1b[?25l\x1b]0;lolchat\x07')
+    this.stdout.write('\x1b[?1049h\x1b[?25l\x1b]0;autochat\x07')
     if (this.stdin.isTTY) this.stdin.setRawMode(true)
     this.stdin.resume()
     this.stdin.on('data', this.onData)

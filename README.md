@@ -1,6 +1,7 @@
-# lolchat
+# autochat
 
-Ephemeral, serverless terminal chat rooms for people whose **GitHub Copilot CLI is on autopilot**.
+Ephemeral, serverless chat rooms for people whose **GitHub Copilot CLI is on autopilot**: in a native
+[menu bar app](#macos-menu-bar-app) on macOS, or right in your terminal.
 
 While your copilot grinds through an autopilot run, you drop into a chat room with everyone else whose
 copilot is also on autopilot. When your run finishes, you get **pulled back to reality**. Nothing is
@@ -12,7 +13,7 @@ stored anywhere. When the last person on autopilot leaves, the room dies.
 │ Which database should I use? (Database: postgres / sqlite)   │
 │ autopilot carried on without you · esc dismiss               │
 └──────────────────────────────────────────────────────────────┘
- lolchat  #lobby · 3 on autopilot · host jade-lynx-0c           stormy-newt-59
+ autochat  #lobby · 3 on autopilot · host jade-lynx-0c          stormy-newt-59
  ● stormy-newt-59 (you)  ● jade-lynx-0c★  ○ rusty-crab-91
 ──────────────────────────────────────────────────────────────────────────────
 09:12 · joined a live room hosted by jade-lynx-0c
@@ -28,9 +29,9 @@ stored anywhere. When the last person on autopilot leaves, the room dies.
 (`userPromptSubmitted`, `preToolUse`, `postToolUse`, `notification`, `agentStop`, `sessionEnd`) all
 fire during autopilot, and every payload carries a `sessionId`. The session's event log at
 `~/.copilot/session-state/<sessionId>/events.jsonl` records `session.mode_changed → autopilot`,
-`session.task_complete`, `abort`, and so on. lolchat combines the two:
+`session.task_complete`, `abort`, and so on. autochat combines the two:
 
-| Signal | Source | lolchat does |
+| Signal | Source | autochat does |
 | --- | --- | --- |
 | session is in autopilot | `preToolUse` / `userPromptSubmitted` + `session.mode_changed` in the log | opens the chat and joins your room |
 | copilot asks you something | `notification` (`elicitation_dialog`, `permission_prompt`), `preToolUse` for `ask_user` | shows a modal above the chat |
@@ -40,43 +41,105 @@ Things we learned against Copilot CLI 1.0.97, which differ from or aren't in the
 - `preToolUse` payloads batch calls as `toolCalls: [{id, name, args}]`.
 - `notification` payloads use `notificationType`, not `notification_type`.
 - In autopilot, `ask_user` is auto-answered ("user unavailable"). The modal stays up long enough to read and says so.
-- Repo-level `.github/hooks` don't run for untrusted folders. lolchat installs user-level hooks.
-- `preToolUse` command hooks are fail-closed. The lolchat hook always exits 0 and prints nothing.
+- Repo-level `.github/hooks` don't run for untrusted folders. autochat installs user-level hooks.
+- `preToolUse` command hooks are fail-closed. The autochat hook always exits 0 and prints nothing.
 
 ## Install
 
 ```sh
-npm i -g github:bnookala/lolchat   # needs Node ≥ 18
-lolchat setup                      # writes ~/.copilot/hooks/lolchat.json
-lolchat doctor                     # optional: checks hooks, the menu bar app, P2P connectivity
+npm i -g github:bnookala/autochat   # needs Node ≥ 18
+autochat setup                      # writes ~/.copilot/hooks/autochat.json
+autochat doctor                     # optional: checks hooks, the menu bar app, P2P connectivity
 ```
+
+**Upgrading from lolchat?** Quit lolchat (and LolChat.app) if it's running, install as above, and run
+`autochat setup`. On first run autochat moves `~/.lolchat` to `~/.autochat`, so you keep your identity,
+handle, and room. Setup also removes the old `~/.copilot/hooks/lolchat.json`. `LOLCHAT_*` environment
+variables still work as fallbacks, and you still share rooms with peers who haven't upgraded.
+Then `npm rm -g lolchat`.
 
 New Copilot CLI sessions pick up the hooks. The next time you run `/autopilot` (or `copilot --autopilot`),
 a chat opens:
 
-- **with the LolChat menu bar app installed (macOS):** no terminal at all. The hook wakes `LolChat.app` in the background (`open -g -b com.bnookala.lolchat`), even inside tmux.
+- **with the AutoChat menu bar app installed (macOS):** no terminal at all. The hook wakes `AutoChat.app` in the background (`open -g -b com.bnookala.autochat`), even inside tmux.
 - **in tmux:** a split pane under your copilot
 - **in Ghostty (macOS):** one new window in your running Ghostty, opened via Ghostty's AppleScript support (1.3+). It closes by itself when you're pulled back.
 - **in iTerm2 or Terminal.app (macOS):** a new window
 - **on Linux with a desktop:** `x-terminal-emulator` or `gnome-terminal`
-- **otherwise:** a desktop notification asks you to run `lolchat`
+- **otherwise:** a desktop notification asks you to run `autochat`
 
-You can also keep `lolchat` open in a side pane (the *lounge*). It waits there and drops into the room
-whenever any of your sessions goes autopilot. Override the launcher with `lolchat config launch app|tmux|ghostty|iterm|terminal|notify|off`.
-`off` pauses lolchat entirely.
+You can also keep `autochat` open in a side pane (the *lounge*). It waits there and drops into the room
+whenever any of your sessions goes autopilot. Override the launcher with `autochat config launch app|tmux|ghostty|iterm|terminal|notify|off`.
+`off` pauses autochat entirely. On macOS, `autochat setup` sets `launch` to `app` when AutoChat.app is installed
+(unless you paused it with `off`).
+
+## macOS menu bar app
+
+On macOS, **AutoChat.app** keeps autochat in the menu bar, so no terminal window opens on every autopilot
+run. It's a thin native client for the same core: it starts `autochat daemon` in the background (or attaches to
+a running one) and talks to it over the local socket ([protocol](docs/protocol.md)).
+
+<p>
+  <img src="docs/screenshots/status-panel-autopilot.png" width="49%" alt="The status panel under the menu bar icon: Autopilot is on, 3 on autopilot in #lobby">
+  <img src="docs/screenshots/status-panel-countdown.png" width="49%" alt="The status panel after the run: Back to reality in 23s, with Open Chat and Return Now">
+</p>
+
+- **The drop-down status panel.** When autopilot turns on, a small panel drops down from the menu bar icon
+  ("Autopilot is on", gone after about 6 s). When your run ends and the chat isn't in front, the panel shows
+  **Back to reality in 23s**, updated every second, with **Return Now** and **Open Chat**. It never takes focus,
+  so it doesn't steal your typing. The icon fills while you're on autopilot, shows `!` when Copilot needs you,
+  and shows the seconds left during the countdown.
+- **The chat window** (left-click the icon) shows the room, its members, and the messages. When Copilot asks you
+  something, a card at the top has **Jump to Copilot**. Right-click the icon for the menu: Join Now, Pause,
+  Launch at Login, and Quit.
+- **The 30-second countdown doesn't block you.** When your copilot finishes, a slim strip above the input counts
+  down while you keep typing. Nothing covers the chat. **Return Now** goes early, and if a session goes back on
+  autopilot, the countdown is cancelled. At zero you're pulled back to reality: a banner shows Copilot's summary,
+  focus returns to your Copilot terminal, and the window closes. Change the length with
+  `autochat config countdown <seconds>`.
+
+<p>
+  <img src="docs/screenshots/chat-window-countdown.png" width="49%" alt="The chat window during the countdown: a Back to reality in 23s strip above the input while you keep typing">
+  <img src="docs/screenshots/chat-window-request.png" width="49%" alt="The chat window with a Copilot needs you card, Dismiss and Jump to Copilot">
+</p>
+
+### Build and install the app
+
+You need macOS 14 or later, Xcode 16 or later (Swift 6), and the CLI from [Install](#install).
+
+```sh
+git clone https://github.com/bnookala/autochat && cd autochat
+macos/scripts/build-app.sh --install   # build, ad-hoc sign, and copy to ~/Applications/AutoChat.app
+autochat setup                         # finds the app and sets launch=app
+```
+
+Open AutoChat once (or turn on **Launch at Login** in its menu). After that, hooks wake it in the background with
+`open -g -b com.bnookala.autochat`, even inside tmux. Without the app, `autochat setup` prints these steps.
+
+The app is **ad-hoc signed**, not notarized. The first time you open a downloaded or copied build, macOS blocks
+it: **right-click → Open**, then confirm (on macOS 15 or later, if there's no Open button, use System Settings →
+Privacy & Security → Open Anyway). For the menu, the daemon lifecycle, the mock daemon, and how to render these
+screenshots, see [macos/README.md](macos/README.md).
+
+### Terminal flow (tmux, Linux, no app)
+
+Everything still works in a terminal. Without the app, or with `autochat config launch tmux` (or `ghostty`,
+`iterm`, `terminal`), the hook opens the chat shown at the top of this page in a tmux split or a new terminal
+window, as described under [Install](#install). The countdown is a line above the input, and ↵ on an empty line
+goes back early. On Linux this is the only flow.
 
 ## Rooms & discovery
 
 By default everyone lands in the public **#lobby**, which is zero-config discovery. Other options:
 
 ```sh
-lolchat host            # new private room: prints an invite with an unguessable lc1-… code
-lolchat host rustaceans # public room #rustaceans (listed in `lolchat rooms`)
-lolchat join <code>     # make <code> your room (takes effect on your next autopilot run)
-lolchat rooms           # list live public rooms (asks peers for ~8s)
-lolchat invite          # print the invite for your current room
-lolchat leave           # back to #lobby
-lolchat whoami          # your anonymous handle
+autochat host            # new private room: prints an invite with an unguessable lc1-… code
+autochat host rustaceans # public room #rustaceans (listed in `autochat rooms`)
+autochat join <code>     # make <code> your room (takes effect on your next autopilot run)
+autochat rooms           # list live public rooms (asks peers for ~8s)
+autochat invite          # print the invite for your current room
+autochat leave           # back to #lobby
+autochat whoami          # your anonymous handle
 ```
 
 Share the invite however you like (Teams, Slack, a sticky note). There's no server to register with.
@@ -85,7 +148,7 @@ Share the invite however you like (Teams, Slack, a sticky note). There's no serv
 
 - While autopilot is running you're **in the room** (●). If your copilot asks for something, others see **!**.
 - When autopilot **finishes**, a **30-second countdown** starts (`back to reality in 23s` above the input). You stay in the room and can finish your sentence. Press ↵ on an empty line (or type `/back`) to go now. If any of your sessions goes back on autopilot, the countdown is cancelled.
-- At zero you're **pulled back to reality**: the chat closes, focus returns to your copilot, and you get its summary. Change the length with `lolchat config countdown <seconds>`; `0` pulls you back immediately.
+- At zero you're **pulled back to reality**: the chat closes, focus returns to your copilot, and you get its summary. Change the length with `autochat config countdown <seconds>`; `0` pulls you back immediately.
 - The **host** is whoever was in the room first. A host who gets pulled back stays as a **spectator** (○) and can read along until the room dies.
 - The room **survives the host leaving** as long as anyone is still on autopilot.
 - When the **last person on autopilot** leaves, the room **dies** for everyone, spectators included. Nothing is kept, and the next person to show up starts a fresh room.
@@ -93,16 +156,31 @@ Share the invite however you like (Teams, Slack, a sticky note). There's no serv
 
 ## How it works
 
+With the macOS app:
+
 ```
-copilot CLI ──hooks──▶ lolchat hook ──unix socket──▶ lolchat UI (one per user) ◀──▶ Hyperswarm P2P ◀──▶ other users
-     │                     │ (spawns UI in tmux/Ghostty/… if needed)   │
-     └─ session-state/<id>/events.jsonl ◀──── tails for mode / task_complete / abort
+copilot CLI ──hooks──▶ autochat hook ──unix socket──▶ autochat daemon ◀──unix socket──▶ AutoChat.app
+     │                     │                                 │                                ▲
+     │                     │                                 ▼                                │
+     │                     │                          Hyperswarm P2P ◀──▶ other users         │
+     │                     └─── wakes the app (open -g); it starts or attaches to the daemon ─┘
+     └─ session-state/<id>/events.jsonl ◀── tailed by the daemon for mode / task_complete / abort
 ```
+
+In a terminal (tmux, Linux, or no app), the terminal UI plays the daemon's part:
+
+```
+copilot CLI ──hooks──▶ autochat hook ──unix socket──▶ autochat UI (one per user) ◀──▶ Hyperswarm P2P ◀──▶ other users
+     │                     └─ spawns the UI in tmux/Ghostty/… if needed
+     └─ session-state/<id>/events.jsonl ◀── tailed by the UI for mode / task_complete / abort
+```
+
+There is only ever one core per user, the daemon or the terminal UI, and it owns the socket.
 
 - **No central server.** Peers find each other on the public [HyperDHT](https://github.com/holepunchto/hyperdht)
   using `sha256(room code)` as the topic, then connect directly with UDP hole-punching. Connections use Noise encryption.
 - Room membership is proven per connection with a hash of the room key, so private codes never leak to other peers.
-- Messages are signed with your ed25519 identity key (`~/.lolchat/identity.json`) and relayed between peers, so a
+- Messages are signed with your ed25519 identity key (`~/.autochat/identity.json`) and relayed between peers, so a
   partial mesh still works. Handles like `stormy-newt-59` are derived from the public key: anonymous, but stable across sessions.
 - Untrusted text is stripped of terminal escape sequences, control characters, and bidi overrides. Chat is rate-limited.
 
@@ -113,34 +191,36 @@ copilot CLI ──hooks──▶ lolchat hook ──unix socket──▶ lolchat
 ```sh
 npm install
 npm test        # unit tests + multi-peer room tests on a local HyperDHT testnet
-lolchat sim --room <code> --seconds 120   # a throwaway bot peer that answers "ping"
-LOLCHAT_DEBUG=1 lolchat hook preToolUse < payload.json
-lolchat daemon  # headless core for GUI clients; protocol in docs/protocol.md
+autochat sim --room <code> --seconds 120   # a throwaway bot peer that answers "ping"
+AUTOCHAT_DEBUG=1 autochat hook preToolUse < payload.json
+autochat daemon  # headless core for GUI clients; protocol in docs/protocol.md
+cd macos && swift build && swift test   # the macOS app (see macos/README.md)
 ```
 
-Env overrides: `LOLCHAT_HOME` (default `~/.lolchat`), `COPILOT_HOME` (default `~/.copilot`),
-`LOLCHAT_BOOTSTRAP=host:port,...` (custom DHT bootstrap), `LOLCHAT_COUNTDOWN_MS` (exit countdown length),
-`LOLCHAT_APP_DIRS` (where to look for `LolChat.app`, default `/Applications:~/Applications`).
+Env overrides: `AUTOCHAT_HOME` (default `~/.autochat`), `COPILOT_HOME` (default `~/.copilot`),
+`AUTOCHAT_BOOTSTRAP=host:port,...` (custom DHT bootstrap), `AUTOCHAT_COUNTDOWN_MS` (exit countdown length),
+`AUTOCHAT_APP_DIRS` (where to look for `AutoChat.app`, default `/Applications:~/Applications`).
+Each one falls back to its old `LOLCHAT_*` name.
 
-## Troubleshooting: "lolchat didn't open"
+## Troubleshooting: "autochat didn't open"
 
 Copilot CLI loads hooks **once, when its process starts**. Any session whose process was already
-running when you ran `lolchat setup` (including ones resumed inside that process) never calls lolchat.
-`lolchat doctor` lists the active sessions and flags the ones affected:
+running when you ran `autochat setup` (including ones resumed inside that process) never calls autochat.
+`autochat doctor` lists the active sessions and flags the ones affected:
 
 ```
 ✘ 9d0957f3 autopilot, running · ~/code/my-project
-    its Copilot process started before lolchat's hooks were installed, so it can't open lolchat.
-    fix: run /restart in that session (or exit and `copilot --resume=…`). meanwhile, run `lolchat` to join manually.
+    its Copilot process started before autochat's hooks were installed, so it can't open autochat.
+    fix: run /restart in that session (or exit and `copilot --resume=…`). meanwhile, run `autochat` to join manually.
 ```
 
-Once it's open, the lolchat UI also scans `~/.copilot/session-state` every 3s. It follows any live autopilot
-session, with or without hooks, so running `lolchat` yourself always works. Without hooks, the request
+Once it's open, the autochat UI also scans `~/.copilot/session-state` every 3s. It follows any live autopilot
+session, with or without hooks, so running `autochat` yourself always works. Without hooks, the request
 modal isn't available for that session. Sessions from the Copilot desktop app don't record autopilot mode
-in their log, so lolchat can't detect them.
+in their log, so autochat can't detect them.
 
 ## Limitations
 
-- Networks that block outbound UDP can't hole-punch. `lolchat doctor` will tell you.
+- Networks that block outbound UDP can't hole-punch. `autochat doctor` will tell you.
 - Windows launch and focus are best effort and untested.
 - Hooks load when the Copilot process starts. See *Troubleshooting* above.

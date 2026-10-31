@@ -1,62 +1,67 @@
-# lolchat local protocol (v1)
+# autochat local protocol (v1)
 
-How GUI clients (the macOS menu bar app) talk to the lolchat core. The core is
-`lolchat daemon`: a headless process that runs the same Controller as the terminal UI
+How GUI clients (the macOS menu bar app) talk to the autochat core. The core is
+`autochat daemon`: a headless process that runs the same Controller as the terminal UI
 (rooms, P2P, Copilot session tracking). Clients render state and send commands; they
 never talk to peers directly.
 
 ```
-copilot CLI ──hooks──▶ lolchat hook ──unix socket──▶ lolchat daemon ◀──▶ Hyperswarm P2P
-                                                       ▲
-                               subscribe / state / cmd │
-                                                  LolChat.app
+copilot CLI ──hooks──▶ autochat hook ──unix socket──▶ autochat daemon ◀──▶ Hyperswarm P2P
+                                                          ▲
+                                  subscribe / state / cmd │
+                                                    AutoChat.app
 ```
 
 ## The daemon process
 
 ```sh
-lolchat daemon            # or: node <install>/bin/lolchat.js daemon
+autochat daemon            # or: node <install>/bin/autochat.js daemon
 ```
 
 - Headless: no TTY needed, nothing on stdout. One status line per lifecycle event on stderr.
 - Never exits on its own. When autopilot ends it shows the banner, then returns to `lounge`.
 - `SIGTERM`, `SIGINT` (and `SIGHUP`) leave the room cleanly, stop tailing session logs,
   close all subscriber connections, remove the socket, and exit `0` (forced after 5 s).
-- Single instance. If the socket is already owned by a live lolchat process, the daemon
-  prints `lolchat: already running in …` and exits with status **3**. Ping the socket to
+- Single instance. If the socket is already owned by a live autochat process, the daemon
+  prints `autochat: already running in …` and exits with status **3**. Ping the socket to
   find out whether it's another daemon (`daemon: true`) or a terminal UI.
-- While a daemon runs, `lolchat` / `lolchat ui` print `lolchat is running in the menu bar app
-  (lolchat daemon, pid N).` and exit `0` instead of fighting for the socket.
+- While a daemon runs, `autochat` / `autochat ui` print `autochat is running in the menu bar app
+  (autochat daemon, pid N).` and exit `0` instead of fighting for the socket.
 - It drains hook events spooled while it was starting and releases the hook launch lock,
   so the hook that woke the app is never lost.
 
 How the app gets woken: when a hook fires and nothing is listening on the socket, the hook
-(with `launch` = `app`, the default on macOS when `LolChat.app` with bundle id
-`com.bnookala.lolchat` is in `/Applications` or `~/Applications`) runs
-`open -g -b com.bnookala.lolchat` and spools the event. Further hook events are spooled too
+(with `launch` = `app`, the default on macOS when `AutoChat.app` with bundle id
+`com.bnookala.autochat` is in `/Applications` or `~/Applications`) runs
+`open -g -b com.bnookala.autochat` and spools the event. Further hook events are spooled too
 for up to 15 s (then the next one runs `open` again). The app should start
-`lolchat daemon` right away; the daemon replays spooled events that are under 60 s old.
+`autochat daemon` right away; the daemon replays spooled events that are under 60 s old.
 No terminal window is ever opened.
 
 Environment (all optional):
 
 | Variable | Meaning |
 | --- | --- |
-| `LOLCHAT_HOME` | state dir, default `~/.lolchat` (decides the socket path) |
+| `AUTOCHAT_HOME` | state dir, default `~/.autochat` (decides the socket path) |
 | `COPILOT_HOME` | Copilot CLI dir, default `~/.copilot` |
-| `LOLCHAT_BOOTSTRAP` | `host:port,…` custom DHT bootstrap (tests) |
-| `LOLCHAT_NO_NOTIFY`, `LOLCHAT_NO_FOCUS` | disable desktop notifications / focusing the Copilot terminal |
-| `LOLCHAT_COUNTDOWN_MS` | exit countdown length in ms, overriding `countdownSeconds` (tests) |
+| `AUTOCHAT_BOOTSTRAP` | `host:port,…` custom DHT bootstrap (tests) |
+| `AUTOCHAT_NO_NOTIFY`, `AUTOCHAT_NO_FOCUS` | disable desktop notifications / focusing the Copilot terminal |
+| `AUTOCHAT_COUNTDOWN_MS` | exit countdown length in ms, overriding `countdownSeconds` (tests) |
+
+Each `AUTOCHAT_*` variable falls back to its pre-rename `LOLCHAT_*` name when unset. On first
+run, an existing `~/.lolchat` is moved to `~/.autochat` (unless `~/.autochat` already exists).
+The P2P side (DHT topics, room keys, signed claims, handles, `lc1-` invite codes) keeps its
+`lolchat:v1:` namespace, so autochat and lolchat peers still share rooms.
 
 ## Socket
 
 | Platform | Path |
 | --- | --- |
-| macOS, Linux | `$LOLCHAT_HOME/run/ui.sock`, i.e. `~/.lolchat/run/ui.sock` by default |
-| Windows | named pipe `\\.\pipe\lolchat-<first 12 hex chars of sha256($LOLCHAT_HOME)>` |
+| macOS, Linux | `$AUTOCHAT_HOME/run/ui.sock`, i.e. `~/.autochat/run/ui.sock` by default |
+| Windows | named pipe `\\.\pipe\autochat-<first 12 hex chars of sha256($AUTOCHAT_HOME)>` |
 
 The `run/` directory is created `0700` and the socket is `chmod 0600`: local, same-user only.
-(macOS limits socket paths to 104 bytes, so keep `LOLCHAT_HOME` short.)
+(macOS limits socket paths to 104 bytes, so keep `AUTOCHAT_HOME` short.)
 
 Framing: newline-delimited JSON (UTF-8), one object per line, in both directions. Lines
 longer than **256 KiB** are a protocol error; the daemon closes the connection. The
@@ -67,19 +72,19 @@ The **first line** of a connection decides what it is:
 - `{"type":"subscribe",…}` → a persistent subscription (below).
 - anything else → a one-shot request: one reply line, then the daemon closes the connection.
 
-The terminal UI (`lolchat ui`) serves the same socket and protocol, with `daemon: false`.
+The terminal UI (`autochat ui`) serves the same socket and protocol, with `daemon: false`.
 
 ## One-shot requests
 
-These are what hooks and `lolchat status` use. Replies always carry `ok`.
+These are what hooks and `autochat status` use. Replies always carry `ok`.
 
 | Request | Reply |
 | --- | --- |
 | `{"type":"ping"}` | `{"ok":true,"pong":true,"phase":"lounge","daemon":true,"pid":123}` |
 | `{"type":"status"}` | `{"ok":true,"phase":"room","room":"#lobby","sessions":[{"sid","state","cwd"}]}` |
-| `{"type":"hook",…}` | `{"ok":true,"tracked":true}` (message built by `lolchat hook`, see `src/hook.js`) |
+| `{"type":"hook",…}` | `{"ok":true,"tracked":true}` (message built by `autochat hook`, see `src/hook.js`) |
 
-`daemon` is `true` for `lolchat daemon` and `false` for the terminal UI. Unparseable lines
+`daemon` is `true` for `autochat daemon` and `false` for the terminal UI. Unparseable lines
 get `{"ok":false}`.
 
 ## Subscriptions
@@ -181,7 +186,7 @@ Client → daemon, any time after `subscribe`:
 | `leaveRoom` | leave for the rest of this autopilot run (ctrl-c in the TUI) | `not in a room` |
 | `jumpToCopilot` | focus the terminal running the copilot that needs you | |
 | `dismissRequest` | hide the current `request` | |
-| `joinNow` | manual "I'm here": enter the room without autopilot (`lolchat ui --now`); stays until `leaveRoom` | |
+| `joinNow` | manual "I'm here": enter the room without autopilot (`autochat ui --now`); stays until `leaveRoom` | |
 
 Daemon → client, one per command (`id` echoed; `null` if the command had none):
 
@@ -208,7 +213,7 @@ room doesn't die under the others), and can keep chatting. `phase` stays `room`.
 | Field | Meaning |
 | --- | --- |
 | `endsAt` | ms epoch when it hits zero. Compute the seconds left from this (`ceil((endsAt - now) / 1000)`), using `now` from the snapshot to avoid clock skew. |
-| `total` | length in seconds (`30` by default; fractional only when overridden by `LOLCHAT_COUNTDOWN_MS`) |
+| `total` | length in seconds (`30` by default; fractional only when overridden by `AUTOCHAT_COUNTDOWN_MS`) |
 | `reason` | why autopilot ended: `complete`, `abort`, `mode`, `end`, or `idle` (stopped and waiting for you) |
 | `summary` | the copilot's task summary, or `null` |
 | `cwd` | the finished session's working directory, or `null` |
@@ -224,6 +229,6 @@ re-renders on every `state` stays current.
 - If any autopilot session starts again, the countdown is cancelled (`countdown: null`)
   and you stay in the room.
 - `leaveRoom` during the countdown leaves immediately, as always.
-- Length: `lolchat config countdown <seconds>` (`countdownSeconds` in
-  `~/.lolchat/config.json`, default 30). `0` turns it off: you're pulled back the moment
-  autopilot ends. `LOLCHAT_COUNTDOWN_MS` overrides it in milliseconds (for tests).
+- Length: `autochat config countdown <seconds>` (`countdownSeconds` in
+  `~/.autochat/config.json`, default 30). `0` turns it off: you're pulled back the moment
+  autopilot ends. `AUTOCHAT_COUNTDOWN_MS` overrides it in milliseconds (for tests).

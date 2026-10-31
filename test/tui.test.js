@@ -35,10 +35,10 @@ test('model requests render as a modal box above the chat', () => {
   assert.match(r[0], /^┌─ Permission needed/)
   assert.ok(r.some(l => l.includes('Run rm -rf build?')))
   const boxEnd = r.findIndex(l => l.startsWith('└'))
-  const headerRow = r.findIndex(l => l.includes('lolchat') && l.includes('#lobby'))
+  const headerRow = r.findIndex(l => l.includes('autochat') && l.includes('#lobby'))
   assert.ok(boxEnd >= 0 && headerRow > boxEnd, 'modal sits above the room header')
   const without = plain(renderScreen(base, 80, 24))
-  assert.match(without[0], /lolchat/)
+  assert.match(without[0], /autochat/)
 })
 
 test('room view shows members, statuses, chat, and input cursor', () => {

@@ -6,20 +6,20 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
-const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'lolchat.js')
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lolchat-hook-'))
+const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'autochat.js')
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'autochat-hook-'))
 const env = {
   ...process.env,
   COPILOT_HOME: path.join(tmp, 'copilot'),
-  LOLCHAT_HOME: path.join(tmp, 'lc'),
-  LOLCHAT_LAUNCH_RECORD: path.join(tmp, 'launches.jsonl'),
-  LOLCHAT_DEBUG: '1',
-  // An installed LolChat.app must not change which launcher these tests see.
-  LOLCHAT_APP_DIRS: path.join(tmp, 'no-apps'),
+  AUTOCHAT_HOME: path.join(tmp, 'lc'),
+  AUTOCHAT_LAUNCH_RECORD: path.join(tmp, 'launches.jsonl'),
+  AUTOCHAT_DEBUG: '1',
+  // An installed AutoChat.app must not change which launcher these tests see.
+  AUTOCHAT_APP_DIRS: path.join(tmp, 'no-apps'),
   TMUX: '', TMUX_PANE: ''
 }
 process.env.COPILOT_HOME = env.COPILOT_HOME
-process.env.LOLCHAT_HOME = env.LOLCHAT_HOME
+process.env.AUTOCHAT_HOME = env.AUTOCHAT_HOME
 
 const writeSession = (sid, mode) => {
   const dir = path.join(env.COPILOT_HOME, 'session-state', sid)
@@ -32,11 +32,11 @@ const hook = (event, payload, extraEnv = {}) => {
   return { code: r.status, stdout: r.stdout, result: r.stderr ? JSON.parse(r.stderr.trim().split('\n').pop()) : null }
 }
 
-const launches = () => { try { return fs.readFileSync(env.LOLCHAT_LAUNCH_RECORD, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) } catch { return [] } }
+const launches = () => { try { return fs.readFileSync(env.AUTOCHAT_LAUNCH_RECORD, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) } catch { return [] } }
 
 test('hook never fails or prints, even on garbage input', () => {
   for (const input of ['', 'not json', '{"sessionId": "../../etc"}', '[]']) {
-    const r = spawnSync(process.execPath, [BIN, 'hook', 'preToolUse'], { input, env: { ...env, LOLCHAT_DEBUG: '' }, encoding: 'utf8' })
+    const r = spawnSync(process.execPath, [BIN, 'hook', 'preToolUse'], { input, env: { ...env, AUTOCHAT_DEBUG: '' }, encoding: 'utf8' })
     assert.equal(r.status, 0)
     assert.equal(r.stdout, '')
     assert.equal(r.stderr, '')
@@ -55,7 +55,8 @@ test('hook launches the UI only for sessions in autopilot', async () => {
   r = hook('agentStop', { sessionId: 's-auto' })
   assert.equal(r.result.action, 'ignored', 'stop events never launch')
 
-  r = hook('postToolUse', { sessionId: 's-auto', toolName: 'bash', cwd: '/x' })
+  // Inside tmux, so the hook opens a UI on every platform (CI's Linux runners have no terminal or DISPLAY).
+  r = hook('postToolUse', { sessionId: 's-auto', toolName: 'bash', cwd: '/x' }, { TMUX: '/x/tmux,1,0', TMUX_PANE: '%1' })
   assert.equal(r.result.action, 'launched')
   assert.equal(r.stdout, '')
   const l = launches()
@@ -74,8 +75,8 @@ test('hook launches the UI only for sessions in autopilot', async () => {
 
 test('notify-only launches nudge once per session', () => {
   const home = path.join(tmp, 'lc-notify')
-  spawnSync(process.execPath, [BIN, 'config', 'launch', 'notify'], { env: { ...env, LOLCHAT_HOME: home } })
-  const e = { LOLCHAT_HOME: home }
+  spawnSync(process.execPath, [BIN, 'config', 'launch', 'notify'], { env: { ...env, AUTOCHAT_HOME: home } })
+  const e = { AUTOCHAT_HOME: home }
   assert.equal(hook('preToolUse', { sessionId: 's-auto', toolCalls: [{ name: 'bash' }] }, e).result.action, 'launched')
   assert.equal(hook('preToolUse', { sessionId: 's-auto', toolCalls: [{ name: 'bash' }] }, e).result.action, 'ignored')
   const run = fs.readdirSync(path.join(home, 'run'))
@@ -83,15 +84,15 @@ test('notify-only launches nudge once per session', () => {
 })
 
 test('hook picks tmux when inside tmux', () => {
-  fs.rmSync(path.join(env.LOLCHAT_HOME, 'run'), { recursive: true, force: true })
-  fs.rmSync(env.LOLCHAT_LAUNCH_RECORD, { force: true })
+  fs.rmSync(path.join(env.AUTOCHAT_HOME, 'run'), { recursive: true, force: true })
+  fs.rmSync(env.AUTOCHAT_LAUNCH_RECORD, { force: true })
   const r = hook('userPromptSubmitted', { sessionId: 's-auto', prompt: 'go' }, { TMUX: '/tmp/tmux-1/default,1,0', TMUX_PANE: '%3' })
   assert.equal(r.result.method, 'tmux')
 })
 
 test('hook delivers to a running UI and maps requests', async () => {
   const { serve } = await import('../src/ipc.js')
-  fs.rmSync(path.join(env.LOLCHAT_HOME, 'run'), { recursive: true, force: true })
+  fs.rmSync(path.join(env.AUTOCHAT_HOME, 'run'), { recursive: true, force: true })
   const got = []
   const server = await serve((m) => { got.push(m); return {} })
   try {
@@ -123,49 +124,49 @@ test('hook delivers to a running UI and maps requests', async () => {
   }
 })
 
-test('pickMethod prefers LolChat.app on macOS; an explicit launch setting still wins', async () => {
+test('pickMethod prefers AutoChat.app on macOS; an explicit launch setting still wins', async () => {
   const { pickMethod, appInstalled, APP_BUNDLE_ID } = await import('../src/launcher.js')
   const apps = path.join(tmp, 'apps')
-  const app = path.join(apps, 'LolChat.app')
+  const app = path.join(apps, 'AutoChat.app')
   fs.mkdirSync(path.join(app, 'Contents'), { recursive: true })
-  const e = { LOLCHAT_APP_DIRS: path.join(tmp, 'nowhere') + path.delimiter + apps, TMUX: '/x/tmux,1,0', TMUX_PANE: '%1' }
+  const e = { AUTOCHAT_APP_DIRS: path.join(tmp, 'nowhere') + path.delimiter + apps, TMUX: '/x/tmux,1,0', TMUX_PANE: '%1' }
   assert.equal(appInstalled(e), null, 'a bundle without Info.plist is not the app')
   fs.writeFileSync(path.join(app, 'Contents', 'Info.plist'), '<plist><dict><key>CFBundleIdentifier</key><string>com.example.other</string></dict></plist>')
-  assert.equal(appInstalled(e), null, 'some other app named LolChat.app')
+  assert.equal(appInstalled(e), null, 'some other app named AutoChat.app')
   fs.writeFileSync(path.join(app, 'Contents', 'Info.plist'), `<plist><dict><key>CFBundleIdentifier</key><string>${APP_BUNDLE_ID}</string></dict></plist>`)
   assert.equal(appInstalled(e), app)
   assert.equal(pickMethod({ launch: 'auto' }, e, 'darwin'), 'app', 'the app beats tmux and terminals')
   assert.equal(pickMethod({ launch: 'tmux' }, e, 'darwin'), 'tmux', 'explicit config wins')
   assert.equal(pickMethod({ launch: 'auto' }, e, 'linux'), 'tmux', 'macOS only')
-  assert.equal(pickMethod({ launch: 'auto' }, { LOLCHAT_APP_DIRS: path.join(tmp, 'nowhere') }, 'darwin'), 'terminal', 'not installed: terminals as before')
+  assert.equal(pickMethod({ launch: 'auto' }, { AUTOCHAT_APP_DIRS: path.join(tmp, 'nowhere') }, 'darwin'), 'terminal', 'not installed: terminals as before')
 
   // Through the hook, auto-detected on macOS.
   if (process.platform === 'darwin') {
     const home = path.join(tmp, 'lc-app-auto')
-    const r = hook('userPromptSubmitted', { sessionId: 's-auto', prompt: 'go' }, { LOLCHAT_HOME: home, LOLCHAT_APP_DIRS: apps })
+    const r = hook('userPromptSubmitted', { sessionId: 's-auto', prompt: 'go' }, { AUTOCHAT_HOME: home, AUTOCHAT_APP_DIRS: apps })
     assert.equal(r.result.method, 'app')
   }
-  const bad = spawnSync(process.execPath, [BIN, 'config', 'launch', 'nope'], { env: { ...env, LOLCHAT_HOME: path.join(tmp, 'lc-app-bad') }, encoding: 'utf8' })
+  const bad = spawnSync(process.execPath, [BIN, 'config', 'launch', 'nope'], { env: { ...env, AUTOCHAT_HOME: path.join(tmp, 'lc-app-bad') }, encoding: 'utf8' })
   assert.equal(bad.status, 1)
   assert.match(bad.stderr, /auto\|app\|tmux/)
 })
 
-test('launch=app wakes LolChat.app (never a terminal) and spools events until its daemon is up', async () => {
+test('launch=app wakes AutoChat.app (never a terminal) and spools events until its daemon is up', async () => {
   const home = path.join(tmp, 'lc-app')
-  const e = { LOLCHAT_HOME: home }
+  const e = { AUTOCHAT_HOME: home }
   const cfg = spawnSync(process.execPath, [BIN, 'config', 'launch', 'app'], { env: { ...env, ...e }, encoding: 'utf8' })
   assert.equal(cfg.status, 0, cfg.stderr)
-  fs.rmSync(env.LOLCHAT_LAUNCH_RECORD, { force: true })
+  fs.rmSync(env.AUTOCHAT_LAUNCH_RECORD, { force: true })
   let r = hook('userPromptSubmitted', { sessionId: 's-auto', prompt: 'go' }, e)
   assert.deepEqual(r.result, { action: 'launched', method: 'app' })
-  assert.deepEqual(launches(), [{ method: 'app', cmd: ['open', '-g', '-b', 'com.bnookala.lolchat'] }])
+  assert.deepEqual(launches(), [{ method: 'app', cmd: ['open', '-g', '-b', 'com.bnookala.autochat'] }])
 
   // A cold app start takes a few seconds: hooks in the meantime queue instead of relaunching.
   r = hook('preToolUse', { sessionId: 's-auto', toolCalls: [{ name: 'bash' }] }, e)
   assert.equal(r.result.action, 'spooled')
   assert.equal(launches().length, 1)
 
-  process.env.LOLCHAT_HOME = home
+  process.env.AUTOCHAT_HOME = home
   try {
     const { serve } = await import('../src/ipc.js')
     const { readSpool } = await import('../src/hook.js')
@@ -186,7 +187,7 @@ test('launch=app wakes LolChat.app (never a terminal) and spools events until it
       server.close()
     }
   } finally {
-    process.env.LOLCHAT_HOME = env.LOLCHAT_HOME
+    process.env.AUTOCHAT_HOME = env.AUTOCHAT_HOME
   }
   assert.equal(launches().length, 1)
 })

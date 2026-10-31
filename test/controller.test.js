@@ -5,8 +5,8 @@ import os from 'node:os'
 import path from 'node:path'
 import createTestnet from 'hyperdht/testnet.js'
 
-process.env.LOLCHAT_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'lolchat-ctl-'))
-process.env.COPILOT_HOME = path.join(process.env.LOLCHAT_HOME, 'copilot')
+process.env.AUTOCHAT_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'autochat-ctl-'))
+process.env.COPILOT_HOME = path.join(process.env.AUTOCHAT_HOME, 'copilot')
 const { Controller } = await import('../src/controller.js')
 const { ephemeralIdentity } = await import('../src/identity.js')
 
@@ -219,11 +219,11 @@ test('countdown ticks every second, keeps the room alive for others, and expires
   t.after(() => testnet.destroy())
   const room = 'lc1-ctl-tick-' + Math.random().toString(36).slice(2, 12)
   const host = mk(testnet, room)
-  process.env.LOLCHAT_COUNTDOWN_MS = '2500'
+  process.env.AUTOCHAT_COUNTDOWN_MS = '2500'
   const guest = mk(testnet, room, true, { countdownSeconds: 30 })
-  delete process.env.LOLCHAT_COUNTDOWN_MS
+  delete process.env.AUTOCHAT_COUNTDOWN_MS
   t.after(() => Promise.all([host.shutdown(), guest.shutdown()]))
-  assert.equal(guest.countdownMs, 2500, 'LOLCHAT_COUNTDOWN_MS overrides the config')
+  assert.equal(guest.countdownMs, 2500, 'AUTOCHAT_COUNTDOWN_MS overrides the config')
 
   host.handle(hook('h1', 'activity'))
   await waitFor(() => host.room.isHost, 10000, 'host owns the room')

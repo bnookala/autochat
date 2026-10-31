@@ -6,7 +6,7 @@ import { scanEvents, quickMode } from './session.js'
 import { sanitize } from './protocol.js'
 
 // Hooks are loaded once when a Copilot CLI process starts, so sessions that were already
-// running when `lolchat setup` ran never call us. This finds them from session-state instead.
+// running when `autochat setup` ran never call us. This finds them from session-state instead.
 
 const TAIL = 512 * 1024
 const START = new Set(['user.message', 'assistant.turn_start'])

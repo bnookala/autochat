@@ -2,18 +2,18 @@
 import PackageDescription
 
 let package = Package(
-    name: "LolChat",
+    name: "AutoChat",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "LolChat", targets: ["LolChat"])
+        .executable(name: "AutoChat", targets: ["AutoChat"])
     ],
     targets: [
         // Foundation-only: protocol models, daemon socket client, process supervision, pure UI rules.
-        .target(name: "LolChatCore"),
+        .target(name: "AutoChatCore"),
         // AppKit + SwiftUI: status item, descending panel, chat window, snapshot renderer.
-        .target(name: "LolChatApp", dependencies: ["LolChatCore"]),
-        .executableTarget(name: "LolChat", dependencies: ["LolChatApp"]),
-        .testTarget(name: "LolChatCoreTests", dependencies: ["LolChatCore"]),
-        .testTarget(name: "LolChatAppTests", dependencies: ["LolChatApp", "LolChatCore"])
+        .target(name: "AutoChatApp", dependencies: ["AutoChatCore"]),
+        .executableTarget(name: "AutoChat", dependencies: ["AutoChatApp"]),
+        .testTarget(name: "AutoChatCoreTests", dependencies: ["AutoChatCore"]),
+        .testTarget(name: "AutoChatAppTests", dependencies: ["AutoChatApp", "AutoChatCore"])
     ]
 )

@@ -5,9 +5,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lolchat-scan-'))
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'autochat-scan-'))
 process.env.COPILOT_HOME = path.join(tmp, 'copilot')
-process.env.LOLCHAT_HOME = path.join(tmp, 'lc')
+process.env.AUTOCHAT_HOME = path.join(tmp, 'lc')
 const { liveSessions, processStartMs } = await import('../src/scan.js')
 
 const at = (type, data, ms) => JSON.stringify({ type, data, timestamp: new Date(ms).toISOString() }) + '\n'

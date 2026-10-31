@@ -4,14 +4,15 @@ import { SessionLog, objectiveStatus } from './session.js'
 import { parseRoom, sanitize } from './protocol.js'
 import { setOptout } from './hook.js'
 import { focusOrigin as defaultFocus, notify as defaultNotify } from './launcher.js'
+import { envVar } from './env.js'
 
 const MAX_MESSAGES = 400
 const RUNNING = new Set(['running', 'needed'])
 export const DEFAULT_COUNTDOWN_SECONDS = 30
 
-// LOLCHAT_COUNTDOWN_MS (tests) beats config.countdownSeconds; 0 pulls you back immediately.
+// AUTOCHAT_COUNTDOWN_MS (tests) beats config.countdownSeconds; 0 pulls you back immediately.
 function countdownMsFor (config, env = process.env) {
-  const fromEnv = env.LOLCHAT_COUNTDOWN_MS
+  const fromEnv = envVar('COUNTDOWN_MS', env)
   if (fromEnv !== undefined && fromEnv !== '' && Number(fromEnv) >= 0) return Number(fromEnv)
   const secs = config.countdownSeconds ?? DEFAULT_COUNTDOWN_SECONDS
   return Number.isFinite(secs) && secs >= 0 ? secs * 1000 : DEFAULT_COUNTDOWN_SECONDS * 1000
@@ -200,7 +201,7 @@ export class Controller extends EventEmitter {
 
   /**
    * Pick up autopilot sessions that never call our hooks (their Copilot process started
-   * before `lolchat setup`), using liveSessions() from scan.js. Hooks stay authoritative
+   * before `autochat setup`), using liveSessions() from scan.js. Hooks stay authoritative
    * for sessions that have them; adopted ones are released when they go idle or exit.
    */
   adopt (live) {
@@ -323,7 +324,7 @@ export class Controller extends EventEmitter {
     const room = this.room
     const s = this.lastFinished
     if (s) this.focus(s.origin)
-    this.notifyFn('lolchat', 'Back to reality: your copilot ' + (s?.reason === 'complete' ? 'finished.' : 'needs you.'))
+    this.notifyFn('autochat', 'Back to reality: your copilot ' + (s?.reason === 'complete' ? 'finished.' : 'needs you.'))
     const othersActive = room ? room.activeCount() - (room.status === 'away' ? 0 : 1) : 0
     if (room && room.isHost && othersActive > 0) {
       this.phase = 'spectating'
@@ -392,7 +393,7 @@ export class Controller extends EventEmitter {
     this._afterBanner()
   }
 
-  // Manual "I'm here" mode (lolchat ui --now): a pseudo-session that counts as autopilot.
+  // Manual "I'm here" mode (autochat ui --now): a pseudo-session that counts as autopilot.
   joinNow () {
     const s = this._track({ sessionId: 'manual-' + process.pid, mode: 'autopilot' })
     s.log?.stop()

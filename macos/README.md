@@ -1,13 +1,13 @@
-# LolChat.app
+# AutoChat.app
 
-A native macOS menu bar app for lolchat. No terminal window opens on every autopilot run,
+A native macOS menu bar app for autochat. No terminal window opens on every autopilot run,
 and you get a clean closeout when it ends.
 
-- The **status item** (💬 in the menu bar) shows lolchat's state: outline in the lounge,
+- The **status item** (💬 in the menu bar) shows autochat's state: outline in the lounge,
   filled while you're on autopilot, a `!` bubble when Copilot needs you, and the seconds
   left during the exit countdown. **Left-click** opens the chat. **Right-click** (or
-  ⌥-click) opens the menu: Open Chat, the current room, Join Now, Pause lolchat,
-  Launch at Login, Set lolchat Location…, and Quit.
+  ⌥-click) opens the menu: Open Chat, the current room, Join Now, Pause autochat,
+  Launch at Login, Set autochat Location…, and Quit.
 - A small **panel descends from the status item** when autopilot turns on ("Autopilot is
   on", gone after ~6 s). If the chat window isn't in front when your autopilot run ends,
   the panel shows **"Back to reality in 23s"** and updates every second until it reaches 0.
@@ -18,45 +18,53 @@ and you get a clean closeout when it ends.
   "Back to reality" banner with Copilot's summary, and then the window closes. Closing
   the window only hides it.
 
-The app is a thin client. The Node core (`lolchat daemon`) is still the source of truth
+The app is a thin client. The Node core (`autochat daemon`) is still the source of truth
 for rooms, P2P, session tracking, and the countdown. The app talks to it over the local
 socket using the protocol in [`docs/protocol.md`](../docs/protocol.md) (issue #2).
 
 ## Requirements
 
 - macOS 14 or later, with Swift 6 (Xcode 16 or later, or the matching command line tools)
-- The lolchat CLI, with `lolchat daemon`: `npm i -g github:bnookala/lolchat`
+- The autochat CLI, with `autochat daemon`: `npm i -g github:bnookala/autochat`
 
 ## Build, test, and install
 
 ```sh
 cd macos
 swift build && swift test          # debug build + unit tests
-scripts/build-app.sh               # → macos/build/LolChat.app (ad-hoc signed)
+scripts/build-app.sh               # → macos/build/AutoChat.app (ad-hoc signed)
 scripts/build-app.sh --install     # …and copy it to ~/Applications
 ```
 
 `build-app.sh` builds the release binary, adds `Resources/Info.plist` (`LSUIElement`,
-bundle id `com.bnookala.lolchat`), renders the icon, and signs the bundle with
+bundle id `com.bnookala.autochat`), renders the icon, and signs the bundle with
 `codesign -s -`. Because it's ad-hoc signed, the first launch of a copied build may need
 right-click → Open.
 
+After installing, run `autochat setup`. It finds `AutoChat.app` in `/Applications` or
+`~/Applications` and sets `launch` to `app`, so hooks wake the app instead of a terminal.
+
 ## Run
 
-Open `LolChat.app`, or run `.build/debug/LolChat` during development. At startup the app:
+Open `AutoChat.app`, or run `.build/debug/AutoChat` during development. At startup the app:
 
-1. Pings the socket (`$LOLCHAT_HOME/run/ui.sock`, default `~/.lolchat/run/ui.sock`).
+1. Pings the socket (`$AUTOCHAT_HOME/run/ui.sock`, default `~/.autochat/run/ui.sock`).
    If a daemon answers, the app **attaches** to it.
-2. Otherwise it finds `lolchat` and **spawns** `lolchat daemon`. It checks, in order:
-   Set lolchat Location… (`defaults write com.bnookala.lolchat lolchatPath /path/to/lolchat`),
-   `$LOLCHAT_BIN`, `/bin/zsh -lc 'command -v lolchat'`, an interactive zsh (for nvm set up
-   in `.zshrc`), and common install directories. If lolchat isn't found, the app tells you
-   how to install it. The daemon's output goes to `$LOLCHAT_HOME/run/daemon.log`.
+2. Otherwise it finds `autochat` and **spawns** `autochat daemon`. It checks, in order:
+   Set autochat Location… (`defaults write com.bnookala.autochat autochatPath /path/to/autochat`),
+   `$AUTOCHAT_BIN`, `/bin/zsh -lc 'command -v autochat'`, an interactive zsh (for nvm set up
+   in `.zshrc`), and common install directories. If autochat isn't found, the app tells you
+   how to install it. The daemon's output goes to `$AUTOCHAT_HOME/run/daemon.log`.
 3. Restarts a spawned daemon that crashes, with backoff (1 s, 2 s, 4 s … 30 s).
 4. On **Quit** (or `SIGTERM`/`SIGINT`), sends `SIGTERM` to the daemon it spawned and waits
    up to 3 s for it to leave the room cleanly. It never signals a daemon it only attached to.
 
-Set `LOLCHAT_APP_DEBUG=1` to print connection, phase, and panel transitions to stderr.
+Set `AUTOCHAT_APP_DEBUG=1` to print connection, phase, and panel transitions to stderr.
+
+This app used to be `LolChat.app` (`com.bnookala.lolchat`); delete that copy. At launch,
+AutoChat moves a pre-rename `~/.lolchat` to `~/.autochat` (if `~/.autochat` doesn't exist
+yet), the same way the CLI does. `AUTOCHAT_HOME`, `AUTOCHAT_BIN`, and `AUTOCHAT_APP_DEBUG`
+fall back to their old `LOLCHAT_*` names.
 
 ## Mock daemon
 
@@ -67,21 +75,21 @@ countdown → the reality banner → lounge. It answers `say` (say "ping" and a 
 "pong"), `returnNow`, `leaveRoom`, `jumpToCopilot`, `dismissRequest`, and `joinNow`.
 
 ```sh
-# terminal 1: a throwaway LOLCHAT_HOME keeps your real lolchat out of it
-export LOLCHAT_HOME=$PWD/.dev-home
+# terminal 1: a throwaway AUTOCHAT_HOME keeps your real autochat out of it
+export AUTOCHAT_HOME=$PWD/.dev-home
 node macos/dev/mock-daemon.mjs --scenario full --loop
 # terminal 2
-LOLCHAT_HOME=$PWD/.dev-home macos/.build/debug/LolChat
+AUTOCHAT_HOME=$PWD/.dev-home macos/.build/debug/AutoChat
 ```
 
 Options: `--scenario full|lounge|room|request|countdown`, `--countdown <s>`,
 `--speed <x>`, `--loop`, `--sock <path>`, `--quiet`. The mock also accepts a leading
-`daemon` argument and reads `LOLCHAT_MOCK_SCENARIO`, `LOLCHAT_MOCK_COUNTDOWN`, and
-`LOLCHAT_MOCK_SPEED`. That means the app can spawn it like the real CLI, which is a good
+`daemon` argument and reads `AUTOCHAT_MOCK_SCENARIO`, `AUTOCHAT_MOCK_COUNTDOWN`, and
+`AUTOCHAT_MOCK_SPEED`. That means the app can spawn it like the real CLI, which is a good
 way to test the spawn and Quit path:
 
 ```sh
-LOLCHAT_HOME=$PWD/.dev-home LOLCHAT_BIN=$PWD/macos/dev/mock-daemon.mjs macos/.build/debug/LolChat
+AUTOCHAT_HOME=$PWD/.dev-home AUTOCHAT_BIN=$PWD/macos/dev/mock-daemon.mjs macos/.build/debug/AutoChat
 ```
 
 The Swift tests use an in-process mock server, and also start this script (when `node` is
@@ -90,22 +98,22 @@ crash restart.
 
 ### Against the real daemon
 
-`Tests/LolChatCoreTests/RealDaemonE2ETests.swift` is skipped unless `LOLCHAT_E2E_HOME`
+`Tests/AutoChatCoreTests/RealDaemonE2ETests.swift` is skipped unless `AUTOCHAT_E2E_HOME`
 is set. To run it, start a real daemon with an isolated home and a private room, then run
 the test:
 
 ```sh
 E2E=$PWD/.e2e   # keep it short: socket paths are limited to 104 bytes
-LOLCHAT_HOME=$E2E lolchat host
-LOLCHAT_HOME=$E2E COPILOT_HOME=$E2E/copilot LOLCHAT_NO_NOTIFY=1 LOLCHAT_NO_FOCUS=1 \
-  LOLCHAT_COUNTDOWN_MS=8000 lolchat daemon &
-cd macos && LOLCHAT_E2E_HOME=$E2E swift test --filter RealDaemon
+AUTOCHAT_HOME=$E2E autochat host
+AUTOCHAT_HOME=$E2E COPILOT_HOME=$E2E/copilot AUTOCHAT_NO_NOTIFY=1 AUTOCHAT_NO_FOCUS=1 \
+  AUTOCHAT_COUNTDOWN_MS=8000 autochat daemon &
+cd macos && AUTOCHAT_E2E_HOME=$E2E swift test --filter RealDaemon
 ```
 
 ## Screenshots without screen recording
 
 ```sh
-.build/debug/LolChat --render-snapshots <dir>
+.build/debug/AutoChat --render-snapshots <dir>
 ```
 
 This renders the descending panel (autopilot, countdown, request) and the chat window
@@ -118,13 +126,13 @@ doesn't need Screen Recording permission.
 ```
 macos/
   Package.swift                 SwiftPM, no .xcodeproj
-  Sources/LolChatCore/          Foundation only: protocol models + lenient decoding, socket
+  Sources/AutoChatCore/         Foundation only: protocol models + lenient decoding, socket
                                 client, daemon supervisor, pure presentation rules
-  Sources/LolChatApp/           AppKit + SwiftUI: status item, panel, chat window, renderers
-  Sources/LolChat/main.swift    entry point
+  Sources/AutoChatApp/          AppKit + SwiftUI: status item, panel, chat window, renderers
+  Sources/AutoChat/main.swift   entry point
   Tests/                        swift-testing suites
   Resources/Info.plist          bundle metadata used by build-app.sh
-  scripts/build-app.sh          assemble + sign LolChat.app
+  scripts/build-app.sh          assemble + sign AutoChat.app
   dev/mock-daemon.mjs           scripted mock daemon
 ```
 
