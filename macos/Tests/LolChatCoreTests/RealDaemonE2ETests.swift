@@ -95,6 +95,7 @@ struct RealDaemonE2ETests {
             #expect(last.banner?.kind == .reality)
             #expect(last.banner?.reason == "complete")
             #expect(last.banner?.summary?.contains("Refactored") == true)
+            #expect(ChatPresentation(snapshot: last, connected: true, countdown: nil, now: Date()).closeout?.title == "Back to reality")
         }
         #expect(await eventually(timeout: 12) { snapshots.value.last?.phase == .lounge })
 

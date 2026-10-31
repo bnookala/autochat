@@ -27,6 +27,7 @@ struct PanelModelTests {
         #expect(model.panelKind == .countdown)
         #expect(model.countdownRemaining == 23)
         #expect(model.iconState == .countdown(23))
+        #expect(model.presentation.inputEnabled)
     }
 
     @Test func expiredCountdownHoldsZeroThenTheBannerTakesOver() {
@@ -36,6 +37,7 @@ struct PanelModelTests {
         #expect(model.countdown != nil)
         #expect(model.countdownRemaining == 0)
         #expect(model.panelKind == .countdown)
+        #expect(model.presentation.closeout?.title == "Back to reality")
     }
 
     @Test func cancelledCountdownDisappearsAtOnce() {
@@ -61,5 +63,6 @@ struct PanelModelTests {
         model.connectionChanged(.disconnected(nil))
         #expect(model.panelKind == nil)
         #expect(model.iconState == .disconnected)
+        #expect(!model.presentation.inputEnabled)
     }
 }

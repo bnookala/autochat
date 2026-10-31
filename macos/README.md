@@ -5,14 +5,18 @@ and you get a clean closeout when it ends.
 
 - The **status item** (💬 in the menu bar) shows lolchat's state: outline in the lounge,
   filled while you're on autopilot, a `!` bubble when Copilot needs you, and the seconds
-  left during the exit countdown. **Left-click** opens the LolChat window. **Right-click**
-  (or ⌥-click) opens the menu: Open Chat, the current room, Join Now, Pause lolchat,
+  left during the exit countdown. **Left-click** opens the chat. **Right-click** (or
+  ⌥-click) opens the menu: Open Chat, the current room, Join Now, Pause lolchat,
   Launch at Login, Set lolchat Location…, and Quit.
 - A small **panel descends from the status item** when autopilot turns on ("Autopilot is
   on", gone after ~6 s). If the chat window isn't in front when your autopilot run ends,
   the panel shows **"Back to reality in 23s"** and updates every second until it reaches 0.
   It has Return Now and Open Chat buttons. The panel never takes focus.
-- The app runs `lolchat daemon` for you and shuts it down cleanly when you quit.
+- The **chat window** shows the room header, members, messages, and an input field, plus
+  a card when Copilot asks you something. During the 30 s exit countdown it shows a slim,
+  **non-blocking** strip above the input, so you can keep typing. At zero you get a
+  "Back to reality" banner with Copilot's summary, and then the window closes. Closing
+  the window only hides it.
 
 The app is a thin client. The Node core (`lolchat daemon`) is still the source of truth
 for rooms, P2P, session tracking, and the countdown. The app talks to it over the local
@@ -104,8 +108,9 @@ cd macos && LOLCHAT_E2E_HOME=$E2E swift test --filter RealDaemon
 .build/debug/LolChat --render-snapshots <dir>
 ```
 
-This renders the descending panel (autopilot, countdown, request) from fixture snapshots
-to PNGs, in light and dark (`-dark`) variants. It draws offscreen windows with AppKit's bitmap caching, so it
+This renders the descending panel (autopilot, countdown, request) and the chat window
+(countdown, Copilot request, closeout) from fixture snapshots to PNGs, in light and
+dark (`-dark`) variants. It draws offscreen windows with AppKit's bitmap caching, so it
 doesn't need Screen Recording permission.
 
 ## Layout
@@ -114,8 +119,8 @@ doesn't need Screen Recording permission.
 macos/
   Package.swift                 SwiftPM, no .xcodeproj
   Sources/LolChatCore/          Foundation only: protocol models + lenient decoding, socket
-                                client, daemon supervisor, pure rules
-  Sources/LolChatApp/           AppKit + SwiftUI: status item, panel, window, renderers
+                                client, daemon supervisor, pure presentation rules
+  Sources/LolChatApp/           AppKit + SwiftUI: status item, panel, chat window, renderers
   Sources/LolChat/main.swift    entry point
   Tests/                        swift-testing suites
   Resources/Info.plist          bundle metadata used by build-app.sh

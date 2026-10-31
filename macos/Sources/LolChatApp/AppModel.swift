@@ -3,8 +3,8 @@ import LolChatCore
 import Observation
 
 /// Single source of UI state: the latest daemon snapshot plus local, time-driven state
-/// (the ticking countdown, the autopilot notice). Shared by the status item, the
-/// descending panel and the chat window.
+/// (the ticking countdown, the autopilot notice, the closeout timer). Shared by the status
+/// item, the descending panel and the chat window.
 @MainActor
 @Observable
 public final class AppModel {
@@ -17,14 +17,21 @@ public final class AppModel {
     public private(set) var countdown: Countdown?
     public private(set) var autopilotNoticeUntil: Date?
     public private(set) var dismissedRequestKey: String?
+    public private(set) var closeoutClosesAt: Date?
     public private(set) var lastError: String?
     public var chatWindow: ChatWindowState = .closed
+    public var draft: String = "" {
+        didSet { if draft.count > 500 { draft = String(draft.prefix(500)) } }
+    }
 
     @ObservationIgnored public let client: DaemonClient?
     @ObservationIgnored public let supervisor: DaemonSupervisor?
+    @ObservationIgnored public var onCloseoutElapsed: (() -> Void)?
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var errorClear: DispatchWorkItem?
     @ObservationIgnored private let frozen: Bool
+
+    public static let closeoutSeconds: TimeInterval = 5
 
     /// Live model wired to a daemon client and supervisor.
     public init(client: DaemonClient, supervisor: DaemonSupervisor) {
@@ -40,7 +47,7 @@ public final class AppModel {
     }
 
     /// Static model for snapshot rendering and tests: nothing ticks, actions are no-ops.
-    public init(fixture: Snapshot?, now: Date, connection: DaemonClient.State = .connected, daemon: DaemonSupervisor.Status = .spawned(pid: 4242), chatWindow: ChatWindowState = .closed) {
+    public init(fixture: Snapshot?, now: Date, connection: DaemonClient.State = .connected, daemon: DaemonSupervisor.Status = .spawned(pid: 4242), chatWindow: ChatWindowState = .closed, draft: String = "") {
         self.client = nil
         self.supervisor = nil
         self.frozen = true
@@ -48,6 +55,7 @@ public final class AppModel {
         self.connection = connection
         self.daemon = daemon
         self.chatWindow = chatWindow
+        self.draft = draft
         self.snapshot = fixture
         self.countdown = fixture?.countdown
         if fixture?.phase == .room { autopilotNoticeUntil = now.addingTimeInterval(PanelRules.autopilotNoticeDuration) }
@@ -65,6 +73,10 @@ public final class AppModel {
     /// A static model for snapshot rendering.
     public var isFixture: Bool { frozen }
 
+    public var presentation: ChatPresentation {
+        ChatPresentation(snapshot: snapshot, connected: connected, countdown: snapshot?.countdown, now: now)
+    }
+
     public var panelKind: PanelKind? {
         PanelRules.decide(PanelInputs(
             connected: connected, phase: snapshot?.phase ?? .lounge, countdown: countdown,
@@ -79,6 +91,10 @@ public final class AppModel {
 
     public var countdownRemaining: Int? {
         countdown.map { CountdownClock.remainingSeconds(until: $0.endsAt, now: now) }
+    }
+
+    public var closeoutSecondsLeft: Int? {
+        closeoutClosesAt.map { CountdownClock.remainingSeconds(until: $0, now: now) }
     }
 
     // MARK: Inputs
@@ -102,6 +118,7 @@ public final class AppModel {
             let expired = next.phase.isCloseout || c.endsAt.timeIntervalSince(now) <= 1
             countdown = expired ? Countdown(endsAt: min(c.endsAt, now), total: c.total, reason: c.reason, summary: c.summary, cwd: c.cwd) : nil
         }
+        if !next.phase.isCloseout { closeoutClosesAt = nil }
         reschedule()
     }
 
@@ -134,6 +151,28 @@ public final class AppModel {
         }
     }
 
+    /// ⏎ in the chat input: send the draft, or jump to Copilot on an empty line when it asks.
+    public func submitDraft() {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            if snapshot?.request != nil { perform(.jumpToCopilot) }
+            return
+        }
+        guard let client, presentation.inputEnabled else { return }
+        Task {
+            do {
+                let reply = try await client.send(.say(text))
+                if reply.ok {
+                    if draft.trimmingCharacters(in: .whitespacesAndNewlines) == text { draft = "" }
+                } else {
+                    report(reply.error ?? "couldn't send")
+                }
+            } catch {
+                report(error.localizedDescription)
+            }
+        }
+    }
+
     public func dismissAutopilotNotice() {
         autopilotNoticeUntil = nil
     }
@@ -141,6 +180,22 @@ public final class AppModel {
     /// Hides the request panel for this question without dismissing it in the core.
     public func dismissRequestPanel() {
         dismissedRequestKey = snapshot?.request?.key
+    }
+
+    public func beginCloseout() {
+        guard !frozen else { return }
+        closeoutClosesAt = Date().addingTimeInterval(Self.closeoutSeconds)
+        reschedule()
+    }
+
+    /// Snapshot rendering only: show a closeout timer without running it.
+    func showCloseoutTimerForSnapshot(closesAt: Date) {
+        closeoutClosesAt = closesAt
+    }
+
+    public func cancelCloseout() {
+        closeoutClosesAt = nil
+        reschedule()
     }
 
     private func report(_ message: String) {
@@ -166,7 +221,13 @@ public final class AppModel {
             wakes.append(c.endsAt.addingTimeInterval(PanelRules.zeroHold))
         }
         if let until = autopilotNoticeUntil { wakes.append(until) }
-        guard let next = wakes.filter({ $0 > current }).min() else { return }
+        if let closes = closeoutClosesAt {
+            wakes.append(CountdownClock.nextTick(endsAt: closes, now: current) ?? closes)
+        }
+        guard let next = wakes.filter({ $0 > current }).min() else {
+            if closeoutClosesAt != nil { tick() }
+            return
+        }
         let t = Timer(fire: next.addingTimeInterval(0.004), interval: 0, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
@@ -180,6 +241,10 @@ public final class AppModel {
             countdown = nil
         }
         if let until = autopilotNoticeUntil, now >= until { autopilotNoticeUntil = nil }
+        if let closes = closeoutClosesAt, now >= closes {
+            closeoutClosesAt = nil
+            onCloseoutElapsed?()
+        }
         reschedule()
     }
 }

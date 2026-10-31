@@ -2,25 +2,38 @@ import AppKit
 import LolChatCore
 import SwiftUI
 
-/// Single-instance window opened from the status item. Closing only hides it; it
-/// remembers its frame; it reports its visible/key state to the model so the descending
-/// panel can hand off to it.
-@MainActor
-final class ChatWindowController: NSObject, NSWindowDelegate {
-    private let model: AppModel
-    private var _window: NSWindow?
-    private var observers: [NSObjectProtocol] = []
+/// The chat window. Draws as key for snapshot rendering, otherwise a normal titled window.
+final class ChatWindow: NSWindow {
+    var forceKeyAppearance = false
+    override var isKeyWindow: Bool { forceKeyAppearance || super.isKeyWindow }
+    override var isMainWindow: Bool { forceKeyAppearance || super.isMainWindow }
+}
 
-    var window: NSWindow {
+/// Single-instance chat window. Closing only hides it; it remembers its frame; it reports
+/// its visible/key state to the model so the descending panel can hand off to it.
+@MainActor
+final class ChatWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
+    private let model: AppModel
+    private var observers: [NSObjectProtocol] = []
+    private var _window: ChatWindow?
+    var window: ChatWindow {
         if let _window { return _window }
         let w = makeWindow()
         _window = w
+        observeChanges { [weak self] in self?.syncChrome() }
         return w
     }
+    private var meItem: NSToolbarItem?
+    private var leaveItem: NSToolbarItem?
+    private var wasCloseout = false
+
+    private static let meID = NSToolbarItem.Identifier("me")
+    private static let leaveID = NSToolbarItem.Identifier("leave")
 
     init(model: AppModel) {
         self.model = model
         super.init()
+        model.onCloseoutElapsed = { [weak self] in self?.hide() }
     }
 
     func show() {
@@ -37,18 +50,28 @@ final class ChatWindowController: NSObject, NSWindowDelegate {
         reportState()
     }
 
-    private func makeWindow() -> NSWindow {
-        let window = NSWindow(
+    // MARK: Window
+
+    private func makeWindow() -> ChatWindow {
+        let window = ChatWindow(
             contentRect: NSRect(x: 0, y: 0, width: 540, height: 620),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false
         )
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 420, height: 420)
         window.title = "LolChat"
+        window.titlebarSeparatorStyle = .automatic
         window.delegate = self
         window.tabbingMode = .disallowed
-        window.contentViewController = NSHostingController(rootView: ConnectionStatusView(model: model))
+        window.collectionBehavior.insert(.fullScreenNone)
+        window.contentViewController = NSHostingController(rootView: ChatView(model: model))
+        let toolbar = NSToolbar(identifier: "LolChatToolbar")
+        toolbar.delegate = self
+        toolbar.displayMode = .iconOnly
+        toolbar.allowsUserCustomization = false
+        window.toolbar = toolbar
+        window.toolbarStyle = .unified
         window.setContentSize(NSSize(width: 540, height: 620))
         window.center()
         window.setFrameAutosaveName("LolChatChatWindow")
@@ -91,74 +114,125 @@ final class ChatWindowController: NSObject, NSWindowDelegate {
         }
     }
 
+    /// Title/subtitle/toolbar follow the snapshot; start the closeout timer at zero.
+    private func syncChrome() {
+        let p = model.presentation
+        window.title = p.title
+        window.subtitle = p.subtitle
+        leaveItem?.isEnabled = p.canLeave
+        if let meItem, let handle = p.myHandle {
+            (meItem.view as? NSHostingView<MeChip>)?.rootView = MeChip(handle: handle, color: model.snapshot?.me?.color)
+        }
+        meItem?.view?.isHidden = p.myHandle == nil
+        let isCloseout = p.closeout != nil
+        if isCloseout, !wasCloseout, window.isVisible {
+            model.beginCloseout()
+        } else if !isCloseout, wasCloseout {
+            model.cancelCloseout()
+        }
+        wasCloseout = isCloseout
+    }
+
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         hide()
         return false
     }
-}
 
-/// What the app knows about lolchat right now: connection, daemon, room and phase.
-struct ConnectionStatusView: View {
-    let model: AppModel
+    // MARK: Leave room
 
-    var body: some View {
-        VStack(spacing: 14) {
-            Spacer(minLength: 0)
-            content
-            Spacer(minLength: 0)
+    func confirmLeave() {
+        guard model.presentation.canLeave else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Leave \(model.presentation.title)?"
+        alert.informativeText = "You won't be pulled back in for the rest of this autopilot run."
+        let leave = alert.addButton(withTitle: "Leave Room")
+        leave.hasDestructiveAction = true
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            MainActor.assumeIsolated { self?.model.perform(.leaveRoom) }
         }
-        .padding(30)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    @ViewBuilder private var content: some View {
-        switch (model.daemon, model.connection) {
-        case (.cliMissing, _):
-            Image(systemName: "shippingbox")
-                .font(.system(size: 42, weight: .light))
-                .foregroundStyle(.secondary)
-            Text("lolchat CLI not found")
-                .font(.title2.weight(.semibold))
-            Text("LolChat runs the lolchat command-line tool in the background. Install it, then try again:")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: 360)
-            Text(verbatim: DaemonLocator.installCommand)
-                .font(.system(.body, design: .monospaced))
-                .textSelection(.enabled)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.06)))
-            Button("Try Again") { model.supervisor?.retry() }
-        case let (.restarting(after, code), _):
-            ProgressView().controlSize(.small)
-            Text(verbatim: "lolchat daemon exited with code \(code). Restarting in \(Int(after.rounded()))s.")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-        case let (.failed(why), _):
-            Text(verbatim: why)
-                .multilineTextAlignment(.center)
-        case let (_, .incompatible(why)):
-            Text("lolchat is running in a terminal")
-                .font(.title3.weight(.semibold))
-            Text(verbatim: why)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-        case (_, .connected):
-            Image(systemName: model.snapshot?.phase.isInRoom == true ? "bubble.left.and.bubble.right.fill" : "bubble.left.and.bubble.right")
-                .font(.system(size: 42, weight: .light))
-                .foregroundStyle(.secondary)
-            Text(verbatim: model.snapshot?.room?.display ?? "#lobby")
-                .font(.title2.weight(.semibold))
-            Text(verbatim: model.snapshot?.phase.isInRoom == true ? "\(model.snapshot?.activeCount ?? 0) on autopilot" : "Waiting for autopilot")
-                .foregroundStyle(.secondary)
-            if model.snapshot?.phase == .lounge {
-                Button("Join Now") { model.perform(.joinNow) }
-            }
+    @objc private func leaveClicked(_ sender: Any?) {
+        confirmLeave()
+    }
+
+    // MARK: Toolbar
+
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [.flexibleSpace, Self.meID, Self.leaveID]
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [.flexibleSpace, Self.meID, Self.leaveID]
+    }
+
+    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        switch id {
+        case Self.meID:
+            let item = NSToolbarItem(itemIdentifier: id)
+            let p = model.presentation
+            let view = NSHostingView(rootView: MeChip(handle: p.myHandle ?? "", color: model.snapshot?.me?.color))
+            item.view = view
+            item.label = "You"
+            item.isBordered = false
+            item.visibilityPriority = .low
+            meItem = item
+            return item
+        case Self.leaveID:
+            let item = NSToolbarItem(itemIdentifier: id)
+            item.image = NSImage(systemSymbolName: "rectangle.portrait.and.arrow.right", accessibilityDescription: "Leave Room")
+            item.label = "Leave Room"
+            item.toolTip = "Leave the room for the rest of this autopilot run"
+            item.target = self
+            item.action = #selector(leaveClicked(_:))
+            item.isBordered = true
+            item.autovalidates = false
+            item.isEnabled = model.presentation.canLeave
+            leaveItem = item
+            return item
         default:
-            ProgressView()
-            Text("Connecting to lolchat…")
+            return nil
+        }
+    }
+
+    // MARK: Snapshot rendering
+
+    /// The real window, configured for an offscreen PNG render.
+    static func makeForSnapshot(model: AppModel, size: NSSize, appearance: NSAppearance.Name) -> (ChatWindowController, ChatWindow) {
+        let controller = ChatWindowController(model: model)
+        let window = controller.window
+        window.setFrameAutosaveName("")
+        window.forceKeyAppearance = true
+        window.appearance = NSAppearance(named: appearance)
+        window.setFrame(NSRect(origin: NSPoint(x: -20000, y: -20000), size: size), display: false)
+        return (controller, window)
+    }
+}
+
+/// "you: stormy-newt-59" chip in the toolbar.
+struct MeChip: View {
+    let handle: String
+    let color: HandleColor?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(color.color)
+                .frame(width: 8, height: 8)
+            Text(verbatim: handle)
+                .font(.callout.weight(.medium))
+                .foregroundStyle(color.color)
+            Text("(you)")
+                .font(.callout)
                 .foregroundStyle(.secondary)
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .fixedSize()
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("You are \(handle)")
     }
 }

@@ -2,9 +2,9 @@ import AppKit
 import LolChatCore
 import SwiftUI
 
-/// `LolChat --render-snapshots <dir>`: renders the descending panel from fixture snapshots to
-/// PNGs, without screen-recording permission (NSView bitmap caching of offscreen windows).
-/// Writes light-mode files with the canonical names plus `-dark` variants.
+/// `LolChat --render-snapshots <dir>`: renders the descending panel and the chat window from
+/// fixture snapshots to PNGs, without screen-recording permission (NSView bitmap caching of
+/// offscreen windows). Writes light-mode files with the canonical names plus `-dark` variants.
 @MainActor
 enum SnapshotRenderer {
     static func renderAll(to dir: URL) -> Bool {
@@ -20,6 +20,12 @@ enum SnapshotRenderer {
             ok = renderPanel(.autopilot, snapshot: Fixtures.room(now: now), now: now, appearance: appearance, to: dir.appendingPathComponent("status-panel-autopilot\(suffix).png")) && ok
             ok = renderPanel(.countdown, snapshot: Fixtures.countdown(now: now, remaining: 22.6), now: now, appearance: appearance, to: dir.appendingPathComponent("status-panel-countdown\(suffix).png")) && ok
             ok = renderPanel(.request, snapshot: Fixtures.request(now: now), now: now, appearance: appearance, to: dir.appendingPathComponent("status-panel-request\(suffix).png")) && ok
+            ok = renderChat(
+                Fixtures.countdown(now: now, remaining: 22.6), now: now, draft: "brb, mine just finished. same time tomorrow?",
+                appearance: appearance, to: dir.appendingPathComponent("chat-window-countdown\(suffix).png")
+            ) && ok
+            ok = renderChat(Fixtures.request(now: now), now: now, draft: "", appearance: appearance, to: dir.appendingPathComponent("chat-window-request\(suffix).png")) && ok
+            ok = renderChat(Fixtures.reality(now: now), now: now, draft: "", appearance: appearance, to: dir.appendingPathComponent("chat-window-closeout\(suffix).png"), closeoutSeconds: 4) && ok
         }
         return ok
     }
@@ -51,6 +57,27 @@ enum SnapshotRenderer {
         settle()
         defer { window.orderOut(nil) }
         return write(host, to: url)
+    }
+
+    // MARK: Chat window (the real window and toolbar, drawn as key)
+
+    private static func renderChat(_ snapshot: Snapshot, now: Date, draft: String, appearance: NSAppearance.Name, to url: URL, closeoutSeconds: TimeInterval? = nil) -> Bool {
+        let model = AppModel(fixture: snapshot, now: now, chatWindow: ChatWindowState(isVisible: true, isKey: true, appIsActive: true), draft: draft)
+        if let closeoutSeconds { model.showCloseoutTimerForSnapshot(closesAt: now.addingTimeInterval(closeoutSeconds)) }
+        let (controller, window) = ChatWindowController.makeForSnapshot(model: model, size: NSSize(width: 560, height: 600), appearance: appearance)
+        window.orderFrontRegardless()
+        settle()
+        // Show a caret at the end of the draft rather than a select-all highlight.
+        if let editor = window.firstResponder as? NSTextView {
+            editor.selectedRange = NSRange(location: (editor.string as NSString).length, length: 0)
+            settle()
+        }
+        defer {
+            window.orderOut(nil)
+            withExtendedLifetime(controller) {}
+        }
+        guard let frame = window.contentView?.superview else { return false }
+        return write(frame, to: url)
     }
 
     // MARK: Helpers

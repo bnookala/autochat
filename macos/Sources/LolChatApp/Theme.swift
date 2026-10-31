@@ -19,6 +19,7 @@ extension HandleColor {
 
 enum Theme {
     static let countdown = Color.orange
+    static let active = Color.green
     static let panelWidth: CGFloat = 344
     static let panelCorner: CGFloat = 18
 }
