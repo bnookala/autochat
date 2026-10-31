@@ -17,6 +17,12 @@ extension HandleColor {
     var color: Color { Color(nsColor: nsColor) }
 }
 
+enum Theme {
+    static let countdown = Color.orange
+    static let panelWidth: CGFloat = 344
+    static let panelCorner: CGFloat = 18
+}
+
 extension Optional where Wrapped == HandleColor {
     var color: Color { self?.color ?? .primary }
 }

@@ -2,8 +2,8 @@ import AppKit
 import LolChatCore
 import UniformTypeIdentifiers
 
-/// Wires the daemon client/supervisor, the status item and the chat window together, and
-/// owns the clean-closeout path on Quit.
+/// Wires the daemon client/supervisor, the status item, the descending panel and the chat
+/// window together, and owns the clean-closeout path on Quit.
 @MainActor
 public final class AppDelegate: NSObject, NSApplicationDelegate {
     private let paths = LolchatPaths.current()
@@ -12,6 +12,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private var model: AppModel!
     private var chat: ChatWindowController!
     private var statusItem: StatusItemController!
+    private var panel: StatusPanelController!
     private var terminating = false
     private var signalSources: [DispatchSourceSignal] = []
 
@@ -41,6 +42,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             toggleLoginItem: { [weak self] in self?.toggleLoginItem() },
             quit: { NSApp.terminate(nil) }
         ))
+        panel = StatusPanelController(model: model, anchor: { [weak self] in self?.statusItem.anchorRect }, openChat: { [weak self] in self?.openChat() })
         model.start()
     }
 
@@ -112,12 +114,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 public enum LolChatMain {
-    /// Entry point. Hidden dev mode:
+    /// Entry point. Hidden dev modes:
+    ///   --render-snapshots <dir>   render fixture PNGs of the panel and chat window, then exit
     ///   --render-icon <dir.iconset> write the app icon PNGs, then exit
     @MainActor
     public static func run() {
         let args = CommandLine.arguments
         let app = NSApplication.shared
+        if let i = args.firstIndex(of: "--render-snapshots") {
+            let dir = i + 1 < args.count ? args[i + 1] : "snapshots"
+            app.setActivationPolicy(.prohibited)
+            exit(SnapshotRenderer.renderAll(to: URL(fileURLWithPath: dir)) ? 0 : 1)
+        }
         if let i = args.firstIndex(of: "--render-icon") {
             let dir = i + 1 < args.count ? args[i + 1] : "AppIcon.iconset"
             exit(IconRenderer.writeIconset(to: URL(fileURLWithPath: dir)) ? 0 : 1)

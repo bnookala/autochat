@@ -3,11 +3,13 @@ import LolChatCore
 import SwiftUI
 
 /// Single-instance window opened from the status item. Closing only hides it; it
-/// remembers its frame.
+/// remembers its frame; it reports its visible/key state to the model so the descending
+/// panel can hand off to it.
 @MainActor
 final class ChatWindowController: NSObject, NSWindowDelegate {
     private let model: AppModel
     private var _window: NSWindow?
+    private var observers: [NSObjectProtocol] = []
 
     var window: NSWindow {
         if let _window { return _window }
@@ -22,13 +24,17 @@ final class ChatWindowController: NSObject, NSWindowDelegate {
     }
 
     func show() {
+        model.dismissAutopilotNotice()
         if window.isMiniaturized { window.deminiaturize(nil) }
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
+        reportState()
     }
 
     func hide() {
-        _window?.orderOut(nil)
+        guard let window = _window, window.isVisible else { return }
+        window.orderOut(nil)
+        reportState()
     }
 
     private func makeWindow() -> NSWindow {
@@ -46,7 +52,43 @@ final class ChatWindowController: NSObject, NSWindowDelegate {
         window.setContentSize(NSSize(width: 540, height: 620))
         window.center()
         window.setFrameAutosaveName("LolChatChatWindow")
+
+        let center = NotificationCenter.default
+        let names: [Notification.Name] = [
+            NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
+            NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification,
+            NSWindow.didChangeOcclusionStateNotification, NSWindow.didChangeScreenNotification
+        ]
+        for name in names {
+            observers.append(center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.reportState() }
+            })
+        }
+        for name in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification, NSApplication.didHideNotification, NSApplication.didUnhideNotification] {
+            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.reportState() }
+            })
+        }
+        observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reportState() }
+        })
         return window
+    }
+
+    /// Mirrors AppKit's view of the window into the model (input to the visible-and-key rule).
+    func reportState() {
+        guard let w = _window else { return }
+        let state = ChatWindowState(
+            isVisible: w.isVisible,
+            isMiniaturized: w.isMiniaturized,
+            isKey: w.isKeyWindow,
+            appIsActive: NSApp.isActive && !NSApp.isHidden,
+            isOccluded: !w.occlusionState.contains(.visible) || !w.isOnActiveSpace
+        )
+        if model.chatWindow != state {
+            DebugLog.log("chat window visible-and-key=\(chatWindowIsVisibleAndKey(state))")
+            model.chatWindow = state
+        }
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
