@@ -1,6 +1,7 @@
 import Foundation
 
-/// Client → daemon commands on a subscribed connection.
+/// Client → daemon commands on a subscribed connection. The `agents.*` commands only work on
+/// an agents-stream connection (`DaemonClient(stream: .agents)`).
 public enum Command: Sendable, Equatable {
     case say(String)
     case returnNow
@@ -8,6 +9,10 @@ public enum Command: Sendable, Equatable {
     case jumpToCopilot
     case dismissRequest
     case joinNow
+    /// The human read the intervention warning (persisted by the daemon).
+    case agentsAck
+    /// A human intervention in the agent room: `thread` nil is the main stream.
+    case agentsSay(text: String, thread: String?, to: [String])
 
     public var name: String {
         switch self {
@@ -17,10 +22,13 @@ public enum Command: Sendable, Equatable {
         case .jumpToCopilot: "jumpToCopilot"
         case .dismissRequest: "dismissRequest"
         case .joinNow: "joinNow"
+        case .agentsAck: "agents.ack"
+        case .agentsSay: "agents.say"
         }
     }
 
-    /// `{"type":"cmd","id":7,"cmd":"say","text":"lol same"}`
+    /// `{"type":"cmd","id":7,"cmd":"say","text":"lol same"}`, or for an intervention
+    /// `{"type":"cmd","id":2,"cmd":"agents.say","text":"…","thread":null,"to":[]}`.
     public func encodedLine(id: Int) -> Data {
         struct Envelope: Encodable {
             let type = "cmd"
@@ -28,11 +36,37 @@ public enum Command: Sendable, Equatable {
             let cmd: String
             let text: String?
         }
-        var text: String?
-        if case let .say(t) = self { text = t }
+        struct SayEnvelope: Encodable {
+            let id: Int
+            let cmd: String
+            let text: String
+            let thread: String?
+            let to: [String]
+
+            enum CodingKeys: String, CodingKey { case type, id, cmd, text, thread, to }
+
+            func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode("cmd", forKey: .type)
+                try c.encode(id, forKey: .id)
+                try c.encode(cmd, forKey: .cmd)
+                try c.encode(text, forKey: .text)
+                // An explicit null: the main stream.
+                try c.encode(thread, forKey: .thread)
+                try c.encode(to, forKey: .to)
+            }
+        }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        var data = (try? encoder.encode(Envelope(id: id, cmd: name, text: text))) ?? Data()
+        var data: Data
+        switch self {
+        case let .agentsSay(text, thread, to):
+            data = (try? encoder.encode(SayEnvelope(id: id, cmd: name, text: text, thread: thread, to: to))) ?? Data()
+        case let .say(text):
+            data = (try? encoder.encode(Envelope(id: id, cmd: name, text: text))) ?? Data()
+        default:
+            data = (try? encoder.encode(Envelope(id: id, cmd: name, text: nil))) ?? Data()
+        }
         data.append(0x0A)
         return data
     }
@@ -82,6 +116,8 @@ public enum CommandError: Error, Sendable, Equatable, LocalizedError {
 /// A decoded daemon → client line.
 public enum Inbound: Sendable, Equatable {
     case state(Snapshot)
+    /// A snapshot of the local agent room (agents-stream subscriptions only).
+    case agents(AgentsSnapshot)
     case reply(Reply)
     /// A line without `type`: a one-shot answer (e.g. an older UI that doesn't support subscribe).
     case oneShot(ok: Bool, error: String?)
@@ -113,6 +149,9 @@ public enum Inbound: Sendable, Equatable {
         case "state":
             guard let snap = try? decoder.decode(Snapshot.self, from: line) else { return .invalid }
             return .state(snap)
+        case "agents":
+            guard let snap = try? decoder.decode(AgentsSnapshot.self, from: line) else { return .invalid }
+            return .agents(snap)
         case "reply":
             guard let id = head.id else { return .invalid }
             return .reply(Reply(id: id, ok: head.ok ?? (head.error == nil), error: head.error))
@@ -147,7 +186,13 @@ public enum Inbound: Sendable, Equatable {
 
 enum Wire {
     static let subscribe: Data = line(["type": "subscribe", "v": 1, "client": "macos-app"])
+    static let subscribeAgents: Data = line(["type": "subscribe", "v": 1, "client": "macos-app", "stream": "agents"])
     static let ping: Data = line(["type": "ping"])
+
+    /// The lounge subscription stays exactly as before (no `stream`), so older daemons accept it.
+    static func subscribe(_ stream: DaemonClient.Stream) -> Data {
+        stream == .agents ? subscribeAgents : subscribe
+    }
 
     private static func line(_ object: [String: Any]) -> Data {
         var data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data()
