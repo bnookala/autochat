@@ -3,10 +3,12 @@ import hcrypto from 'hypercore-crypto'
 import b4a from 'b4a'
 import { ADJECTIVES, ANIMALS } from './words.js'
 
+// sanitize lives in text.js (no dependencies, so the agent room can use it); re-exported here.
+export { sanitize, MAX_TEXT } from './text.js'
+
 export const PROTOCOL_VERSION = 1
 export const DEFAULT_ROOM = 'lobby'
 export const MAX_LINE = 16 * 1024
-export const MAX_TEXT = 500
 
 const sha = (s) => nodeCrypto.createHash('sha256').update(s).digest()
 
@@ -93,21 +95,4 @@ export function open (obj) {
 
 export function randomId (bytes = 8) {
   return nodeCrypto.randomBytes(bytes).toString('hex')
-}
-
-// Strip terminal escape sequences, control chars and bidi overrides from untrusted text.
-export function sanitize (text, max = MAX_TEXT) {
-  if (typeof text !== 'string') return ''
-  let s = text
-    .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)?/g, '') // OSC
-    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '') // CSI
-    .replace(/\x1b[PX^_][^\x1b]*(\x1b\\)?/g, '') // DCS/SOS/PM/APC
-    .replace(/\x1b./g, '')
-    .replace(/[\r\n\t]+/g, ' ')
-    .replace(/[\x00-\x1f\x7f-\x9f]/g, '')
-    .replace(/[\u202a-\u202e\u2066-\u2069\u200e\u200f]/g, '')
-    .trim()
-  const chars = Array.from(s)
-  if (chars.length > max) s = chars.slice(0, max - 1).join('') + '…'
-  return s
 }

@@ -200,14 +200,48 @@ async function startCore ({ auto = false, daemon = false }) {
   const { Controller } = await import('../src/controller.js')
   const { serve } = await import('../src/ipc.js')
   const { readSpool, releaseLaunchLock } = await import('../src/hook.js')
-  const controller = new Controller({ identity: loadIdentity(), config: loadConfig(), auto, daemon, bootstrap: bootstrap() })
+  const identity = loadIdentity()
+  const config = loadConfig()
+  const controller = new Controller({ identity, config, auto, daemon, bootstrap: bootstrap() })
+  // Only the daemon hosts the local agent room; the terminal UI refuses agent connections.
+  let agentRoom = null
+  if (daemon) {
+    const { AgentRoom } = await import('../src/agents.js')
+    const resumeMs = Number(envVar('AGENT_RESUME_MS'))
+    agentRoom = new AgentRoom({
+      human: identity.handle,
+      ack: !!config.agentsInterventionAck,
+      onAck: () => saveConfig({ agentsInterventionAck: true }),
+      limits: envVar('AGENT_RESUME_MS') && resumeMs >= 0 ? { resumeMs } : {}
+    })
+  }
+  const agents = agentRoom && { connect: (hello, peer) => agentRoom.connect(hello, peer), state: () => agentRoom.snapshot(), command: (msg) => agentRoom.command(msg) }
   let server
   try {
-    server = await serve((msg) => controller.handle(msg), { state: () => controller.snapshot(), command: (msg) => controller.command(msg) })
+    server = await serve((msg) => {
+      const reply = controller.handle(msg)
+      return msg?.type === 'ping' ? { ...reply, agentRoom: !!agentRoom } : reply
+    }, {
+      state: () => ({ ...controller.snapshot(), agents: agentRoom ? agentRoom.summary() : null }),
+      command: (msg) => controller.command(msg),
+      agents
+    })
+  } catch (err) {
+    agentRoom?.close()
+    throw err
   } finally {
     if (auto || daemon) releaseLaunchLock()
   }
   controller.on('change', () => server.publish())
+  if (agentRoom) {
+    // The lounge snapshot carries agents: {present, openThreads}; republish it when that changes.
+    let summary = null
+    agentRoom.on('change', () => {
+      server.publish('agents')
+      const next = JSON.stringify(agentRoom.summary())
+      if (next !== summary) { summary = next; server.publish('lounge') }
+    })
+  }
   // Hooks that fire while a UI is starting (or a second launch loses the race) queue events in the spool.
   const drain = () => { for (const m of readSpool()) if (Date.now() - (m.ts || 0) < 60000) controller.handle(m) }
   drain()
@@ -222,10 +256,11 @@ async function startCore ({ auto = false, daemon = false }) {
   const stop = async () => {
     clearInterval(drainTimer)
     clearInterval(scanTimer)
+    agentRoom?.close()
     server.close()
     await controller.shutdown()
   }
-  return { controller, server, stop }
+  return { controller, server, agentRoom, stop }
 }
 
 async function ui () {
@@ -288,6 +323,7 @@ async function daemon () {
     throw err
   }
   process.stderr.write(`autochat daemon ${process.pid} listening on ${sockPath()}\n`)
+  core.agentRoom.on('presence', (event, card) => process.stderr.write(`autochat daemon: agent ${card.name} (${card.harness}) ${event}\n`))
   let exiting = false
   const exit = async (sig) => {
     if (exiting) return

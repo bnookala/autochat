@@ -11,7 +11,9 @@ export const DEFAULTS = {
   idleMs: 45000,
   announce: true,
   // seconds you stay in the room after autopilot ends; 0 = pulled back immediately
-  countdownSeconds: 30
+  countdownSeconds: 30,
+  // set by agents.ack: the human saw "Agents read your messages as input…"
+  agentsInterventionAck: false
 }
 
 export const configPath = () => path.join(home(), 'config.json')
