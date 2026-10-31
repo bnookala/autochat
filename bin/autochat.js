@@ -20,6 +20,16 @@ if (cmd === 'hook') {
   process.exit(0)
 }
 
+// The MCP server speaks JSON-RPC on stdout, so nothing else may print there, and it needs none
+// of the P2P modules below. It runs until stdin closes (or a signal), then exits.
+if (cmd === 'mcp') {
+  const { values } = parseArgs({ args: rest, options: { harness: { type: 'string' } }, strict: false })
+  const { runMcp } = await import('../src/mcp.js')
+  const { done } = await runMcp({ harness: typeof values.harness === 'string' ? values.harness : null })
+  await done
+  process.exit(0)
+}
+
 const { loadIdentity, ephemeralIdentity } = await import('../src/identity.js')
 const { loadConfig, saveConfig } = await import('../src/config.js')
 const { parseRoom, generatePrivateCode, DEFAULT_ROOM } = await import('../src/protocol.js')
@@ -57,6 +67,7 @@ const HELP = `autochat: ephemeral, serverless chat rooms for people whose Copilo
   autochat rooms              list live public rooms (asks peers, ~8s)
   autochat status             what the running autochat UI is doing
   autochat daemon             headless core for the macOS menu bar app (docs/protocol.md)
+  autochat mcp [--harness H]  stdio MCP server for coding agents: the local agent room (docs/agents.md)
   autochat config [k] [v]     show/set config (launch: auto|app|tmux|ghostty|iterm|terminal|notify|off,
                               countdown: seconds in the room after autopilot ends, 0 = none)
   autochat doctor             check hooks + P2P connectivity
