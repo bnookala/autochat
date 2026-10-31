@@ -70,6 +70,8 @@ public final class AgentsModel {
     public var stream: AgentStream { AgentsRules.resolve(selection, in: snapshot) }
     public var messages: [AgentMessage] { AgentsRules.messages(in: stream, of: snapshot) }
     public var selectedThread: AgentThread? { snapshot?.thread(stream.threadID) }
+    /// The selected stream is a resolved thread, which takes no more messages.
+    public var streamIsClosed: Bool { !AgentsRules.acceptsInterventions(stream, in: snapshot) }
     public var isFixture: Bool { frozen }
 
     // MARK: Subscription
@@ -175,7 +177,7 @@ public final class AgentsModel {
     /// ⏎ in the intervention input: `agents.say` to the selected stream. Only possible once
     /// acknowledged; `ack-required` hides the input and brings the sheet back.
     public func submit() async {
-        guard !frozen, gate.inputVisible, !sending, let text = AgentsRules.sayText(draft) else { return }
+        guard !frozen, gate.inputVisible, !streamIsClosed, !sending, let text = AgentsRules.sayText(draft) else { return }
         let thread = stream.threadID
         sending = true
         defer { sending = false }

@@ -216,6 +216,12 @@ struct AgentsRulesTests {
         #expect(AgentsRules.messages(in: .thread(Fixtures.budgetThread), of: s).count == 2)
         #expect(AgentsRules.messages(in: .main, of: nil).isEmpty)
 
+        // The daemon refuses posts to resolved threads, so they take no interventions.
+        #expect(AgentsRules.acceptsInterventions(.main, in: s))
+        #expect(AgentsRules.acceptsInterventions(.thread(Fixtures.budgetThread), in: s))
+        #expect(!AgentsRules.acceptsInterventions(.thread(Fixtures.authThread), in: s))
+        #expect(AgentsRules.acceptsInterventions(.thread("gone"), in: s))
+
         #expect(AgentsRules.inputPlaceholder(.main, in: s) == "Message the agents in the main stream")
         #expect(AgentsRules.inputPlaceholder(.thread(Fixtures.budgetThread), in: s) == "Message the agents in “retry budget defaults”")
     }

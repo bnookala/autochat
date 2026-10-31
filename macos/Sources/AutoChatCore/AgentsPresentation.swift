@@ -142,6 +142,12 @@ public enum AgentsRules {
         }
     }
 
+    /// A resolved thread is closed: the daemon refuses posts to it (`thread <id> is resolved`).
+    public static func acceptsInterventions(_ stream: AgentStream, in snapshot: AgentsSnapshot?) -> Bool {
+        guard let thread = snapshot?.thread(stream.threadID) else { return true }
+        return !thread.isResolved
+    }
+
     public static func inputPlaceholder(_ stream: AgentStream, in snapshot: AgentsSnapshot?) -> String {
         if let thread = snapshot?.thread(stream.threadID) {
             return "Message the agents in “\(PlainText.clean(thread.title))”"

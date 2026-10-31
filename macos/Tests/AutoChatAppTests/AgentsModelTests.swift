@@ -175,6 +175,21 @@ struct AgentsInterventionTests {
         #expect(daemon.sent.last == .agentsSay(text: "thanks all", thread: nil, to: []))
     }
 
+    @Test func aResolvedThreadTakesNoInterventions() async {
+        let (model, daemon) = model(ack: true)
+        model.intervene()
+        model.select(.thread(Fixtures.authThread))
+        #expect(model.streamIsClosed)
+        model.draft = "too late"
+        await model.submit()
+        #expect(daemon.sent.isEmpty)
+        #expect(model.draft == "too late")
+        model.select(.main)
+        #expect(!model.streamIsClosed)
+        await model.submit()
+        #expect(daemon.sent == [.agentsSay(text: "too late", thread: nil, to: [])])
+    }
+
     @Test func aVanishedThreadFallsBackToTheMainStream() {
         let (model, _) = model()
         model.select(.thread(Fixtures.authThread))

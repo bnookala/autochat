@@ -803,10 +803,11 @@ private struct InterveneBar: View {
     }
 
     private var watching: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "eye")
+        let closed = agents.streamIsClosed
+        return HStack(spacing: 8) {
+            Image(systemName: closed ? "checkmark.seal" : "eye")
                 .foregroundStyle(.secondary)
-            Text("You're watching. Agents only hear from you if you intervene.")
+            Text(closed ? "This thread is resolved, so it takes no more messages." : "You're watching. Agents only hear from you if you intervene.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
@@ -817,7 +818,8 @@ private struct InterveneBar: View {
                 Label("Intervene…", systemImage: "hand.raised")
             }
             .buttonStyle(.action(tint: Theme.intervene))
-            .help(agents.gate.acknowledged ? "Write to the agents as a human" : "Agents read your messages as input. You'll be asked to confirm once.")
+            .disabled(closed)
+            .help(closed ? "Pick the main stream or an open thread to intervene" : agents.gate.acknowledged ? "Write to the agents as a human" : "Agents read your messages as input. You'll be asked to confirm once.")
         }
         .padding(.vertical, 2)
     }
@@ -840,39 +842,51 @@ private struct InterveneBar: View {
             }
             .font(.callout)
             .foregroundStyle(Theme.intervene)
-            HStack(alignment: .bottom, spacing: 8) {
-                TextField(AgentsRules.inputPlaceholder(agents.stream, in: snapshot), text: $agents.draft, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(.body)
-                    .lineLimit(1...5)
-                    .focused($focused)
-                    .focusEffectDisabled()
-                    .onSubmit { Task { await agents.submit() } }
-                    .accessibilityLabel("Message to the agents")
-                    .padding(.vertical, 3)
-                Button {
-                    Task { await agents.submit() }
-                } label: {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 22))
-                        .symbolRenderingMode(.hierarchical)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(canSend ? Theme.intervene : Color.secondary.opacity(0.5))
-                .disabled(!canSend)
-                .help("Send to the agents (⏎)")
-                .accessibilityLabel("Send")
+            if agents.streamIsClosed {
+                Label("This thread is resolved. Pick the main stream or an open thread to intervene.", systemImage: "checkmark.seal")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 8)
+                    .padding(.leading, 4)
+            } else {
+                input
             }
-            .padding(.leading, 14)
-            .padding(.trailing, 6)
-            .padding(.vertical, 5)
-            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color(nsColor: .textBackgroundColor)))
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(Theme.intervene.opacity(focused ? 0.75 : 0.45), lineWidth: 1)
-            )
         }
         .onAppear { if !agents.isFixture { focused = true } }
+    }
+
+    private var input: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            TextField(AgentsRules.inputPlaceholder(agents.stream, in: snapshot), text: $agents.draft, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.body)
+                .lineLimit(1...5)
+                .focused($focused)
+                .focusEffectDisabled()
+                .onSubmit { Task { await agents.submit() } }
+                .accessibilityLabel("Message to the agents")
+                .padding(.vertical, 3)
+            Button {
+                Task { await agents.submit() }
+            } label: {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 22))
+                    .symbolRenderingMode(.hierarchical)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(canSend ? Theme.intervene : Color.secondary.opacity(0.5))
+            .disabled(!canSend)
+            .help("Send to the agents (⏎)")
+            .accessibilityLabel("Send")
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, 6)
+        .padding(.vertical, 5)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color(nsColor: .textBackgroundColor)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Theme.intervene.opacity(focused ? 0.75 : 0.45), lineWidth: 1)
+        )
     }
 
     private var target: String {
