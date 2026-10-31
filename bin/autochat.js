@@ -45,7 +45,8 @@ function inviteText (room) {
 
 const HELP = `autochat: ephemeral, serverless chat rooms for people whose Copilot CLI is on autopilot
 
-  autochat setup              install Copilot CLI hooks (~/.copilot/hooks/autochat.json)
+  autochat setup              install Copilot CLI hooks (~/.copilot/hooks/autochat.json);
+                              on macOS, hooks wake AutoChat.app if it's installed (launch=app)
   autochat uninstall          remove the hooks
   autochat                    open the lounge; drops into the room when autopilot runs
   autochat whoami             your anonymous, stable handle
@@ -70,21 +71,39 @@ async function main () {
       process.stdout.write(HELP)
       return
     case 'setup': {
-      const { installHooks, removeLegacyHooks, legacyHooksFile } = await import('../src/setup.js')
+      const { installHooks, removeLegacyHooks, legacyHooksFile, configureLaunch, APP_INSTALL_STEPS, APP_INSTALL_URL } = await import('../src/setup.js')
       const id = loadIdentity()
       const file = installHooks()
       const { migratedHome } = await import('../src/paths.js')
       if (migratedHome) console.log(dim(`moved ${migratedHome.from} → ${migratedHome.to} (same identity and handle)`))
       if (removeLegacyHooks()) console.log(dim(`removed the old lolchat hooks: ${legacyHooksFile()}`))
+      const launch = configureLaunch()
       const room = parseRoom(loadConfig().room)
+      const launchLine = launch.launch === 'off'
+        ? 'off (paused)'
+        : launch.app
+          ? `app (${launch.app})${launch.previous !== 'app' ? dim(` · was ${launch.previous}`) : ''}`
+          : `${launch.launch}${launch.launch === 'auto' ? ` (→ ${launch.method})` : ''}`
+      const opens = launch.method === 'app'
+        ? 'AutoChat.app in your menu bar puts you'
+        : 'a chat window opens and you\'re'
+      const next = launch.launch === 'off'
+        ? `autochat is paused, so autopilot runs won't open anything. Resume with ${bold('autochat config launch ' + (launch.app ? 'app' : 'auto'))}.`
+        : `Next time a Copilot CLI session goes into autopilot (new sessions pick up hooks),\n${opens} in the room with everyone else on autopilot.`
       console.log(`${bold('autochat is set up.')}
   hooks     ${file}
   you are   ${id.handle}
   room      ${room.display}
+  launch    ${launchLine}
 
-Next time a Copilot CLI session goes into autopilot (new sessions pick up hooks),
-a chat window opens and you're in the room with everyone else on autopilot.
+${next}
 Invite people: ${bold('autochat host')} (private) or just share ${bold('#' + DEFAULT_ROOM)}.`)
+      if (process.platform === 'darwin' && !launch.app) {
+        console.log(`
+${bold('Get the menu bar app')} (no terminal windows; a status panel and a 30 s countdown instead):
+${APP_INSTALL_STEPS.map(l => '  ' + l).join('\n')}
+${dim('More: ' + APP_INSTALL_URL)}`)
+      }
       return
     }
     case 'uninstall': {
@@ -309,7 +328,7 @@ async function sim () {
 }
 
 async function doctor () {
-  const { hooksInstalled, hooksFile, legacyHooksInstalled, legacyHooksFile } = await import('../src/setup.js')
+  const { hooksInstalled, hooksFile, legacyHooksInstalled, legacyHooksFile, APP_INSTALL_URL } = await import('../src/setup.js')
   const { send } = await import('../src/ipc.js')
   const Hyperswarm = (await import('hyperswarm')).default
   const crypto = await import('node:crypto')
@@ -326,7 +345,7 @@ async function doctor () {
   const app = appInstalled()
   if (process.platform === 'darwin' || app) {
     if (app) ok(true, `AutoChat.app installed: ${app}${method === 'app' ? '' : ` (not used: launch=${cfg.launch})`}`)
-    else console.log('… AutoChat.app not installed: hooks open a terminal instead')
+    else console.log(`… AutoChat.app not installed: hooks open a terminal instead (get the app: ${APP_INSTALL_URL})`)
   }
   const ping = await send({ type: 'ping' }, 500)
   if (ping?.daemon) ok(true, `autochat daemon running (pid ${ping.pid}, ${ping.phase})`)

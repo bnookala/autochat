@@ -41,6 +41,9 @@ bundle id `com.bnookala.autochat`), renders the icon, and signs the bundle with
 `codesign -s -`. Because it's ad-hoc signed, the first launch of a copied build may need
 right-click → Open.
 
+After installing, run `autochat setup`. It finds `AutoChat.app` in `/Applications` or
+`~/Applications` and sets `launch` to `app`, so hooks wake the app instead of a terminal.
+
 ## Run
 
 Open `AutoChat.app`, or run `.build/debug/AutoChat` during development. At startup the app:

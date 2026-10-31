@@ -55,7 +55,8 @@ test('hook launches the UI only for sessions in autopilot', async () => {
   r = hook('agentStop', { sessionId: 's-auto' })
   assert.equal(r.result.action, 'ignored', 'stop events never launch')
 
-  r = hook('postToolUse', { sessionId: 's-auto', toolName: 'bash', cwd: '/x' })
+  // Inside tmux, so the hook opens a UI on every platform (CI's Linux runners have no terminal or DISPLAY).
+  r = hook('postToolUse', { sessionId: 's-auto', toolName: 'bash', cwd: '/x' }, { TMUX: '/x/tmux,1,0', TMUX_PANE: '%1' })
   assert.equal(r.result.action, 'launched')
   assert.equal(r.stdout, '')
   const l = launches()
