@@ -9,6 +9,8 @@ import { parseRoom, sanitize } from './protocol.js'
 
 export const HOOK_EVENTS = ['sessionStart', 'userPromptSubmitted', 'preToolUse', 'postToolUse', 'agentStop', 'notification', 'sessionEnd']
 const REQUEST_NOTIFICATIONS = new Set(['permission_prompt', 'elicitation_dialog'])
+// How long a launch may take before another hook tries again. Events in between are
+// spooled for the new process. Covers a cold LolChat.app start (~2-3 s) plus its daemon.
 const LOCK_STALE_MS = 15000
 const SPOOL_TTL_MS = 2 * 60 * 1000
 const NOTIFY_COOLDOWN_MS = 30 * 60 * 1000

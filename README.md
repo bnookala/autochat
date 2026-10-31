@@ -46,14 +46,15 @@ Things we learned against Copilot CLI 1.0.97, which differ from or aren't in the
 ## Install
 
 ```sh
-npm i -g github:bhnook_microsoft/lolchat   # needs Node ≥ 18 and access to this repo
-lolchat setup                              # writes ~/.copilot/hooks/lolchat.json
-lolchat doctor                             # optional: checks hooks + P2P connectivity
+npm i -g github:bnookala/lolchat   # needs Node ≥ 18
+lolchat setup                      # writes ~/.copilot/hooks/lolchat.json
+lolchat doctor                     # optional: checks hooks, the menu bar app, P2P connectivity
 ```
 
 New Copilot CLI sessions pick up the hooks. The next time you run `/autopilot` (or `copilot --autopilot`),
 a chat opens:
 
+- **with the LolChat menu bar app installed (macOS):** no terminal at all. The hook wakes `LolChat.app` in the background (`open -g -b com.bnookala.lolchat`), even inside tmux.
 - **in tmux:** a split pane under your copilot
 - **in Ghostty (macOS):** one new window in your running Ghostty, opened via Ghostty's AppleScript support (1.3+). It closes by itself when you're pulled back.
 - **in iTerm2 or Terminal.app (macOS):** a new window
@@ -61,7 +62,7 @@ a chat opens:
 - **otherwise:** a desktop notification asks you to run `lolchat`
 
 You can also keep `lolchat` open in a side pane (the *lounge*). It waits there and drops into the room
-whenever any of your sessions goes autopilot. Override the launcher with `lolchat config launch tmux|ghostty|iterm|terminal|notify|off`.
+whenever any of your sessions goes autopilot. Override the launcher with `lolchat config launch app|tmux|ghostty|iterm|terminal|notify|off`.
 `off` pauses lolchat entirely.
 
 ## Rooms & discovery
@@ -83,7 +84,8 @@ Share the invite however you like (Teams, Slack, a sticky note). There's no serv
 ## Room lifecycle
 
 - While autopilot is running you're **in the room** (●). If your copilot asks for something, others see **!**.
-- When autopilot **finishes**, you're **pulled back to reality**: the chat closes, focus returns to your copilot, and you get its summary.
+- When autopilot **finishes**, a **30-second countdown** starts (`back to reality in 23s` above the input). You stay in the room and can finish your sentence. Press ↵ on an empty line (or type `/back`) to go now. If any of your sessions goes back on autopilot, the countdown is cancelled.
+- At zero you're **pulled back to reality**: the chat closes, focus returns to your copilot, and you get its summary. Change the length with `lolchat config countdown <seconds>`; `0` pulls you back immediately.
 - The **host** is whoever was in the room first. A host who gets pulled back stays as a **spectator** (○) and can read along until the room dies.
 - The room **survives the host leaving** as long as anyone is still on autopilot.
 - When the **last person on autopilot** leaves, the room **dies** for everyone, spectators included. Nothing is kept, and the next person to show up starts a fresh room.
@@ -113,10 +115,12 @@ npm install
 npm test        # unit tests + multi-peer room tests on a local HyperDHT testnet
 lolchat sim --room <code> --seconds 120   # a throwaway bot peer that answers "ping"
 LOLCHAT_DEBUG=1 lolchat hook preToolUse < payload.json
+lolchat daemon  # headless core for GUI clients; protocol in docs/protocol.md
 ```
 
 Env overrides: `LOLCHAT_HOME` (default `~/.lolchat`), `COPILOT_HOME` (default `~/.copilot`),
-`LOLCHAT_BOOTSTRAP=host:port,...` (custom DHT bootstrap).
+`LOLCHAT_BOOTSTRAP=host:port,...` (custom DHT bootstrap), `LOLCHAT_COUNTDOWN_MS` (exit countdown length),
+`LOLCHAT_APP_DIRS` (where to look for `LolChat.app`, default `/Applications:~/Applications`).
 
 ## Troubleshooting: "lolchat didn't open"
 

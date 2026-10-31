@@ -14,6 +14,8 @@ const env = {
   LOLCHAT_HOME: path.join(tmp, 'lc'),
   LOLCHAT_LAUNCH_RECORD: path.join(tmp, 'launches.jsonl'),
   LOLCHAT_DEBUG: '1',
+  // An installed LolChat.app must not change which launcher these tests see.
+  LOLCHAT_APP_DIRS: path.join(tmp, 'no-apps'),
   TMUX: '', TMUX_PANE: ''
 }
 process.env.COPILOT_HOME = env.COPILOT_HOME
@@ -119,6 +121,74 @@ test('hook delivers to a running UI and maps requests', async () => {
   } finally {
     server.close()
   }
+})
+
+test('pickMethod prefers LolChat.app on macOS; an explicit launch setting still wins', async () => {
+  const { pickMethod, appInstalled, APP_BUNDLE_ID } = await import('../src/launcher.js')
+  const apps = path.join(tmp, 'apps')
+  const app = path.join(apps, 'LolChat.app')
+  fs.mkdirSync(path.join(app, 'Contents'), { recursive: true })
+  const e = { LOLCHAT_APP_DIRS: path.join(tmp, 'nowhere') + path.delimiter + apps, TMUX: '/x/tmux,1,0', TMUX_PANE: '%1' }
+  assert.equal(appInstalled(e), null, 'a bundle without Info.plist is not the app')
+  fs.writeFileSync(path.join(app, 'Contents', 'Info.plist'), '<plist><dict><key>CFBundleIdentifier</key><string>com.example.other</string></dict></plist>')
+  assert.equal(appInstalled(e), null, 'some other app named LolChat.app')
+  fs.writeFileSync(path.join(app, 'Contents', 'Info.plist'), `<plist><dict><key>CFBundleIdentifier</key><string>${APP_BUNDLE_ID}</string></dict></plist>`)
+  assert.equal(appInstalled(e), app)
+  assert.equal(pickMethod({ launch: 'auto' }, e, 'darwin'), 'app', 'the app beats tmux and terminals')
+  assert.equal(pickMethod({ launch: 'tmux' }, e, 'darwin'), 'tmux', 'explicit config wins')
+  assert.equal(pickMethod({ launch: 'auto' }, e, 'linux'), 'tmux', 'macOS only')
+  assert.equal(pickMethod({ launch: 'auto' }, { LOLCHAT_APP_DIRS: path.join(tmp, 'nowhere') }, 'darwin'), 'terminal', 'not installed: terminals as before')
+
+  // Through the hook, auto-detected on macOS.
+  if (process.platform === 'darwin') {
+    const home = path.join(tmp, 'lc-app-auto')
+    const r = hook('userPromptSubmitted', { sessionId: 's-auto', prompt: 'go' }, { LOLCHAT_HOME: home, LOLCHAT_APP_DIRS: apps })
+    assert.equal(r.result.method, 'app')
+  }
+  const bad = spawnSync(process.execPath, [BIN, 'config', 'launch', 'nope'], { env: { ...env, LOLCHAT_HOME: path.join(tmp, 'lc-app-bad') }, encoding: 'utf8' })
+  assert.equal(bad.status, 1)
+  assert.match(bad.stderr, /auto\|app\|tmux/)
+})
+
+test('launch=app wakes LolChat.app (never a terminal) and spools events until its daemon is up', async () => {
+  const home = path.join(tmp, 'lc-app')
+  const e = { LOLCHAT_HOME: home }
+  const cfg = spawnSync(process.execPath, [BIN, 'config', 'launch', 'app'], { env: { ...env, ...e }, encoding: 'utf8' })
+  assert.equal(cfg.status, 0, cfg.stderr)
+  fs.rmSync(env.LOLCHAT_LAUNCH_RECORD, { force: true })
+  let r = hook('userPromptSubmitted', { sessionId: 's-auto', prompt: 'go' }, e)
+  assert.deepEqual(r.result, { action: 'launched', method: 'app' })
+  assert.deepEqual(launches(), [{ method: 'app', cmd: ['open', '-g', '-b', 'com.bnookala.lolchat'] }])
+
+  // A cold app start takes a few seconds: hooks in the meantime queue instead of relaunching.
+  r = hook('preToolUse', { sessionId: 's-auto', toolCalls: [{ name: 'bash' }] }, e)
+  assert.equal(r.result.action, 'spooled')
+  assert.equal(launches().length, 1)
+
+  process.env.LOLCHAT_HOME = home
+  try {
+    const { serve } = await import('../src/ipc.js')
+    const { readSpool } = await import('../src/hook.js')
+    const server = await serve(() => ({}))
+    try {
+      assert.deepEqual(readSpool().map(m => m.kind), ['activity', 'activity'], 'the daemon drains everything the hooks queued')
+      const done = await new Promise((resolve) => {
+        import('node:child_process').then(({ spawn }) => {
+          const c = spawn(process.execPath, [BIN, 'hook', 'postToolUse'], { env: { ...env, ...e } })
+          let err = ''
+          c.stderr.on('data', (d) => { err += d })
+          c.stdin.end(JSON.stringify({ sessionId: 's-auto', toolName: 'task_complete', toolArgs: { summary: 'ok' } }))
+          c.on('exit', () => resolve(JSON.parse(err.trim().split('\n').pop())))
+        })
+      })
+      assert.equal(done.action, 'delivered')
+    } finally {
+      server.close()
+    }
+  } finally {
+    process.env.LOLCHAT_HOME = env.LOLCHAT_HOME
+  }
+  assert.equal(launches().length, 1)
 })
 
 test('setup writes fail-safe hooks for the right events', async () => {

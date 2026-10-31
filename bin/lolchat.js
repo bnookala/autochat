@@ -21,7 +21,8 @@ const { loadIdentity, ephemeralIdentity } = await import('../src/identity.js')
 const { loadConfig, saveConfig } = await import('../src/config.js')
 const { parseRoom, generatePrivateCode, DEFAULT_ROOM } = await import('../src/protocol.js')
 
-const REPO = 'github:bhnook_microsoft/lolchat'
+const REPO = 'github:bnookala/lolchat'
+const CONFIG_ALIASES = { countdown: 'countdownSeconds' }
 const bold = (s) => process.stdout.isTTY ? `\x1b[1m${s}\x1b[0m` : s
 const dim = (s) => process.stdout.isTTY ? `\x1b[2m${s}\x1b[0m` : s
 
@@ -50,7 +51,9 @@ const HELP = `lolchat: ephemeral, serverless chat rooms for people whose Copilot
   lolchat invite             print an invite for your current room
   lolchat rooms              list live public rooms (asks peers, ~8s)
   lolchat status             what the running lolchat UI is doing
-  lolchat config [k] [v]     show/set config (launch: auto|tmux|ghostty|iterm|terminal|notify|off)
+  lolchat daemon             headless core for the macOS menu bar app (docs/protocol.md)
+  lolchat config [k] [v]     show/set config (launch: auto|app|tmux|ghostty|iterm|terminal|notify|off,
+                             countdown: seconds in the room after autopilot ends, 0 = none)
   lolchat doctor             check hooks + P2P connectivity
   lolchat sim [--room C] [--seconds N] [--say T]   a throwaway bot peer, for testing
 `
@@ -133,14 +136,20 @@ ${inviteText(room)}`)
       return
     }
     case 'config': {
+      const k = CONFIG_ALIASES[rest[0]] || rest[0]
       if (rest.length >= 2) {
-        const [k, v] = rest
+        const v = rest[1]
         const val = /^\d+$/.test(v) ? Number(v) : v === 'true' ? true : v === 'false' ? false : v
         if (k === 'room') parseRoom(v)
+        if (k === 'launch') {
+          const { LAUNCH_METHODS } = await import('../src/launcher.js')
+          if (!LAUNCH_METHODS.includes(v)) throw new Error('usage: lolchat config launch ' + LAUNCH_METHODS.join('|'))
+        }
+        if (k === 'countdownSeconds' && !(Number.isInteger(val) && val <= 3600)) throw new Error('usage: lolchat config countdown <seconds> (0-3600, 0 = no countdown)')
         console.log(JSON.stringify(saveConfig({ [k]: val }), null, 2))
       } else {
         const cfg = loadConfig()
-        console.log(rest[0] ? JSON.stringify(cfg[rest[0]]) : JSON.stringify(cfg, null, 2))
+        console.log(k ? JSON.stringify(cfg[k]) : JSON.stringify(cfg, null, 2))
       }
       return
     }
@@ -150,34 +159,29 @@ ${inviteText(room)}`)
       return sim()
     case 'ui':
       return ui()
+    case 'daemon':
+      return daemon()
     default:
       process.stdout.write(HELP)
       process.exitCode = 1
   }
 }
 
-async function ui () {
-  const { values } = parseArgs({ args: rest, options: { auto: { type: 'boolean' }, now: { type: 'boolean' } } })
+const runningIn = (info) => info?.daemon ? `the menu bar app (lolchat daemon, pid ${info.pid})` : 'another terminal'
+
+// The Controller + hook socket shared by the terminal UI and the headless daemon.
+async function startCore ({ auto = false, daemon = false }) {
   const { Controller } = await import('../src/controller.js')
-  const { TUI } = await import('../src/tui.js')
   const { serve } = await import('../src/ipc.js')
   const { readSpool, releaseLaunchLock } = await import('../src/hook.js')
-  const { hooksInstalled } = await import('../src/setup.js')
-  if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('lolchat needs an interactive terminal')
-
-  const controller = new Controller({ identity: loadIdentity(), config: loadConfig(), auto: !!values.auto, bootstrap: bootstrap() })
+  const controller = new Controller({ identity: loadIdentity(), config: loadConfig(), auto, daemon, bootstrap: bootstrap() })
   let server
   try {
-    server = await serve((msg) => controller.handle(msg))
-  } catch (err) {
-    if (err.code === 'ALREADY_RUNNING') {
-      if (values.auto) process.exit(0)
-      throw new Error('lolchat is already running in another terminal')
-    }
-    throw err
+    server = await serve((msg) => controller.handle(msg), { state: () => controller.snapshot(), command: (msg) => controller.command(msg) })
   } finally {
-    if (values.auto) releaseLaunchLock()
+    if (auto || daemon) releaseLaunchLock()
   }
+  controller.on('change', () => server.publish())
   // Hooks that fire while a UI is starting (or a second launch loses the race) queue events in the spool.
   const drain = () => { for (const m of readSpool()) if (Date.now() - (m.ts || 0) < 60000) controller.handle(m) }
   drain()
@@ -189,16 +193,48 @@ async function ui () {
   scan()
   const scanTimer = setInterval(scan, 3000)
 
+  const stop = async () => {
+    clearInterval(drainTimer)
+    clearInterval(scanTimer)
+    server.close()
+    await controller.shutdown()
+  }
+  return { controller, server, stop }
+}
+
+async function ui () {
+  const { values } = parseArgs({ args: rest, options: { auto: { type: 'boolean' }, now: { type: 'boolean' } } })
+  const { TUI } = await import('../src/tui.js')
+  const { send } = await import('../src/ipc.js')
+  const { hooksInstalled } = await import('../src/setup.js')
+  // The menu bar app owns the room: don't fight it for the socket (or open a TUI at all).
+  const running = await send({ type: 'ping' }, 400)
+  if (running?.daemon) {
+    if (values.auto) (await import('../src/hook.js')).releaseLaunchLock()
+    else console.log(`lolchat is running in ${runningIn(running)}.`)
+    return
+  }
+  if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('lolchat needs an interactive terminal')
+
+  let core
+  try {
+    core = await startCore({ auto: !!values.auto })
+  } catch (err) {
+    if (err.code === 'ALREADY_RUNNING') {
+      if (values.auto) process.exit(0)
+      throw new Error(`lolchat is already running in ${runningIn(err.info)}`)
+    }
+    throw err
+  }
+  const { controller } = core
+
   const tui = new TUI({ controller, hooksInstalled: hooksInstalled() })
   let exiting = false
   const exit = async () => {
     if (exiting) return
     exiting = true
-    clearInterval(drainTimer)
-    clearInterval(scanTimer)
     tui.stop()
-    server.close()
-    await controller.shutdown()
+    await core.stop()
     const { closeOwnTerminal } = await import('../src/launcher.js')
     closeOwnTerminal()
     process.exit(0)
@@ -209,6 +245,33 @@ async function ui () {
   if (values.now) controller.joinNow()
   // Launched by a hook but nothing to track (e.g. lost race): don't linger.
   if (values.auto) setTimeout(() => { if (controller.phase === 'lounge') exit() }, 20000).unref()
+}
+
+// Headless core for GUI clients (the macOS menu bar app). Never exits on pull-back:
+// after the banner it returns to the lounge. SIGTERM/SIGINT leave the room cleanly.
+async function daemon () {
+  const { sockPath } = await import('../src/paths.js')
+  let core
+  try {
+    core = await startCore({ daemon: true })
+  } catch (err) {
+    if (err.code === 'ALREADY_RUNNING') {
+      process.stderr.write(`lolchat: already running in ${runningIn(err.info)}\n`)
+      process.exit(3)
+    }
+    throw err
+  }
+  process.stderr.write(`lolchat daemon ${process.pid} listening on ${sockPath()}\n`)
+  let exiting = false
+  const exit = async (sig) => {
+    if (exiting) return
+    exiting = true
+    process.stderr.write(`lolchat daemon: ${sig}, leaving the room\n`)
+    setTimeout(() => process.exit(0), 5000).unref()
+    await core.stop().catch(() => {})
+    process.exit(0)
+  }
+  for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(sig, () => exit(sig))
 }
 
 async function sim () {
@@ -249,8 +312,18 @@ async function doctor () {
   ok(hooksInstalled(), `hooks ${hooksInstalled() ? 'installed' : 'missing (run lolchat setup)'}: ${hooksFile()}`)
   ok(true, `identity ${loadIdentity().handle}`)
   const cfg = loadConfig()
-  ok(true, `room ${parseRoom(cfg.room).display}, launch=${cfg.launch}`)
-  ok(true, `UI ${(await send({ type: 'ping' }, 500)) ? 'running' : 'not running'}`)
+  const { pickMethod, appInstalled } = await import('../src/launcher.js')
+  const method = pickMethod(cfg, process.env)
+  ok(true, `room ${parseRoom(cfg.room).display}, launch=${cfg.launch}${cfg.launch === 'auto' ? ` (→ ${method})` : ''}`)
+  const app = appInstalled()
+  if (process.platform === 'darwin' || app) {
+    if (app) ok(true, `LolChat.app installed: ${app}${method === 'app' ? '' : ` (not used: launch=${cfg.launch})`}`)
+    else console.log('… LolChat.app not installed: hooks open a terminal instead')
+  }
+  const ping = await send({ type: 'ping' }, 500)
+  if (ping?.daemon) ok(true, `lolchat daemon running (pid ${ping.pid}, ${ping.phase})`)
+  else if (ping) ok(true, `lolchat UI running in a terminal (${ping.phase})`)
+  else console.log(`… lolchat not running${method === 'app' ? ': LolChat.app starts its daemon on the next autopilot run' : ''}`)
   const { liveSessions, processStartMs } = await import('../src/scan.js')
   const { hooksInstalledAt } = await import('../src/setup.js')
   const installedAt = hooksInstalledAt()

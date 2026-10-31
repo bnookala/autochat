@@ -5,11 +5,13 @@ import { DEFAULT_ROOM, parseRoom } from './protocol.js'
 
 export const DEFAULTS = {
   room: DEFAULT_ROOM,
-  // auto | tmux | ghostty | iterm | terminal | notify | off
+  // auto | app | tmux | ghostty | iterm | terminal | notify | off (see LAUNCH_METHODS)
   launch: 'auto',
   tmuxSplit: 'v',
   idleMs: 45000,
-  announce: true
+  announce: true,
+  // seconds you stay in the room after autopilot ends; 0 = pulled back immediately
+  countdownSeconds: 30
 }
 
 export const configPath = () => path.join(home(), 'config.json')

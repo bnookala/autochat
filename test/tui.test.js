@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { renderScreen, strWidth, stripAnsi } from '../src/tui.js'
+import { renderScreen, strWidth, stripAnsi, TUI } from '../src/tui.js'
 
 const base = {
   phase: 'room', roomDisplay: '#lobby', handle: 'amber-otter-3f', color: 39, isHost: true, hostHandle: 'amber-otter-3f',
@@ -73,4 +73,47 @@ test('tiny terminals keep the cursor on screen; control chars never render', () 
   }
   const evil = renderScreen({ ...base, messages: [{ kind: 'sys', text: 'a\x1b]52;c;Zm9v\x07b\x1b[2Jc', ts: 0 }] }, 80, 24)
   for (const l of evil.lines) assert.doesNotMatch(stripAnsi(l), /\x1b|\x07/)
+})
+
+test('exit countdown renders as a strip above a still-live input', () => {
+  const view = { ...base, countdown: { endsAt: 0, total: 30, remaining: 23 } }
+  for (const cols of [20, 40, 80]) {
+    for (const rows of [8, 10, 24]) {
+      const r = renderScreen(view, cols, rows)
+      const p = plain(r)
+      for (const l of p) assert.ok(strWidth(l) <= cols)
+      assert.ok(r.cursor, 'input still focused')
+      assert.ok(p[r.cursor.row - 1].startsWith('> hello'), `cursor on the prompt at ${cols}x${rows}`)
+      assert.match(p[r.cursor.row - 2], /^ back to reality/)
+    }
+  }
+  assert.ok(plain(renderScreen(view, 80, 24)).includes(' back to reality in 23s · ↵ on empty line to go now'))
+  assert.doesNotMatch(plain(renderScreen(base, 80, 24)).join('\n'), /back to reality in/)
+  assert.doesNotMatch(plain(renderScreen({ ...view, phase: 'spectating' }, 80, 24)).join('\n'), /back to reality in/)
+})
+
+test('enter on an empty line or /back skips the countdown; text is still sent', () => {
+  const calls = []
+  const c = {
+    phase: 'room',
+    roomInfo: { display: '#lobby' },
+    identity: { handle: 'amber-otter-3f', color: 39 },
+    room: null,
+    messages: [],
+    banner: null,
+    countdown: { endsAt: Date.now() + 9000, total: 30 },
+    countdownRemaining: () => 9,
+    currentRequest: () => null,
+    returnNow () { calls.push('returnNow'); return true },
+    jumpToCopilot () { calls.push('jump') },
+    say (text) { calls.push('say:' + text); return true }
+  }
+  const tui = new TUI({ controller: c, stdout: { columns: 80, rows: 24, write () {} } })
+  tui._key('lol\r')
+  tui._key('\r')
+  tui._key('/back\r')
+  c.countdown = null
+  tui._key('/back\r')
+  assert.deepEqual(calls, ['say:lol', 'returnNow', 'returnNow'])
+  assert.equal(tui.input, '')
 })

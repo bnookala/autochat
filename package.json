@@ -25,6 +25,14 @@
     "terminal"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bnookala/lolchat.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bnookala/lolchat/issues"
+  },
+  "homepage": "https://github.com/bnookala/lolchat#readme",
   "dependencies": {
     "b4a": "^1.9.0",
     "hypercore-crypto": "^3.7.0",
