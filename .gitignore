@@ -1,3 +1,8 @@
 node_modules/
 *.log
 .DS_Store
+macos/build/
+.build/
+.swiftpm/
+.dev-home/
+.e2e/

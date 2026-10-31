@@ -1,0 +1,3 @@
+import LolChatApp
+
+LolChatMain.run()
