@@ -16,10 +16,11 @@ import { appInstalled, APP_BUNDLE_ID } from '../src/launcher.js'
 const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'autochat.js')
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'autochat-compat-'))
 
-// The parent env, minus anything that would point the CLI at a real home.
-const baseEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(AUTOCHAT|LOLCHAT)_/.test(k)))
+// The parent env, minus anything that would point the CLI at a real home. No harness binaries
+// either: `autochat uninstall` would otherwise ask the real `claude` about its MCP servers.
+const baseEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(AUTOCHAT|LOLCHAT)_|^(COPILOT_HOME|XDG_CONFIG_HOME|CODEX_HOME|CLAUDE_CONFIG_DIR)$/.test(k)))
 const cli = (args, env) => spawnSync(process.execPath, [BIN, ...args], {
-  env: { ...baseEnv, AUTOCHAT_APP_DIRS: path.join(tmp, 'no-apps'), ...env },
+  env: { ...baseEnv, AUTOCHAT_APP_DIRS: path.join(tmp, 'no-apps'), AUTOCHAT_HARNESS_PATH: path.join(tmp, 'no-harnesses'), ...env },
   encoding: 'utf8'
 })
 const sha = (s) => crypto.createHash('sha256').update(s).digest()

@@ -29,6 +29,10 @@ const PKG = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(impo
 export const SERVER_INFO = { name: 'autochat', version: PKG.version }
 
 export const NOT_RUNNING = "autochat isn't running: open AutoChat.app or run `autochat daemon`"
+// The agent joins the room at its first tool call, or this long after the client's first
+// message: harness health checks (`claude mcp get`, …) start and stop servers within a second
+// or two, and shouldn't flash in and out of the room.
+export const PRESENCE_DELAY_MS = 3000
 const TUI_RUNNING = 'autochat is running in a terminal, but agent rooms need the autochat daemon: open AutoChat.app or run `autochat daemon`'
 const LOST = 'lost the connection to autochat; reconnecting, try again'
 
@@ -472,10 +476,8 @@ export class DaemonLink extends EventEmitter {
   }
 
   async request (cmd, args = {}, timeoutMs = 15000) {
-    if (!this.connected) {
-      const waking = this._maybeWake()
-      if (!await this.ready(waking ? 8000 : 1500)) throw new Error(this.lastError || NOT_RUNNING)
-    }
+    if (!this.connected && !await this.ready(1500) && this._maybeWake()) await this.ready(8000)
+    if (!this.connected) throw new Error(this.lastError || NOT_RUNNING)
     if (!this.sock) throw new Error(LOST)
     const id = ++this.ids
     return new Promise((resolve, reject) => {
@@ -754,7 +756,7 @@ export class McpServer {
 }
 
 /** `autochat mcp [--harness <id>]`: serve MCP on stdin/stdout until stdin closes. */
-export async function runMcp ({ harness = null, stdin = process.stdin, stdout = process.stdout, env = process.env } = {}) {
+export async function runMcp ({ harness = null, stdin = process.stdin, stdout = process.stdout, env = process.env, presenceDelayMs = PRESENCE_DELAY_MS } = {}) {
   const debug = !!envVar('DEBUG', env)
   const log = (s) => { if (debug) process.stderr.write(`autochat mcp: ${s}\n`) }
   const session = bindSession({ harness, env })
@@ -762,7 +764,12 @@ export async function runMcp ({ harness = null, stdin = process.stdin, stdout = 
   const link = new DaemonLink({ hello: session.hello, env, log })
   const tools = new Tools({ link, session })
   const server = new McpServer({ tools, log, write: (obj) => stdout.write(JSON.stringify(obj) + '\n') })
-  link.start()
+  let joinTimer = null
+  const joinSoon = () => {
+    if (joinTimer) return
+    joinTimer = setTimeout(() => link.start(), presenceDelayMs)
+    joinTimer.unref?.()
+  }
 
   let finished = false
   let resolveDone
@@ -770,6 +777,7 @@ export async function runMcp ({ harness = null, stdin = process.stdin, stdout = 
   const finish = () => {
     if (finished) return
     finished = true
+    clearTimeout(joinTimer)
     link.close()
     // Let queued responses flush first; closing the daemon connection ends our presence.
     stdout.write('', () => resolveDone())
@@ -786,6 +794,7 @@ export async function runMcp ({ harness = null, stdin = process.stdin, stdout = 
     while ((i = buf.indexOf('\n')) !== -1) {
       const line = buf.slice(0, i)
       buf = buf.slice(i + 1)
+      joinSoon()
       server.line(line).catch((err) => log('line failed: ' + (err?.stack || err)))
     }
   })

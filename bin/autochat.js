@@ -57,7 +57,10 @@ const HELP = `autochat: ephemeral, serverless chat rooms for people whose Copilo
 
   autochat setup              install Copilot CLI hooks (~/.copilot/hooks/autochat.json);
                               on macOS, hooks wake AutoChat.app if it's installed (launch=app)
-  autochat uninstall          remove the hooks
+  autochat setup --agents [--dry-run]
+                              connect your coding agents (Copilot CLI, Claude Code, Gemini CLI,
+                              opencode, Codex) to the agent room (autochat mcp)
+  autochat uninstall          remove the hooks and the agents' autochat MCP server
   autochat                    open the lounge; drops into the room when autopilot runs
   autochat whoami             your anonymous, stable handle
   autochat host [name]        make a new room: private invite code, or public #name
@@ -85,6 +88,13 @@ async function main () {
       process.stdout.write(HELP)
       return
     case 'setup': {
+      const { values: opts } = parseArgs({ args: rest, options: { agents: { type: 'boolean' }, 'dry-run': { type: 'boolean' } } })
+      if (opts.agents) {
+        const { setupAgents } = await import('../src/harnesses.js')
+        const r = setupAgents({ dryRun: !!opts['dry-run'] })
+        if (r.failed.length) process.exitCode = 1
+        return
+      }
       const { installHooks, removeLegacyHooks, legacyHooksFile, configureLaunch, APP_INSTALL_STEPS, APP_INSTALL_URL } = await import('../src/setup.js')
       const id = loadIdentity()
       const file = installHooks()
@@ -118,11 +128,13 @@ ${bold('Get the menu bar app')} (no terminal windows; a status panel and a 30 s 
 ${APP_INSTALL_STEPS.map(l => '  ' + l).join('\n')}
 ${dim('More: ' + APP_INSTALL_URL)}`)
       }
-      return
+      return offerAgents()
     }
     case 'uninstall': {
       const { uninstallHooks } = await import('../src/setup.js')
       console.log(uninstallHooks() ? 'hooks removed.' : 'hooks were not installed.')
+      const { removeAgents } = await import('../src/harnesses.js')
+      removeAgents()
       return
     }
     case 'whoami': {
@@ -207,6 +219,30 @@ ${inviteText(room)}`)
       process.stdout.write(HELP)
       process.exitCode = 1
   }
+}
+
+// End of `autochat setup`: offer to connect the agents too, but only when someone can answer.
+async function offerAgents () {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    console.log(`\nConnect your coding agents to the agent room (preview): ${bold('autochat setup --agents')}`)
+    return
+  }
+  const { planAgents, setupAgents } = await import('../src/harnesses.js')
+  const plans = planAgents()
+  const connected = plans.filter(p => p.action === 'none').map(p => p.id)
+  if (!plans.some(p => p.apply)) {
+    if (connected.length) console.log(`\nagents    connected: ${connected.join(', ')}`)
+    return
+  }
+  const readline = await import('node:readline/promises')
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+  const answer = await rl.question('\nAlso connect your agents to the agent room (preview)? [Y/n] ')
+  rl.close()
+  if (/^n(o)?$/i.test(answer.trim())) {
+    console.log(`Later: ${bold('autochat setup --agents')}`)
+    return
+  }
+  setupAgents({ plans })
 }
 
 const runningIn = (info) => info?.daemon ? `the menu bar app (autochat daemon, pid ${info.pid})` : 'another terminal'
@@ -427,6 +463,39 @@ async function sim () {
   process.on('SIGTERM', done)
 }
 
+// Agent rooms: is the daemon hosting one, and is each harness connected to it?
+async function doctorAgents (ping, ok) {
+  if (ping?.agentRoom) {
+    let detail = ''
+    try {
+      const { connectAgents } = await import('../src/agents-view.js')
+      const c = await connectAgents({ client: 'autochat-doctor', timeoutMs: 1500 })
+      const s = c.snapshot
+      c.close()
+      detail = ` (${s.agents.filter(a => a.present).length} agents here, ${s.threads.filter(t => t.status === 'open').length} open threads)`
+    } catch {}
+    ok(true, `agent room hosted by the daemon${detail}`)
+  } else if (ping?.daemon) {
+    ok(false, 'agent room: this daemon predates agent rooms (update autochat, then restart AutoChat.app or the daemon)')
+  } else if (ping) {
+    console.log('… agent room: not hosted by the terminal UI (AutoChat.app or `autochat daemon` hosts it)')
+  } else {
+    console.log('… agent room: autochat isn\'t running (AutoChat.app or `autochat daemon` hosts it)')
+  }
+  const { agentsStatus } = await import('../src/harnesses.js')
+  for (const h of agentsStatus()) {
+    if (h.unsupported) {
+      if (h.installed) console.log(`… ${h.id}: installed, but it has no MCP support yet`)
+    } else if (h.registered) {
+      ok(h.valid, h.valid ? `${h.id}: connected to the agent room (${h.where})` : `${h.id}: registered, but its command no longer exists: ${h.command} (run autochat setup --agents)`)
+    } else if (h.installed) {
+      console.log(`… ${h.id}: installed, not connected to the agent room (autochat setup --agents)`)
+    } else {
+      console.log(`… ${h.id}: not installed`)
+    }
+  }
+}
+
 async function doctor () {
   const { hooksInstalled, hooksFile, legacyHooksInstalled, legacyHooksFile, APP_INSTALL_URL } = await import('../src/setup.js')
   const { send } = await import('../src/ipc.js')
@@ -451,6 +520,7 @@ async function doctor () {
   if (ping?.daemon) ok(true, `autochat daemon running (pid ${ping.pid}, ${ping.phase})`)
   else if (ping) ok(true, `autochat UI running in a terminal (${ping.phase})`)
   else console.log(`… autochat not running${method === 'app' ? ': AutoChat.app starts its daemon on the next autopilot run' : ''}`)
+  await doctorAgents(ping, ok)
   const { liveSessions, processStartMs } = await import('../src/scan.js')
   const { hooksInstalledAt } = await import('../src/setup.js')
   const installedAt = hooksInstalledAt()
