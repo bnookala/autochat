@@ -22,6 +22,7 @@ const { loadConfig, saveConfig } = await import('../src/config.js')
 const { parseRoom, generatePrivateCode, DEFAULT_ROOM } = await import('../src/protocol.js')
 
 const REPO = 'github:bnookala/lolchat'
+const CONFIG_ALIASES = { countdown: 'countdownSeconds' }
 const bold = (s) => process.stdout.isTTY ? `\x1b[1m${s}\x1b[0m` : s
 const dim = (s) => process.stdout.isTTY ? `\x1b[2m${s}\x1b[0m` : s
 
@@ -51,7 +52,8 @@ const HELP = `lolchat: ephemeral, serverless chat rooms for people whose Copilot
   lolchat rooms              list live public rooms (asks peers, ~8s)
   lolchat status             what the running lolchat UI is doing
   lolchat daemon             headless core for the macOS menu bar app (docs/protocol.md)
-  lolchat config [k] [v]     show/set config (launch: auto|tmux|ghostty|iterm|terminal|notify|off)
+  lolchat config [k] [v]     show/set config (launch: auto|tmux|ghostty|iterm|terminal|notify|off,
+                             countdown: seconds in the room after autopilot ends, 0 = none)
   lolchat doctor             check hooks + P2P connectivity
   lolchat sim [--room C] [--seconds N] [--say T]   a throwaway bot peer, for testing
 `
@@ -134,14 +136,16 @@ ${inviteText(room)}`)
       return
     }
     case 'config': {
+      const k = CONFIG_ALIASES[rest[0]] || rest[0]
       if (rest.length >= 2) {
-        const [k, v] = rest
+        const v = rest[1]
         const val = /^\d+$/.test(v) ? Number(v) : v === 'true' ? true : v === 'false' ? false : v
         if (k === 'room') parseRoom(v)
+        if (k === 'countdownSeconds' && !(Number.isInteger(val) && val <= 3600)) throw new Error('usage: lolchat config countdown <seconds> (0-3600, 0 = no countdown)')
         console.log(JSON.stringify(saveConfig({ [k]: val }), null, 2))
       } else {
         const cfg = loadConfig()
-        console.log(rest[0] ? JSON.stringify(cfg[rest[0]]) : JSON.stringify(cfg, null, 2))
+        console.log(k ? JSON.stringify(cfg[k]) : JSON.stringify(cfg, null, 2))
       }
       return
     }

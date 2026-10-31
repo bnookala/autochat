@@ -38,6 +38,7 @@ Environment (all optional):
 | `COPILOT_HOME` | Copilot CLI dir, default `~/.copilot` |
 | `LOLCHAT_BOOTSTRAP` | `host:port,…` custom DHT bootstrap (tests) |
 | `LOLCHAT_NO_NOTIFY`, `LOLCHAT_NO_FOCUS` | disable desktop notifications / focusing the Copilot terminal |
+| `LOLCHAT_COUNTDOWN_MS` | exit countdown length in ms, overriding `countdownSeconds` (tests) |
 
 ## Socket
 
@@ -188,6 +189,33 @@ snapshots may interleave in either order).
 
 ## Exit countdown
 
-`countdown` is `{"endsAt","total","reason","summary","cwd"}` while an exit countdown runs,
-otherwise `null`. Not implemented yet (bnookala/lolchat#3): until then it is always `null`
-and `returnNow` replies `no countdown running`.
+When your **last** running autopilot session finishes, you aren't pulled out right away.
+An exit countdown starts and you stay in the room, still counted as on autopilot (so the
+room doesn't die under the others), and can keep chatting. `phase` stays `room`.
+
+```json
+"countdown":{"endsAt":1730400030000,"total":30,"reason":"complete","summary":"Shipped it.","cwd":"/Users/me/code/x","remaining":23}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `endsAt` | ms epoch when it hits zero. Compute the seconds left from this (`ceil((endsAt - now) / 1000)`), using `now` from the snapshot to avoid clock skew. |
+| `total` | length in seconds (`30` by default; fractional only when overridden by `LOLCHAT_COUNTDOWN_MS`) |
+| `reason` | why autopilot ended: `complete`, `abort`, `mode`, `end`, or `idle` (stopped and waiting for you) |
+| `summary` | the copilot's task summary, or `null` |
+| `cwd` | the finished session's working directory, or `null` |
+| `remaining` | whole seconds left when the snapshot was built |
+
+While it runs the daemon publishes a snapshot **once per second**, so a client that just
+re-renders on every `state` stays current.
+
+- At zero the daemon does the pull-back: it focuses your Copilot terminal, notifies, and
+  leaves the room (or stays `spectating` if you host a room others are still in), then
+  shows the `reality` banner. `countdown` goes back to `null`.
+- `returnNow` skips straight to zero (in the TUI: ↵ on an empty line, or `/back`).
+- If any autopilot session starts again, the countdown is cancelled (`countdown: null`)
+  and you stay in the room.
+- `leaveRoom` during the countdown leaves immediately, as always.
+- Length: `lolchat config countdown <seconds>` (`countdownSeconds` in
+  `~/.lolchat/config.json`, default 30). `0` turns it off: you're pulled back the moment
+  autopilot ends. `LOLCHAT_COUNTDOWN_MS` overrides it in milliseconds (for tests).

@@ -28,11 +28,12 @@ function waitFor (fn, ms = 15000, label = 'condition') {
 
 const hook = (sessionId, kind, extra = {}) => ({ type: 'hook', sessionId, kind, mode: 'autopilot', cwd: '/w/' + sessionId, ts: Date.now(), origin: { tmuxPane: '%' + sessionId }, ...extra })
 
-function mk (testnet, room, auto = true) {
+// countdownSeconds: 0 keeps the original "pulled back immediately" behavior.
+function mk (testnet, room, auto = true, config = {}) {
   const focused = []
   const c = new Controller({
     identity: ephemeralIdentity(),
-    config: { room, idleMs: 400, announce: false },
+    config: { room, idleMs: 400, announce: false, countdownSeconds: 0, ...config },
     auto,
     bootstrap: testnet.bootstrap,
     roomOpts: FAST,
@@ -161,9 +162,102 @@ test('completion logged before the UI tracked the session is not missed', { time
   fs.writeFileSync(path.join(dir, 'events.jsonl'),
     JSON.stringify({ type: 'session.mode_changed', data: { newMode: 'autopilot' }, timestamp: new Date(trigger - 1000).toISOString() }) + '\n' +
     JSON.stringify({ type: 'session.task_complete', data: { summary: 'raced' }, timestamp: new Date(trigger + 500).toISOString() }) + '\n')
-  const c = new Controller({ identity: ephemeralIdentity(), config: { room: 'lc1-ctl-race-' + sid, idleMs: 400, announce: false }, auto: true, bootstrap: testnet.bootstrap, roomOpts: FAST, focus: () => {}, notify: () => {}, bannerMs: 300 })
+  const c = new Controller({ identity: ephemeralIdentity(), config: { room: 'lc1-ctl-race-' + sid, idleMs: 400, announce: false, countdownSeconds: 0 }, auto: true, bootstrap: testnet.bootstrap, roomOpts: FAST, focus: () => {}, notify: () => {}, bannerMs: 300 })
   t.after(() => c.shutdown())
   c.handle({ ...hook(sid, 'activity'), ts: trigger })
   assert.equal(c.phase, 'reality')
   assert.equal(c.banner.summary, 'raced')
+})
+
+test('exit countdown: you stay in the room and keep chatting; new autopilot cancels it; returnNow skips it', { timeout: 60000 }, async (t) => {
+  const testnet = await createTestnet(3)
+  t.after(() => testnet.destroy())
+  const c = mk(testnet, 'lc1-ctl-count-' + Math.random().toString(36).slice(2, 12), true, { countdownSeconds: 30 })
+  t.after(() => c.shutdown())
+  assert.equal(c.countdownMs, 30000)
+  c.handle(hook('c1', 'activity'))
+  c.handle(hook('c1', 'request', { request: { title: 'Permission needed', message: 'go?' } }))
+  assert.equal(c.room.status, 'needed')
+
+  c.handle(hook('c1', 'complete', { summary: 'shipped it' }))
+  assert.equal(c.phase, 'room', 'not pulled back yet')
+  assert.equal(c.countdown.total, 30)
+  assert.equal(c.countdown.reason, 'complete')
+  assert.equal(c.countdown.summary, 'shipped it')
+  assert.equal(c.countdown.cwd, '/w/c1')
+  assert.ok(Math.abs(c.countdown.endsAt - Date.now() - 30000) < 1000)
+  assert.equal(c.room.status, 'active', 'still counts as active in the room')
+  assert.equal(c.focused.length, 0, 'focus stays put while counting down')
+  const snap = c.snapshot().countdown
+  assert.deepEqual(Object.keys(snap).sort(), ['cwd', 'endsAt', 'reason', 'remaining', 'summary', 'total'])
+  assert.equal(snap.remaining, 30)
+
+  assert.equal(c.say('one sec, finishing my thought'), true, 'chat works during the countdown')
+  assert.equal(c.messages.at(-1).text, 'one sec, finishing my thought')
+  await c.command({ cmd: 'say', text: 'and another' })
+
+  // Another session goes autopilot: cancel and stay.
+  c.handle(hook('c2', 'activity'))
+  assert.equal(c.countdown, null)
+  assert.equal(c.phase, 'room')
+  assert.match(c.messages.at(-1).text, /back on autopilot/)
+
+  c.handle(hook('c2', 'complete', { summary: 'second' }))
+  assert.equal(c.countdown.summary, 'second')
+  await c.command({ cmd: 'returnNow' })
+  assert.equal(c.countdown, null)
+  assert.equal(c.phase, 'reality', 'returnNow is the existing pull-back')
+  assert.deepEqual(c.focused.at(-1), { tmuxPane: '%c2' })
+  assert.equal(c.banner.summary, 'second')
+  assert.equal(c.returnNow(), false)
+  await assert.rejects(c.command({ cmd: 'returnNow' }), /no countdown running/)
+  await waitFor(() => c.exited, 3000, 'auto UI exits after the banner')
+})
+
+test('countdown ticks every second, keeps the room alive for others, and expires into the pull-back', { timeout: 90000 }, async (t) => {
+  const testnet = await createTestnet(3)
+  t.after(() => testnet.destroy())
+  const room = 'lc1-ctl-tick-' + Math.random().toString(36).slice(2, 12)
+  const host = mk(testnet, room)
+  process.env.LOLCHAT_COUNTDOWN_MS = '2500'
+  const guest = mk(testnet, room, true, { countdownSeconds: 30 })
+  delete process.env.LOLCHAT_COUNTDOWN_MS
+  t.after(() => Promise.all([host.shutdown(), guest.shutdown()]))
+  assert.equal(guest.countdownMs, 2500, 'LOLCHAT_COUNTDOWN_MS overrides the config')
+
+  host.handle(hook('h1', 'activity'))
+  await waitFor(() => host.room.isHost, 10000, 'host owns the room')
+  guest.handle(hook('g1', 'activity'))
+  await waitFor(() => guest.room?.hostHandle === host.identity.handle && host.room.members.size === 1, 20000, 'guest joins')
+
+  // The guest finishes and counts down: the host still sees them on autopilot.
+  const ticks = []
+  guest.on('change', () => { if (guest.countdown) ticks.push(guest.countdownRemaining()) })
+  guest.handle(hook('g1', 'complete', { summary: 'guest done' }))
+  assert.equal(guest.phase, 'room')
+  assert.equal(guest.countdown.total, 2.5)
+  await new Promise(resolve => setTimeout(resolve, 1200))
+  assert.equal([...host.room.members.values()][0].status, 'active', 'the counting-down guest still counts as active')
+  await waitFor(() => guest.phase === 'reality', 5000, 'countdown expires')
+  assert.ok(ticks.includes(2) && ticks.includes(1), 'a change every second: ' + ticks.join(','))
+  assert.equal(guest.countdown, null)
+  assert.equal(guest.banner.summary, 'guest done')
+  assert.deepEqual(guest.focused.at(-1), { tmuxPane: '%g1' })
+  await waitFor(() => host.room.members.size === 0, 5000, 'host sees the guest leave')
+  assert.equal(host.phase, 'room')
+})
+
+test('leaving during the countdown behaves like ctrl-c always did', { timeout: 60000 }, async (t) => {
+  const testnet = await createTestnet(3)
+  t.after(() => testnet.destroy())
+  const c = mk(testnet, 'lc1-ctl-cleave-' + Math.random().toString(36).slice(2, 12), false, { countdownSeconds: 30 })
+  t.after(() => c.shutdown())
+  c.handle(hook('l1', 'activity'))
+  c.handle(hook('l1', 'end'))
+  assert.equal(c.countdown.reason, 'end')
+  await c.command({ cmd: 'leaveRoom' })
+  assert.equal(c.phase, 'left')
+  assert.equal(c.countdown, null)
+  assert.equal(c.focused.length, 0)
+  await waitFor(() => c.phase === 'lounge', 3000, 'back to the lounge')
 })

@@ -9,7 +9,9 @@ export const DEFAULTS = {
   launch: 'auto',
   tmuxSplit: 'v',
   idleMs: 45000,
-  announce: true
+  announce: true,
+  // seconds you stay in the room after autopilot ends; 0 = pulled back immediately
+  countdownSeconds: 30
 }
 
 export const configPath = () => path.join(home(), 'config.json')

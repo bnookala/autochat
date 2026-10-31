@@ -206,7 +206,8 @@ export function renderScreen (view, cols, rows) {
   // Fit the layout into small terminals: shrink the modal, then drop the member list.
   let box = modal(view, cols)
   let members = memberLines(view, cols)
-  const fixed = () => box.length + 1 + members.length + 1 + 3 + 1
+  const strip = view.phase === 'room' && view.countdown ? 1 : 0
+  const fixed = () => box.length + 1 + members.length + 1 + 3 + strip + 1
   if (fixed() > rows && box.length > 3) box = [box[0], box[box.length - 3], box[box.length - 1]]
   if (fixed() > rows) members = []
   if (fixed() > rows) box = []
@@ -218,12 +219,14 @@ export function renderScreen (view, cols, rows) {
     bottom.push(new Line(cols).add(' you got pulled back to reality. watching until everyone else does too', GREY).toString())
     bottom.push(new Line(cols).add(' ctrl-c leave', DIM).toString())
   } else {
+    // Exit countdown: a non-modal strip; the input below stays live.
+    if (strip) bottom.push(new Line(cols).add(` back to reality in ${view.countdown.remaining}s · ↵ on empty line to go now`, YELLOW).toString())
     const prompt = '> '
     const room = cols - strWidth(prompt) - 1
     let shown = view.input
     while (strWidth(shown) > room) shown = Array.from(shown).slice(1).join('')
+    cursor = { row: bottom.length + 1, col: strWidth(prompt) + strWidth(shown) + 1 }
     bottom.push(new Line(cols).add(prompt, BOLD).add(shown).toString())
-    cursor = { row: 0, col: strWidth(prompt) + strWidth(shown) + 1 }
     bottom.push(new Line(cols).add(' ⏎ send · ctrl-g go to copilot · pgup/pgdn scroll · ctrl-c leave room', DIM).toString())
   }
   const avail = Math.max(1, rows - top.length - bottom.length)
@@ -232,7 +235,7 @@ export function renderScreen (view, cols, rows) {
   const visible = all.slice(Math.max(0, end - avail), end)
   while (visible.length < avail) visible.unshift('')
   const lines = [...top, ...visible, ...bottom].slice(0, rows)
-  if (cursor) cursor.row = top.length + avail + 2
+  if (cursor) cursor.row += top.length + avail
   if (cursor && cursor.row > rows) cursor = null
   return { lines, cursor }
 }
@@ -268,6 +271,7 @@ export class TUI {
       activeCount: r ? r.activeCount() : 0,
       messages: c.messages,
       request: c.currentRequest(),
+      countdown: c.countdown ? { ...c.countdown, remaining: c.countdownRemaining() } : null,
       input: this.input,
       scroll: this.scroll,
       banner: c.banner,
@@ -341,8 +345,10 @@ export class TUI {
 
   _enter () {
     const text = this.input.trim()
-    if (!text) {
-      if (this.c.currentRequest()) this.c.jumpToCopilot()
+    if (!text || text === '/back') {
+      this.input = ''
+      if (this.c.countdown) this.c.returnNow()
+      else if (!text && this.c.currentRequest()) this.c.jumpToCopilot()
       return
     }
     if (this.c.say(text)) { this.input = ''; this.scroll = 0 }

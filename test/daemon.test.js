@@ -138,7 +138,8 @@ test('lolchat daemon: headless, driven by hooks and subscribers, clean SIGTERM',
     LOLCHAT_HOME: home,
     LOLCHAT_BOOTSTRAP: testnet.bootstrap.map(b => `${b.host}:${b.port}`).join(','),
     LOLCHAT_NO_NOTIFY: '1',
-    LOLCHAT_NO_FOCUS: '1'
+    LOLCHAT_NO_FOCUS: '1',
+    LOLCHAT_COUNTDOWN_MS: '1500'
   }
   const daemon = spawn(process.execPath, [BIN, 'daemon'], { env, stdio: ['ignore', 'ignore', 'pipe'] })
   let stderr = ''
@@ -190,11 +191,19 @@ test('lolchat daemon: headless, driven by hooks and subscribers, clean SIGTERM',
   a.send({ type: 'cmd', id: 8, cmd: 'bogus' })
   assert.equal((await a.next(isReply(8))).error, 'unknown command')
 
-  // Pull-back never exits the daemon: it shows the banner, then returns to the lounge.
+  // Autopilot ends: a countdown (still chatting), then the pull-back, which never exits the daemon.
   await send({ type: 'hook', event: 'sessionEnd', sessionId: 'dm1', kind: 'end', mode: 'autopilot', ts: Date.now() })
+  const counting = await a.next(isState(s => s.countdown), 10000, 'countdown')
+  assert.equal(counting.phase, 'room')
+  assert.deepEqual({ ...counting.countdown, endsAt: 0 }, { endsAt: 0, total: 1.5, reason: 'end', summary: null, cwd: '/w/dm1', remaining: 2 })
+  a.send({ type: 'cmd', id: 9, cmd: 'say', text: 'brb' })
+  assert.equal((await a.next(isReply(9))).ok, true, 'chat works during the countdown')
   const banner = await a.next(isState(s => s.banner), 10000, 'banner')
   assert.equal(banner.banner.kind, 'reality')
   assert.equal(banner.banner.reason, 'end')
+  assert.equal(banner.countdown, null)
+  await a.next(isState(s => s.phase === 'lounge'), 10000, 'back to the lounge')
+  assert.equal((await send({ type: 'ping' })).phase, 'lounge', 'still running')
 
   daemon.kill('SIGTERM')
   const { code, signal } = await exited

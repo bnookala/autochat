@@ -7,6 +7,15 @@ import { focusOrigin as defaultFocus, notify as defaultNotify } from './launcher
 
 const MAX_MESSAGES = 400
 const RUNNING = new Set(['running', 'needed'])
+export const DEFAULT_COUNTDOWN_SECONDS = 30
+
+// LOLCHAT_COUNTDOWN_MS (tests) beats config.countdownSeconds; 0 pulls you back immediately.
+function countdownMsFor (config, env = process.env) {
+  const fromEnv = env.LOLCHAT_COUNTDOWN_MS
+  if (fromEnv !== undefined && fromEnv !== '' && Number(fromEnv) >= 0) return Number(fromEnv)
+  const secs = config.countdownSeconds ?? DEFAULT_COUNTDOWN_SECONDS
+  return Number.isFinite(secs) && secs >= 0 ? secs * 1000 : DEFAULT_COUNTDOWN_SECONDS * 1000
+}
 const ANSI16 = ['000000', '800000', '008000', '808000', '000080', '800080', '008080', 'c0c0c0', '808080', 'ff0000', '00ff00', 'ffff00', '0000ff', 'ff00ff', '00ffff', 'ffffff']
 
 // xterm 256-color index (what the TUI uses) → "#rrggbb" for GUI clients.
@@ -22,16 +31,22 @@ export function hexColor (n) {
 
 /**
  * Brain of the UI process: tracks Copilot sessions (via hook messages + session logs),
- * enters the room while any of them is on autopilot, and pulls the user back out.
+ * enters the room while any of them is on autopilot, and pulls the user back out
+ * (after a non-blocking exit countdown, during which they can keep chatting).
  *
  * phase: lounge | room | spectating | reality | dead | left
  */
 export class Controller extends EventEmitter {
   constructor ({
     identity, config, auto = false, daemon = false, bootstrap, roomOpts = {},
-    focus = defaultFocus, notify = defaultNotify, bannerMs = 6000, watchLogs = true, requestLingerMs = 20000
+    focus = defaultFocus, notify = defaultNotify, bannerMs = 6000, watchLogs = true, requestLingerMs = 20000,
+    countdownMs = countdownMsFor(config)
   }) {
     super()
+    this.countdownMs = countdownMs
+    this.countdown = null
+    this.countdownTimer = null
+    this.countdownTick = null
     this.requestLingerMs = requestLingerMs
     this.identity = identity
     this.config = config
@@ -231,12 +246,38 @@ export class Controller extends EventEmitter {
     const running = this.runningSessions()
     const status = running.some(s => s.state === 'needed') ? 'needed' : 'active'
     if (running.length) {
+      if (this.countdown) {
+        this._clearCountdown()
+        this.sys("you're back on autopilot, staying in the room")
+      }
       if (this.phase === 'room' && this.room) this.room.setStatus(status)
       else this._enterRoom(status)
-    } else if (this.phase === 'room') {
-      this._pulledBack()
+    } else if (this.phase === 'room' && !this.countdown) {
+      if (this.countdownMs > 0) this._startCountdown()
+      else this._pulledBack()
     }
     this._changed()
+  }
+
+  // The last autopilot run finished: stay in the room (still counted as active, so it
+  // doesn't die under the others) and keep chatting until the countdown runs out.
+  _startCountdown () {
+    const s = this.lastFinished
+    this.countdown = { endsAt: Date.now() + this.countdownMs, total: this.countdownMs / 1000, reason: s?.reason ?? null, summary: s?.summary || null, cwd: s?.cwd ?? null }
+    this.room?.setStatus('active')
+    this.countdownTimer = setTimeout(() => this.returnNow(), this.countdownMs)
+    this.countdownTick = setInterval(() => this._changed(), 1000)
+  }
+
+  _clearCountdown () {
+    clearTimeout(this.countdownTimer)
+    clearInterval(this.countdownTick)
+    this.countdownTimer = this.countdownTick = null
+    this.countdown = null
+  }
+
+  countdownRemaining () {
+    return this.countdown ? Math.max(0, Math.ceil((this.countdown.endsAt - Date.now()) / 1000)) : null
   }
 
   _enterRoom (status) {
@@ -299,6 +340,7 @@ export class Controller extends EventEmitter {
 
   _roomDied (room) {
     if (room !== this.room) return
+    this._clearCountdown()
     this.phase = 'dead'
     this.banner = { kind: 'dead' }
     this.room = null
@@ -318,6 +360,15 @@ export class Controller extends EventEmitter {
 
   // --- user actions --------------------------------------------------------------
 
+  // Skip the rest of the exit countdown (also what happens when it reaches zero).
+  returnNow () {
+    if (!this.countdown) return false
+    this._clearCountdown()
+    if (this.phase === 'room') this._pulledBack()
+    this._changed()
+    return true
+  }
+
   say (text) {
     if (this.phase !== 'room' || !this.room) return false
     return this.room.say(text)
@@ -331,6 +382,7 @@ export class Controller extends EventEmitter {
 
   // ctrl-c: leave the room for good (for the sessions currently running).
   async leaveRoom () {
+    this._clearCountdown()
     for (const s of this.runningSessions()) { s.optout = true; setOptout(s.sid) }
     const room = this.room
     this.room = null
@@ -375,7 +427,8 @@ export class Controller extends EventEmitter {
         return
       }
       case 'returnNow':
-        throw new Error('no countdown running')
+        if (!this.returnNow()) throw new Error('no countdown running')
+        return
       case 'leaveRoom':
         if (this.phase !== 'room' && this.phase !== 'spectating') throw new Error('not in a room')
         return this.leaveRoom()
@@ -408,13 +461,14 @@ export class Controller extends EventEmitter {
       messages: this.messages.map(m => ({ id: m.id, kind: m.kind, from: m.kind === 'chat' ? m.handle : null, text: m.text, ts: m.ts, color: hexColor(m.color), you: !!m.self })),
       request: req ? { sid: req.sid, cwd: req.cwd ?? null, title: req.title || '', message: req.message || '', resolved: !!req.resolved } : null,
       sessions: [...this.sessions.values()].map(s => ({ sid: s.sid, state: s.state, cwd: s.cwd ?? null })),
-      countdown: null,
+      countdown: this.countdown ? { ...this.countdown, remaining: this.countdownRemaining() } : null,
       banner: b ? { kind: b.kind, reason: b.reason ?? null, summary: b.summary || null, cwd: b.cwd ?? null } : null
     }
   }
 
   async shutdown () {
     clearTimeout(this.bannerTimer)
+    this._clearCountdown()
     for (const s of this.sessions.values()) { this._clearIdle(s); clearTimeout(s.reqTimer); s.log?.stop() }
     if (this.room) { const r = this.room; this.room = null; await r.leave('left').catch(() => {}) }
   }
