@@ -4,10 +4,15 @@ import Foundation
 
 /// Per-test AUTOCHAT_HOME inside the package's .build directory (no system temp dirs).
 /// The resulting socket path is longer than `sun_path`, which also exercises `connectat`.
-func makeTestHome(_ name: String = #function) throws -> AutochatPaths {
+/// `minSockPathBytes` pads the home directory name so the socket path is at least that long,
+/// independent of where the checkout lives (CI checkouts have much shorter paths than local ones).
+func makeTestHome(_ name: String = #function, minSockPathBytes: Int = 0) throws -> AutochatPaths {
     let package = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-    let id = String(UUID().uuidString.prefix(8))
-    let dir = package.appendingPathComponent(".build/test-homes/\(id)")
+    var id = String(UUID().uuidString.prefix(8))
+    let base = package.appendingPathComponent(".build/test-homes")
+    let unpadded = AutochatPaths(home: base.appendingPathComponent(id).path).sockPath.utf8.count
+    if unpadded < minSockPathBytes { id += String(repeating: "x", count: minSockPathBytes - unpadded) }
+    let dir = base.appendingPathComponent(id)
     try FileManager.default.createDirectory(at: dir.appendingPathComponent("run"), withIntermediateDirectories: true)
     return AutochatPaths(home: dir.path)
 }
