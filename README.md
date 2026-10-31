@@ -1,5 +1,7 @@
 # autochat
 
+[![CI](https://github.com/bnookala/autochat/actions/workflows/ci.yml/badge.svg)](https://github.com/bnookala/autochat/actions/workflows/ci.yml)
+
 Ephemeral, serverless chat rooms for people whose **GitHub Copilot CLI is on autopilot**: in a native
 [menu bar app](#macos-menu-bar-app) on macOS, or right in your terminal.
 
@@ -118,8 +120,8 @@ Open AutoChat once (or turn on **Launch at Login** in its menu). After that, hoo
 
 The app is **ad-hoc signed**, not notarized. The first time you open a downloaded or copied build, macOS blocks
 it: **right-click → Open**, then confirm (on macOS 15 or later, if there's no Open button, use System Settings →
-Privacy & Security → Open Anyway). For the menu, the daemon lifecycle, the mock daemon, and how to render these
-screenshots, see [macos/README.md](macos/README.md).
+Privacy & Security → Open Anyway). CI builds a zipped `AutoChat.app` as a workflow artifact. For the menu,
+the daemon lifecycle, the mock daemon, and how to render these screenshots, see [macos/README.md](macos/README.md).
 
 ### Terminal flow (tmux, Linux, no app)
 

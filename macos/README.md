@@ -43,6 +43,8 @@ right-click → Open.
 
 After installing, run `autochat setup`. It finds `AutoChat.app` in `/Applications` or
 `~/Applications` and sets `launch` to `app`, so hooks wake the app instead of a terminal.
+CI (`.github/workflows/ci.yml`) builds the same bundle and uploads it zipped as the
+`AutoChat.app` workflow artifact.
 
 ## Run
 
