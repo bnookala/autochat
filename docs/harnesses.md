@@ -199,7 +199,7 @@ event happened (`ts` is when it was sent). Messages without `harness` (or
 | Claude Code | `$CLAUDE_CONFIG_DIR/settings.json`, merged ([below](#claude-code)) | `auto` (`permission_mode`); headless: `CLAUDE_CODE_SESSION_ATTENDED=0` | none needed: running sessions pick up new hooks, and `CLAUDE_PID` ends a session whose process is gone | `claude mcp add` |
 | Gemini CLI | not yet | | | `~/.gemini/settings.json` |
 | opencode | a plugin of our own, `$XDG_CONFIG_HOME/opencode/plugin/autochat.js` ([below](#opencode)) | headless: `opencode run` (the plugin's `process.argv`), or a server's session that denies the question tool (`run --attach`); never the TUI; the agent is the mode | none yet: opencode processes started before setup don't have the plugin | `opencode.json`, and the etiquette file under `instructions` |
-| Codex | `$CODEX_HOME/hooks.json`, merged ([below](#codex)); Codex runs them once you trust them | `headless`: `codex exec`, from the session's rollout; `bypassPermissions` for approval policy `never` | none yet | `config.toml` |
+| Codex | `$CODEX_HOME/hooks.json`, merged ([below](#codex)); Codex runs them once you trust them (`/hooks`) | `headless`: `codex exec`, from the session's rollout; `bypassPermissions` for approval policy `never` | none yet | `config.toml` |
 | pi | `$PI_CODING_AGENT_DIR/extensions/autochat.ts`, an extension of our own ([below](#pi)) | `headless`: print and json mode (`ctx.hasUI` is false) | none: pi reports nothing without the extension | the same extension |
 
 ## Claude Code
@@ -302,66 +302,141 @@ pseudo-terminal, `/new` and `/reload`. The payloads are in `test/fixtures/pi/`.
 
 ## Codex
 
-`src/harness/codex.js`. Codex isn't installed where this adapter was written, so it follows
-Codex's hooks documentation (developers.openai.com/codex/hooks) and, where that's silent, the
-source and generated hook schemas of Codex `rust-v0.166.0` (`codex-rs/hooks`,
-`codex-rs/core/src/hook_runtime.rs`). The fixtures in `test/fixtures/codex/` are built from those
-documented payloads, not recorded: [what isn't verified](#what-isnt-verified-live).
+`src/harness/codex.js`, verified against Codex 0.166.0 on macOS. The fixtures in
+`test/fixtures/codex/` are payloads recorded from the real binary by a capture hook next to
+autochat's, in a throwaway `HOME` and `CODEX_HOME` with an `autochat daemon` of their own, against a
+local stand-in for the Responses API (a custom `model_providers` entry, `wire_api = "responses"`, no
+login): `codex exec` (plain, `--approve-for-me`, stopped with Ctrl+C, spawning a subagent) and the
+TUI, driven through a pseudo-terminal, with its app-server daemon and with `--no-daemon`.
 
 **Hooks** go in `$CODEX_HOME/hooks.json` (`~/.codex/hooks.json`): one matcher group of ours per
 event, appended after the user's own, each running `… hook --harness codex <Event> || true`,
 synchronously (`async` hooks may finish out of order, and Codex cancels them when a session ends).
-No matcher, so every tool and every start source. Codex rejects top-level keys other than
-`description` and `hooks` in that file, so that's all autochat writes. Installing rewrites the file
-in its own indentation (like every JSON config autochat edits); uninstall puts back the exact bytes
-it found there (from the one-time backup) when your own hooks haven't changed since, and otherwise
-removes only ours. A file of its own goes away again. autochat never writes hooks into
-`config.toml` (an inline `[hooks]` there and a `hooks.json` both load, with a startup warning).
+No matcher, so every tool and every start source. The file is `{"description"?, "hooks": {…}}`: any
+other top-level key and Codex drops the whole file (`unknown field`), so that's all autochat writes.
+Installing rewrites the file in its own indentation (like every JSON config autochat edits);
+uninstall puts back the exact bytes it found there (from the one-time backup) when your own hooks
+haven't changed since, and otherwise removes only ours. A file of its own goes away again. autochat
+never writes hooks into `config.toml` (an inline `[hooks]` there and a `hooks.json` both load, with a
+warning to pick one). Codex reads the file when a session starts: running sessions keep the hooks
+they started with.
 
-**Trust.** Codex runs a hook only after you've reviewed and trusted its exact definition: open
-`/hooks` in Codex after `autochat setup --harness codex` (setup and doctor say so; autochat can't
-see Codex's trust records). Codex records trust by file, event and position, so reruns change
-nothing and keep it, and a moved install updates our entries where they are, but needs trusting
-again. `codex exec --dangerously-bypass-hook-trust` runs them untrusted, for that run.
-`hooks = false` under `[features]` in `config.toml` turns every hook off (doctor says so).
+Codex runs a hook as `<your account's shell> -c '<command>'`: the shell from the user database
+(`/bin/zsh` on macOS), not `$SHELL`, and not a login shell, so zsh reads only `~/.zshenv`. It runs in
+the session's directory, with the JSON on stdin, in Codex's environment (with Codex's own
+directories first in `PATH`). The handlers of one event run at the same time. Exit 0 with nothing on
+stdout is a success; plain text on stdout fails a `Stop` hook, is ignored after `PostToolUse`, and
+becomes context after `UserPromptSubmit`. Hooks get 10 minutes, except `SessionEnd` and
+`Interrupt`: 1 s unless they ask for more, and 3 s at most (more is cut to 3 s, with a warning).
+autochat's get 10 s, and 3 s for those two. `codex exec` waits for its `SessionEnd` hooks before it
+exits, and prints `hook: <Event>` and `hook: <Event> Completed` for each hook on stderr.
+
+**Trust.** Codex runs a hook only once you've trusted its exact definition. The TUI asks as it starts
+("Hooks need review": *Review hooks*, *Trust all and continue*, *Continue without trusting*), and
+`/hooks` lists them (`t` trusts all). `codex exec` skips untrusted hooks without a word, so trust
+them in the TUI once; `--dangerously-bypass-hook-trust` (`codex exec` and the TUI) runs them untrusted,
+for that run, with a warning. Setup says so. Codex records trust in `config.toml`, one table per hook,
+keyed by file, event and position (group, then handler):
+
+```toml
+[hooks.state."/Users/me/.codex/hooks.json:pre_tool_use:1:0"]
+trusted_hash = "sha256:…"
+```
+
+`trusted_hash` is the sha256 of the hook as Codex normalizes it (the event, the group's matcher where
+the event has one, the handler with its timeout and `async` filled in), as JSON with sorted keys. So
+reruns change nothing and keep it; a moved install updates our entries where they are, but they need
+trusting again ("modified"), and so does an entry of ours that a hook of yours pushed to another
+position. `enabled = false` in its table is a hook you turned off in `/hooks`. `autochat doctor`
+computes the hashes and says which of autochat's hooks Codex would skip. `hooks = false` under
+`[features]` in `config.toml` (or its deprecated old name, `codex_hooks`) turns every hook off,
+trusted or not (doctor says so).
 
 | Event | Kind | Notes |
 | --- | --- | --- |
-| `SessionStart` | `start` | `source`: `startup`, `resume`, `clear`, `compact`, `fork` |
+| `SessionStart` | `start` | `source`: `startup`, `resume`, `clear`. Comes with the session's first prompt |
 | `UserPromptSubmit` | `activity` | |
-| `PreToolUse` | `activity`; `request` for `request_user_input` | `files` from `apply_patch` (the patch's `*** Add/Update/Delete File:` and `Move to:` lines) |
-| `PermissionRequest` | `request` | the command (or the patch's files) and Codex's `description` |
-| `PostToolUse` | `activity` | after an approved tool runs, this resolves the request; `files` as above |
+| `PreToolUse` | `activity`; `request` for `request_user_input` that Codex puts to you ([below](#when-codex-asks-you)) | `tool_name`: `Bash` for commands (`tool_input.command`), `apply_patch` (`tool_input.command` is the patch: `files` from its `*** Add/Update/Delete File:` and `Move to:` lines), `request_user_input` (`questions`, each with `options`), `spawn_agent`, … |
+| `PermissionRequest` | `request` when Codex asks you, otherwise `activity` | the command and its `description` (the model's reason); no `tool_use_id`. Approve it and the tool runs (`PostToolUse`); turn it down and the turn is interrupted (`Interrupt`) |
+| `PostToolUse` | `activity` | after an approved tool runs or a question is answered, this resolves the request; `tool_response` is text |
 | `Stop` | `idle` | `last_assistant_message` becomes the summary |
-| `Interrupt` | `waiting` | you stopped the turn, so you're at its prompt; 3 s timeout, its maximum |
-| `SessionEnd` | `end` | `reason` is `other`; no `permission_mode`; 3 s timeout |
+| `Interrupt` | `waiting`; `end` for `codex exec` | Esc in the TUI (no `Stop` follows), or an approval turned down. Ctrl+C stops `codex exec`, which then exits (`SessionEnd` follows) |
+| `SessionEnd` | `end` | `reason` is `other`; no `permission_mode`. [When](#the-tuis-daemon) |
+
+Every payload has `session_id`, `transcript_path` (null with `--ephemeral`), `cwd` and
+`hook_event_name`; all but `SessionEnd` have `model` and `permission_mode`, and all but
+`SessionStart` and `SessionEnd` have `turn_id`. Codex 0.166.0 has more events, which autochat doesn't
+install: `PreModelRequest` and `PostModelRequest` around every model request, `PreCompact`,
+`PostCompact`, `SubagentStart` and `SubagentStop`.
+
+### When Codex asks you
+
+Not every `PermissionRequest` or `request_user_input` reaches you:
+
+- `codex exec` never asks. It forces approval policy `never` (unless `--approve-for-me`, which hands
+  approvals to its automatic reviewer) and turns `request_user_input` down.
+- With the automatic reviewer on in the TUI too (`--approve-for-me`, or
+  `approvals_reviewer = "auto_review"`), the reviewer answers approvals.
+- `request_user_input` is for Plan mode: in Default mode Codex refuses it right after `PreToolUse`,
+  unless `default_mode_request_user_input` is on under `[features]`.
+
+So for those two, autochat looks at the turn's collaboration mode and reviewer in the rollout (the
+`turn_context` line Codex writes as the turn starts, read back from the last 8 MB of the file), and
+reports `activity` when nobody is asked. When it can't tell, it raises the request.
 
 **Autonomy.** `permission_mode` is in every payload but `SessionEnd`, and Codex computes it from the
 approval policy alone: `bypassPermissions` for `never` (`-a never`,
-`--dangerously-bypass-approvals-and-sandbox`, and `codex exec` by default), `default` for every
-policy that asks. That's an approval-bypass mode, not "nobody's there", so it doesn't count by
-default (`autochat config trigger codex bypassPermissions,headless` makes it). Nothing in a payload
-says `codex exec`; its session's rollout (`transcript_path`) does: the first line is the
-`session_meta`, with `source: "exec"` (before `source`, `originator: "codex_exec"`). `cli`,
-`vscode` and `mcp` sessions aren't headless; a subagent's payload (`agent_id`, the parent's
-`session_id`) points at the subagent's own rollout, which can't say, so it's `unknown`, and so is a
-run without a rollout (`--ephemeral`): neither starts nor ends anything. By default `headless`
-counts.
+`--dangerously-bypass-approvals-and-sandbox`, and `codex exec`), `default` for `on-request`,
+`on-failure` (which runs as `on-request`) and a granular policy. (`untrusted` is no longer accepted.)
+That's about approvals, not about whether you're there, so it doesn't count by default
+(`autochat config trigger codex bypassPermissions,headless` makes it). Nothing in a payload says
+`codex exec`; its session's rollout (`transcript_path`) does. Its first line, written before
+`SessionStart` runs, is the `session_meta`:
+
+| Started as | `source` | `originator` |
+| --- | --- | --- |
+| `codex exec` | `exec` | `codex_exec` |
+| `codex`, the TUI (through its app-server daemon, the default) | `vscode` | `codex-tui` |
+| `codex --no-daemon` | `cli` | `codex-tui` |
+| a subagent | `{"subagent": {"thread_spawn": {"parent_thread_id": …}}}` | its parent's |
+
+`exec` is headless; `cli`, `vscode` (the default for app-server clients, which the TUI is through
+its daemon) and `mcp` aren't. A subagent's hooks carry the parent's `session_id`, plus `agent_id`,
+`agent_type` and its own rollout, which only says it's a subagent: autochat leaves them `unknown`, so
+they keep the parent's session as it is and never start or end one. So is a run without a rollout
+(`--ephemeral`). A session resumed the other way (`codex resume` of an exec session,
+`codex exec resume` of a TUI one) keeps its first line. By default `headless` counts.
+
+### The TUI's daemon
+
+By default the TUI runs its sessions in a shared app-server daemon, which the first TUI starts (its
+socket is under `$CODEX_HOME/app-server-control/`). Hooks run there, so:
+
+- their environment is the daemon's, from the terminal that started it: the `origin` (tmux pane,
+  terminal app) of every TUI session after it is that terminal's;
+- `/quit` leaves the session in the daemon ("Any running work continues"), and its `SessionEnd`
+  comes when the daemon unloads it, about a minute after its last TUI leaves, or when the daemon
+  stops. `/clear` starts a new session (`SessionStart`, `source: "clear"`), and the old one ends the
+  same way.
+
+With `--no-daemon` hooks run in the TUI's own process, and `SessionEnd` comes on `/quit`.
+
+**Cost.** Each hook call starts a shell and node: about 73 ms for autochat's (median; zsh alone
+~4 ms, node alone ~45 ms) on an M3 Max, with the core running. A tool call runs two, `PreToolUse` and
+`PostToolUse`: in `codex exec`, twenty commands in a row took about 160 ms longer each with
+autochat's hooks than without.
+
+**`additionalContext`.** Codex honours it after `PostToolUse`
+(`{"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": "…"}}` on stdout):
+the text reaches the model as a developer message next to the tool's output, in the next request.
 
 ### What isn't verified live
 
-None of this ran against a real Codex. From the documentation: the location and shape of
-`hooks.json`, the event list and payload fields (checked against the generated schemas), the
-trust flow, `SessionEnd`'s and `Interrupt`'s timeouts, that an exit 0 with nothing on stdout is a
-success (`Stop` and `Interrupt` reject plain text), and that hooks run through your login shell
-(`$SHELL -lc`) in the session's directory. From the source, not the documentation:
-`permission_mode` as above; that the rollout exists, with its `session_meta`, before the first
-hook runs; the rollout line format and the `source` values; `request_user_input` and its input
-(`questions` with `options`); that subagent hooks carry `agent_id` with the parent's session id;
-and how trust is keyed. Not checked at all: how long a login shell plus node takes per tool call on
-your machine, and whether Codex shows anything while our hooks run. There's no fallback observer
-for Codex yet: rollouts under `~/.codex/sessions` say what a session did, but not whether its
-process is still alive.
+Everything ran against a stand-in for the model, so which tools a real model calls, and when, isn't
+covered (the hooks and payloads don't depend on it). Not checked: Linux and Windows, the IDE extension
+and the desktop app, `codex mcp-server` (`source: "mcp"`), compaction, and whether the TUI shows
+anything while a hook runs. There's no fallback observer for Codex yet: rollouts under
+`~/.codex/sessions` say what a session did, but not whether its process is still alive.
 
 ## Process scan (detection only)
 

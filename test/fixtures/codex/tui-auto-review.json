@@ -1,0 +1,182 @@
+{
+  "codex": "codex-cli 0.166.0",
+  "how": "codex --no-daemon --approve-for-me in a terminal: a safe command runs without asking; one that asks for escalation goes to the automatic reviewer, which turns it down",
+  "note": "Recorded from Codex 0.166.0 (macOS) by a capture hook next to autochat's, against a local stand-in for the Responses API, in a throwaway CODEX_HOME; paths scrubbed. The test writes each rollout (transcript_path, under a temp $CODEX_HOME) as Codex wrote it, in brief: its session_meta first line (source, originator), then a turn_context line per turn (collaboration mode, approvals reviewer, approval policy).",
+  "rollouts": {
+    "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T09-07-50-01a19814-ed49-77f1-acb2-a8e80b027312.jsonl": {
+      "source": "cli",
+      "originator": "codex-tui",
+      "thread_source": "user",
+      "cli_version": "0.166.0",
+      "turns": {
+        "01a19815-00e1-7942-af3b-3ad04a8849be": {
+          "mode": "default",
+          "reviewer": "auto_review",
+          "approval_policy": "on-request"
+        },
+        "01a19815-4153-75d1-88f8-902522fd5e43": {
+          "mode": "default",
+          "reviewer": "auto_review",
+          "approval_policy": "on-request"
+        }
+      }
+    }
+  },
+  "events": [
+    {
+      "event": "SessionStart",
+      "env": {},
+      "payload": {
+        "session_id": "01a19814-ed49-77f1-acb2-a8e80b027312",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T09-07-50-01a19814-ed49-77f1-acb2-a8e80b027312.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "SessionStart",
+        "model": "gpt-5.5",
+        "permission_mode": "default",
+        "source": "startup"
+      }
+    },
+    {
+      "event": "UserPromptSubmit",
+      "env": {},
+      "payload": {
+        "session_id": "01a19814-ed49-77f1-acb2-a8e80b027312",
+        "turn_id": "01a19815-00e1-7942-af3b-3ad04a8849be",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T09-07-50-01a19814-ed49-77f1-acb2-a8e80b027312.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "UserPromptSubmit",
+        "model": "gpt-5.5",
+        "permission_mode": "default",
+        "prompt": "SCENARIO:permask auto review"
+      }
+    },
+    {
+      "event": "PreToolUse",
+      "env": {},
+      "payload": {
+        "session_id": "01a19814-ed49-77f1-acb2-a8e80b027312",
+        "turn_id": "01a19815-00e1-7942-af3b-3ad04a8849be",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T09-07-50-01a19814-ed49-77f1-acb2-a8e80b027312.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "PreToolUse",
+        "model": "gpt-5.5",
+        "permission_mode": "default",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "echo needs approval"
+        },
+        "tool_use_id": "call_218"
+      }
+    },
+    {
+      "event": "PostToolUse",
+      "env": {},
+      "payload": {
+        "session_id": "01a19814-ed49-77f1-acb2-a8e80b027312",
+        "turn_id": "01a19815-00e1-7942-af3b-3ad04a8849be",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T09-07-50-01a19814-ed49-77f1-acb2-a8e80b027312.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "PostToolUse",
+        "model": "gpt-5.5",
+        "permission_mode": "default",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "echo needs approval"
+        },
+        "tool_response": "needs approval\n",
+        "tool_use_id": "call_218"
+      }
+    },
+    {
+      "event": "Stop",
+      "env": {},
+      "payload": {
+        "session_id": "01a19814-ed49-77f1-acb2-a8e80b027312",
+        "turn_id": "01a19815-00e1-7942-af3b-3ad04a8849be",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T09-07-50-01a19814-ed49-77f1-acb2-a8e80b027312.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "Stop",
+        "model": "gpt-5.5",
+        "permission_mode": "default",
+        "stop_hook_active": false,
+        "last_assistant_message": "Done with permask: Chunk ID: f7c77d Wall time: 0.0000 seconds Process exited with code 0 Original token count: 4 Output: needs approval "
+      }
+    },
+    {
+      "event": "UserPromptSubmit",
+      "env": {},
+      "payload": {
+        "session_id": "01a19814-ed49-77f1-acb2-a8e80b027312",
+        "turn_id": "01a19815-4153-75d1-88f8-902522fd5e43",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T09-07-50-01a19814-ed49-77f1-acb2-a8e80b027312.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "UserPromptSubmit",
+        "model": "gpt-5.5",
+        "permission_mode": "default",
+        "prompt": "SCENARIO:perm auto review outside"
+      }
+    },
+    {
+      "event": "PreToolUse",
+      "env": {},
+      "payload": {
+        "session_id": "01a19814-ed49-77f1-acb2-a8e80b027312",
+        "turn_id": "01a19815-4153-75d1-88f8-902522fd5e43",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T09-07-50-01a19814-ed49-77f1-acb2-a8e80b027312.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "PreToolUse",
+        "model": "gpt-5.5",
+        "permission_mode": "default",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "touch ../outside-$RANDOM.txt && echo wrote outside"
+        },
+        "tool_use_id": "call_221"
+      }
+    },
+    {
+      "event": "PermissionRequest",
+      "env": {},
+      "payload": {
+        "session_id": "01a19814-ed49-77f1-acb2-a8e80b027312",
+        "turn_id": "01a19815-4153-75d1-88f8-902522fd5e43",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T09-07-50-01a19814-ed49-77f1-acb2-a8e80b027312.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "PermissionRequest",
+        "model": "gpt-5.5",
+        "permission_mode": "default",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "touch ../outside-$RANDOM.txt && echo wrote outside",
+          "description": "Write a file outside the workspace"
+        }
+      }
+    },
+    {
+      "event": "Stop",
+      "env": {},
+      "payload": {
+        "session_id": "01a19814-ed49-77f1-acb2-a8e80b027312",
+        "turn_id": "01a19815-4153-75d1-88f8-902522fd5e43",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T09-07-50-01a19814-ed49-77f1-acb2-a8e80b027312.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "Stop",
+        "model": "gpt-5.5",
+        "permission_mode": "default",
+        "stop_hook_active": false,
+        "last_assistant_message": "Done with perm: exec_command failed: CreateProcess { message: \"Rejected(\\\"Automatic approval review failed: guardian assessment was not "
+      }
+    },
+    {
+      "event": "SessionEnd",
+      "env": {},
+      "payload": {
+        "session_id": "01a19814-ed49-77f1-acb2-a8e80b027312",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T09-07-50-01a19814-ed49-77f1-acb2-a8e80b027312.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "SessionEnd",
+        "reason": "other"
+      }
+    }
+  ]
+}

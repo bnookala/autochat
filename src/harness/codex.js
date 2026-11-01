@@ -1,5 +1,7 @@
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import { isValidSessionId } from '../paths.js'
 import { sanitize } from '../protocol.js'
 import { focusOrigin } from '../launcher.js'
@@ -11,20 +13,24 @@ import { byTrigger, modesOf, originFrom } from './event.js'
 // to the user's own. MCP servers: [mcp_servers.autochat] in $CODEX_HOME/config.toml, a TOML table
 // edited as text so comments and formatting survive.
 //
-// Written from Codex's hooks documentation (developers.openai.com/codex/hooks) and, where it's
-// silent, the source and generated hook schemas of Codex rust-v0.166.0 (codex-rs/hooks,
-// codex-rs/core/src/hook_runtime.rs). Not run against a live Codex: see docs/harnesses.md.
+// Verified against Codex 0.166.0 (docs/harnesses.md#codex; the payloads are in
+// test/fixtures/codex/):
 // - hooks.json is {"description"?, "hooks": {<Event>: [{matcher?, hooks: [{type: "command",
-//   command, timeout?, async?, statusMessage?}]}]}}, and Codex rejects other top-level keys.
-//   Commands run through the user's login shell, in the session's cwd, with the JSON on stdin.
-// - Codex runs a hook only once the user has trusted its exact definition (/hooks in Codex), and
-//   records that trust by file, event and position. A changed command needs trusting again.
-// - Every payload has session_id, transcript_path, cwd and hook_event_name; all but SessionEnd
-//   have permission_mode, which Codex computes from the approval policy alone: bypassPermissions
-//   for `never` (codex exec's default, and -a never), default for every policy that asks.
-// - Nothing in a payload says `codex exec`. The session's rollout file (transcript_path) does:
-//   its first line is the session_meta, with source "exec" (originator "codex_exec").
-// - Subagents' tool calls carry the parent's session_id, plus agent_id, and their own rollout.
+//   command, timeout?, async?, statusMessage?}]}]}}. Another top-level key and Codex drops the
+//   whole file. Commands run as `<your account's shell> -c <command>` (not a login shell, and not
+//   $SHELL), in the session's cwd, with the JSON on stdin. Exit 0 with nothing on stdout is a
+//   success.
+// - Codex runs a hook only once you've trusted its exact definition (/hooks in Codex), and records
+//   that in config.toml, by file, event and position: see trustHash(). codex exec skips untrusted
+//   hooks without a word.
+// - Every payload has session_id, transcript_path (null with --ephemeral), cwd and
+//   hook_event_name; all but SessionEnd have permission_mode, from the approval policy alone:
+//   bypassPermissions for `never` (which codex exec forces), default for every policy that asks.
+// - Nothing in a payload says `codex exec`. The session's rollout (transcript_path) does: its
+//   first line is the session_meta, with source "exec" (originator "codex_exec"). The TUI's is
+//   "vscode" (through its app-server daemon, the default) or "cli" (--no-daemon). Each turn's
+//   turn_context line there has its collaboration mode and approvals reviewer.
+// - Subagents' hooks carry the parent's session_id, plus agent_id, and their own rollout.
 
 const TOML_HEADER = /^\s*\[\s*mcp_servers\s*\.\s*(?:autochat|"autochat"|'autochat')\s*(\.[^\]]*)?\]\s*(?:#.*)?$/
 const ANY_HEADER = /^\s*\[/
@@ -114,7 +120,9 @@ const mcp = {
 // --- hooks ------------------------------------------------------------------------------------------
 
 export const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'Stop', 'Interrupt', 'SessionEnd']
-// SessionEnd and Interrupt hooks get 1 s unless they ask for more, and 3 s at most.
+// SessionEnd and Interrupt hooks get 1 s unless they ask for more, and 3 s at most (more is cut
+// to 3 s, with a warning); the others get 10 minutes.
+const SHORT = ['SessionEnd', 'Interrupt']
 const TIMEOUTS = { SessionEnd: 3, Interrupt: 3 }
 export const hooksFile = (ctx) => path.join(ctx.codexHome, 'hooks.json')
 const command = (ctx, event) => `${shq(ctx.node)} ${shq(ctx.bin)} hook --harness codex ${event} || true`
@@ -227,22 +235,107 @@ function uncomputeHooks (ctx) {
 
 const commandPaths = (cmd) => (/^'((?:[^']|'\\'')*)' '((?:[^']|'\\'')*)'/.exec(cmd) || []).slice(1).map(p => p.replace(/'\\''/g, "'"))
 
+// `key = true|false` lines directly under [features] in config.toml (not a profile's):
+// [{key, raw, value}].
+function featureFlags (text) {
+  const out = []
+  let table = ''
+  for (const line of String(text ?? '').split('\n')) {
+    const header = /^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*(?:#.*)?$/.exec(line)
+    if (header) { table = header[1].replace(/[\s"']/g, ''); continue }
+    const m = /^\s*([\w.\-"' ]+?)\s*=\s*(true|false)\s*(?:#.*)?$/.exec(line)
+    if (!m) continue
+    const key = [table, m[1].replace(/[\s"']/g, '')].filter(Boolean).join('.')
+    if (key.startsWith('features.')) out.push({ key: key.slice('features.'.length), raw: m[1].trim(), value: m[2] === 'true' })
+  }
+  return out
+}
+
 // `hooks = false` under [features] in config.toml (or its old name, codex_hooks) turns every hook
 // off. Returns where it's said, or null.
 function hooksOff (ctx) {
   const file = mcp.file(ctx)
-  const text = readText(file)
-  if (!text) return null
-  let table = ''
-  for (const line of text.split('\n')) {
-    const header = /^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*(?:#.*)?$/.exec(line)
-    if (header) { table = header[1].replace(/[\s"']/g, ''); continue }
-    const m = /^\s*([\w.\-"' ]+?)\s*=\s*false\s*(?:#.*)?$/.exec(line)
-    if (!m) continue
-    const key = [table, m[1].replace(/[\s"']/g, '')].filter(Boolean).join('.')
-    if (key === 'features.hooks' || key === 'features.codex_hooks') return `${m[1].trim()} = false under [features] in ${tilde(file, ctx)}`
+  const f = featureFlags(readText(file)).find(f => (f.key === 'hooks' || f.key === 'codex_hooks') && !f.value)
+  return f ? `${f.raw} = false under [features] in ${tilde(file, ctx)}` : null
+}
+
+// --- trust ------------------------------------------------------------------------------------------
+
+// Codex records the hooks you trust in config.toml, one table per hook, keyed by file, event and
+// position: [hooks.state."<hooks.json>:<event>:<group>:<handler>"], with trusted_hash (and
+// enabled = false when you turn one off in /hooks).
+const MATCHER_EVENTS = ['PreToolUse', 'PermissionRequest', 'PostToolUse', 'PreCompact', 'PostCompact', 'SessionStart', 'SessionEnd', 'SubagentStart', 'SubagentStop']
+const snake = (event) => event.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase()
+const sortedKeys = (v) => Array.isArray(v) ? v.map(sortedKeys) : isObj(v) ? Object.fromEntries(Object.keys(v).sort().map(k => [k, sortedKeys(v[k])])) : v
+
+/**
+ * The trusted_hash Codex records for a command hook: the sha256 of the hook as Codex normalizes
+ * it (the event, the group's matcher where the event has one, the handler with its timeout and
+ * async filled in), as JSON with sorted keys. `group` is the matcher group the handler is in.
+ */
+export function trustHash (event, group, handler) {
+  const t = Number.isInteger(handler.timeout) ? handler.timeout : SHORT.includes(event) ? 1 : 600
+  const identity = {
+    event_name: snake(event),
+    ...(MATCHER_EVENTS.includes(event) && typeof group?.matcher === 'string' && { matcher: group.matcher }),
+    hooks: [{
+      type: 'command',
+      command: handler.command,
+      timeout: SHORT.includes(event) ? Math.min(Math.max(t, 1), 3) : Math.max(t, 1),
+      async: handler.async === true,
+      ...(typeof handler.statusMessage === 'string' && { statusMessage: handler.statusMessage })
+    }]
   }
-  return null
+  return 'sha256:' + crypto.createHash('sha256').update(JSON.stringify(sortedKeys(identity))).digest('hex')
+}
+
+const unquote = (s) => s.replace(/\\(["\\])/g, '$1')
+function stateFields (s) {
+  const hash = /\btrusted_hash\s*=\s*"([^"]*)"/.exec(s)
+  const enabled = /\benabled\s*=\s*(true|false)\b/.exec(s)
+  return { ...(hash && { trusted_hash: hash[1] }), ...(enabled && { enabled: enabled[1] === 'true' }) }
+}
+
+// Codex's per-hook state from config.toml: {key: {trusted_hash, enabled}}, from
+// [hooks.state."<key>"] tables (how Codex writes them) and `"<key>" = {…}` under [hooks.state].
+function hookStates (text) {
+  const out = {}
+  let table = null
+  for (const line of String(text ?? '').split('\n')) {
+    const header = /^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*(?:#.*)?$/.exec(line)
+    if (header) {
+      const m = /^hooks\s*\.\s*state(?:\s*\.\s*"((?:[^"\\]|\\.)*)")?$/.exec(header[1])
+      table = m ? (m[1] === undefined ? '' : unquote(m[1])) : null
+      continue
+    }
+    if (table === null) continue
+    if (table) { Object.assign(out[table] ??= {}, stateFields(line)); continue }
+    const inline = /^\s*"((?:[^"\\]|\\.)*)"\s*=\s*\{(.*)\}\s*(?:#.*)?$/.exec(line)
+    if (inline) out[unquote(inline[1])] = stateFields(inline[2])
+  }
+  return out
+}
+
+// How many of our hooks Codex skips: {untrusted, off}.
+function trustOf (ctx, hooks) {
+  const file = hooksFile(ctx)
+  let real = file
+  try { real = fs.realpathSync(file) } catch {}
+  const states = hookStates(readText(mcp.file(ctx)))
+  const counts = { untrusted: 0, off: 0 }
+  for (const event of HOOK_EVENTS) {
+    (Array.isArray(hooks[event]) ? hooks[event] : []).forEach((g, gi) => {
+      if (!isObj(g) || !Array.isArray(g.hooks)) return
+      g.hooks.forEach((h, hi) => {
+        if (!ours(h)) return
+        const key = `:${snake(event)}:${gi}:${hi}`
+        const state = states[file + key] ?? states[real + key]
+        if (state?.enabled === false) counts.off++
+        else if (state?.trusted_hash !== trustHash(event, g, h)) counts.untrusted++
+      })
+    })
+  }
+  return counts
 }
 
 function hookStatus (ctx) {
@@ -251,6 +344,12 @@ function hookStatus (ctx) {
   const all = root && isObj(root.hooks) ? root.hooks : {}
   const found = HOOK_EVENTS.map(e => (Array.isArray(all[e]) ? all[e] : []).flatMap(g => isObj(g) && Array.isArray(g.hooks) ? g.hooks : []).find(ours)).filter(Boolean)
   const off = hooksOff(ctx)
+  const trust = found.length ? trustOf(ctx, all) : null
+  const which = (n) => n >= found.length ? "autochat's hooks" : `${n} of autochat's hooks`
+  const notes = trust
+    ? [trust.untrusted && `Codex skips ${which(trust.untrusted)} until you trust them (new, or changed since you did): open /hooks in Codex and trust them`,
+        trust.off && `${which(trust.off)} ${trust.off === 1 ? 'is' : 'are'} turned off in /hooks in Codex`].filter(Boolean)
+    : []
   return {
     installed: found.length === HOOK_EVENTS.length,
     partial: found.length > 0 && found.length < HOOK_EVENTS.length,
@@ -259,8 +358,9 @@ function hookStatus (ctx) {
     disabled: !!off,
     ...(off && { disabledBy: off }),
     file,
-    // autochat can't see Codex's trust records.
-    ...(found.length && { note: 'Codex runs new or changed hooks only once you trust them: /hooks in Codex' })
+    // Codex has trusted every one of ours, and none is turned off.
+    ...(trust && { trusted: !trust.untrusted && !trust.off }),
+    ...(notes.length && { note: notes.join('; ') })
   }
 }
 
@@ -308,10 +408,76 @@ export function headless (transcriptPath) {
   // A subagent, a custom client, an internal thread: the session that matters is another one.
   if (s.source !== null && typeof s.source !== 'string') return null
   if (s.source === 'exec') return true
+  // The TUI is "vscode" through its app-server daemon (the default for app-server clients), "cli"
+  // with --no-daemon.
   if (['cli', 'vscode', 'mcp'].includes(s.source)) return false
   if (s.source === null && s.originator === 'codex_exec') return true
   if (s.source === null && s.originator === 'codex_cli_rs') return false
   return null
+}
+
+const TAIL = 8 * 1024 * 1024
+
+/**
+ * One turn's settings, from the turn_context line Codex writes into the rollout as the turn
+ * starts: {mode (the collaboration mode: "default", "plan"), reviewer (who answers approvals:
+ * "user", "auto_review")}, or null when the rollout doesn't say (no file, or the turn started
+ * more than the last 8 MB ago).
+ */
+export function turnContext (file, turnId) {
+  if (typeof file !== 'string' || !path.isAbsolute(file) || typeof turnId !== 'string' || !/^[\w-]{1,128}$/.test(turnId)) return null
+  let text
+  try {
+    const fd = fs.openSync(file, 'r')
+    try {
+      const size = fs.fstatSync(fd).size
+      const len = Math.min(size, TAIL)
+      const buf = Buffer.alloc(len)
+      text = buf.subarray(0, fs.readSync(fd, buf, 0, len, size - len)).toString('utf8')
+    } finally {
+      fs.closeSync(fd)
+    }
+  } catch {
+    return null
+  }
+  // Every line of the turn names it; the turn_context line is the first of them.
+  const needle = `"turn_id":"${turnId}"`
+  for (let i = text.lastIndexOf(needle); i !== -1;) {
+    const start = text.lastIndexOf('\n', i) + 1
+    const end = text.indexOf('\n', i)
+    const line = text.slice(start, end === -1 ? undefined : end)
+    if (line.includes('"type":"turn_context"')) {
+      try {
+        const o = JSON.parse(line)
+        if (o?.type === 'turn_context' && o.payload?.turn_id === turnId) {
+          const mode = o.payload.collaboration_mode?.mode
+          const reviewer = o.payload.approvals_reviewer
+          return { mode: typeof mode === 'string' ? mode : null, reviewer: typeof reviewer === 'string' ? reviewer : null }
+        }
+      } catch {}
+    }
+    i = start > 0 ? text.lastIndexOf(needle, start - 1) : -1
+  }
+  return null
+}
+
+const codexHomeOf = (env) => env?.CODEX_HOME || path.join(env?.HOME || os.homedir(), '.codex')
+const featureOn = (env, name) => {
+  try { return featureFlags(readText(path.join(codexHomeOf(env), 'config.toml'))).some(f => f.key === name && f.value) } catch { return false }
+}
+
+/**
+ * Does Codex put this approval (or question) to you? codex exec never does: it turns both down
+ * itself, or leaves approvals to its automatic reviewer, as the TUI does with that reviewer on.
+ * And Codex turns request_user_input down outside Plan mode, unless
+ * default_mode_request_user_input is on.
+ */
+function putToYou (ev, p, env, question) {
+  if (ev.headless === true) return false
+  const turn = turnContext(p.transcript_path, p.turn_id)
+  if (!turn) return true
+  if (!question) return turn.reviewer === null || turn.reviewer === 'user'
+  return turn.mode !== 'default' || featureOn(env, 'default_mode_request_user_input')
 }
 
 const str = (v) => typeof v === 'string' ? v : ''
@@ -359,7 +525,8 @@ export function normalize (event, p, env) {
     sid: p.session_id,
     kind: 'notice',
     mode: MODES.includes(p.permission_mode) ? p.permission_mode : null,
-    // A subagent's payload points at the subagent's rollout, which can't say.
+    // A subagent's payload points at its own rollout, which only says it's a subagent: unknown,
+    // so its events keep the parent's session as it is and never start or end one.
     headless: p.agent_id ? null : headless(p.transcript_path),
     cwd: typeof p.cwd === 'string' ? sanitize(p.cwd, 300) : undefined,
     origin: originFrom(env)
@@ -375,7 +542,7 @@ export function normalize (event, p, env) {
       break
     case 'PreToolUse':
     case 'PostToolUse':
-      if (name === 'PreToolUse' && tool === 'request_user_input') {
+      if (name === 'PreToolUse' && tool === 'request_user_input' && putToYou(ev, p, env, true)) {
         ev.kind = 'request'
         ev.request = { title: 'Codex has a question for you', message: describeQuestions(p.tool_input) }
       } else {
@@ -384,16 +551,26 @@ export function normalize (event, p, env) {
       ev.files = editedFiles(tool, p.tool_input)
       break
     case 'PermissionRequest':
-      ev.kind = 'request'
-      ev.request = { title: 'Permission needed', message: describeTool(tool, p.tool_input) }
+      if (putToYou(ev, p, env, false)) {
+        ev.kind = 'request'
+        ev.request = { title: 'Permission needed', message: describeTool(tool, p.tool_input) }
+      } else {
+        ev.kind = 'activity'
+      }
       break
     case 'Stop':
       ev.kind = 'idle'
       if (str(p.last_assistant_message)) ev.summary = sanitize(p.last_assistant_message, 2000)
       break
     case 'Interrupt':
-      // You stopped the turn: you're at the prompt now.
-      ev.kind = 'waiting'
+      // You stopped the turn (Esc, or turned an approval down): you're at its prompt now. Stopped
+      // with Ctrl+C, codex exec exits.
+      if (ev.headless === true) {
+        ev.kind = 'end'
+        ev.reason = 'interrupt'
+      } else {
+        ev.kind = 'waiting'
+      }
       break
     case 'SessionEnd':
       ev.kind = 'end'
@@ -421,7 +598,7 @@ export default {
     const binary = ctx.which('codex')
     return { installed: !!binary || isDir(ctx.codexHome), binary, paths: { config: mcp.file(ctx), hooks: hooksFile(ctx) } }
   },
-  hooksNote: 'Codex skips new or changed hooks until you trust them: open /hooks in Codex and trust autochat\'s.',
+  hooksNote: 'Codex skips new or changed hooks until you trust them (codex exec without a word): open /hooks in Codex and trust autochat\'s.',
   planHooks: (ctx) => planned(computeHooks, ctx),
   unplanHooks: (ctx) => planned(uncomputeHooks, ctx),
   hookStatus,
