@@ -32,7 +32,8 @@ exports one object:
 | `detect(ctx)` | yes | `{installed, binary, paths}`: is it installed (binary on the path, or its config dir exists), and the config files the adapter touches. Never spawns: [`versionOf(ctx, binary)`](../src/harness/util.js) is there when a version is needed. |
 | `normalize(event, payload, env)` | yes | One hook call → a [`SessionEvent`](#sessionevent), or `null` when it names no session. Fills in `mode` and `headless`; leaves `autonomy` to `autonomy()`. Must never throw on odd input. |
 | `autonomy(payload, session)` | yes | `'autonomous' \| 'interactive' \| 'unknown'`. `session` is the SessionEvent so far plus `env` and `trigger` (this harness's trigger list, or `'never'`). Most adapters use `defaultAutonomy`: `byTrigger(modesOf(session), session.trigger)`. |
-| `planHooks(ctx)`, `unplanHooks(ctx)`, `hookStatus(ctx)` | for hooks | Install, remove, check the hooks. See [Hooks](#hooks). |
+| `planHooks(ctx)`, `unplanHooks(ctx)`, `hookStatus(ctx)` | for hooks | Install, remove, check the hooks. See [Hooks](#hooks). `hookStatus` returns `{installed, file}`, plus `partial`, `valid` (the node and autochat.js it runs exist) and `disabled` when it can tell. |
+| `hooksNote` | no | What setup says after installing: when the harness starts running the new hooks. |
 | `observe(ctx, emit)` | no | Fallback watcher for sessions that never call the hooks (started before setup, or no hooks at all). Calls `emit(live)` with **every** live session it sees, each time (`[{sid, running, mode, cwd, lastStart, scannedAt}]`), so the Controller can release the ones that are gone. Returns a stop function. `ctx` is `{idleMs, trigger(id), intervalMs}`. |
 | `follow(sid)` | no | The harness's own session log, for what no hook reports. An EventEmitter like Copilot's `SessionLog`: `start({since})`, `poll()`, `stop()`, and events `mode`, `task-complete`, `abort`, `shutdown`, `activity`. |
 | `continues(session)` | no | After `idle`, true keeps the session in the room a while longer (Copilot: an active autopilot objective). |
@@ -56,7 +57,7 @@ args)`. Tests pass their own.
 | `kind` | see below |
 | `autonomy` | `autonomous`, `interactive` or `unknown` |
 | `mode` | the harness's own name for its current mode (`autopilot`, `auto`, `acceptEdits`, …), or null |
-| `headless` | true for a non-interactive run (`claude -p`, `codex exec`, …) |
+| `headless` | true for a non-interactive run (`claude -p`, `codex exec`, …), false when someone's there, null when the harness doesn't say |
 | `cwd`, `repo`, `branch` | where it works (repo and branch are optional) |
 | `origin` | `originFrom(env)`: `{tmux, tmuxPane, termProgram, bundleId}` from the hook's environment, for focus |
 | `request` | `{title, message}` for `kind: 'request'` |
@@ -179,11 +180,47 @@ message (`hookMessage()`), in the shape every daemon has read, plus the new fiel
 | Harness | Hooks | Autonomy signal | Fallback observer | MCP |
 | --- | --- | --- | --- | --- |
 | Copilot CLI | `$COPILOT_HOME/hooks/autochat.json` (a file of our own) | `autopilot`, from `session-state/<id>/events.jsonl` | the session-state scan | `mcp-config.json` |
-| Claude Code | not yet | | | `claude mcp add` |
+| Claude Code | `$CLAUDE_CONFIG_DIR/settings.json`, merged ([below](#claude-code)) | `auto` (`permission_mode`); headless: `CLAUDE_CODE_SESSION_ATTENDED=0` | none needed: running sessions pick up new hooks | `claude mcp add` |
 | Gemini CLI | not yet | | | `~/.gemini/settings.json` |
 | opencode | not yet | | | `opencode.json` |
 | Codex | not yet | | | `config.toml` |
 | pi | `$PI_CODING_AGENT_DIR/extensions/autochat.ts`, an extension of our own ([below](#pi)) | `headless`: print and json mode (`ctx.hasUI` is false) | none: pi reports nothing without the extension | the same extension |
+
+## Claude Code
+
+`src/harness/claude.js`, verified against Claude Code 2.1.273. The fixtures in
+`test/fixtures/claude/` are payloads recorded from the real binary, with the hooks loaded from a
+temp file (`--settings <file> --setting-sources project,local`), in a throwaway `HOME` and
+`CLAUDE_CONFIG_DIR`, against a local stand-in for the Messages API: `claude -p` in several
+permission modes, a session in a terminal (driven through a pseudo-terminal), and `claude --bg`.
+
+**Hooks** go in the user settings, `$CLAUDE_CONFIG_DIR/settings.json` (`~/.claude/settings.json`):
+one matcher group of ours per event, appended after the user's own, each running
+`… hook --harness claude <Event> || true` with a 10 s timeout. `Notification` only matches
+`permission_prompt|idle_prompt|elicitation_dialog`. Claude Code picks up changes to that file in
+running sessions too, so there's no fallback observer. Hooks don't run under `--bare`, or with
+`disableAllHooks` (doctor says so).
+
+| Event | Kind | Notes |
+| --- | --- | --- |
+| `SessionStart` | `start` | `source`, and `model` in a terminal; no `permission_mode` |
+| `UserPromptSubmit` | `activity` | |
+| `PreToolUse` | `activity`; `request` for `AskUserQuestion` | `files` for Write, Edit, MultiEdit, NotebookEdit |
+| `PostToolUse` | `activity` | `files` as above |
+| `PermissionRequest` | `request` | fires whenever a dialog would ask (`AskUserQuestion` too, and in `-p`) |
+| `Notification` | `request` (`permission_prompt`, `elicitation_dialog`), `waiting` (`idle_prompt`) | no `permission_mode`. `permission_prompt` comes about 6 s after the PermissionRequest with only "Claude needs your permission", so the request keeps the PermissionRequest's text. `idle_prompt` comes after a minute at the prompt |
+| `Stop` | `idle` | `last_assistant_message` becomes the summary |
+| `SessionEnd` | `end` | `reason`: `prompt_input_exit` (/exit), `other` (end of `-p`), … |
+
+**Autonomy.** `permission_mode` is in the payloads of `UserPromptSubmit`, `PreToolUse`,
+`PostToolUse`, `PermissionRequest` and `Stop`. Manual mode arrives as `default`, which autochat
+calls `manual`, as `--permission-mode` does; the others are `acceptEdits`, `plan`, `auto`,
+`dontAsk` and `bypassPermissions`. For headless, Claude Code sets `CLAUDE_CODE_SESSION_ATTENDED` in
+its hooks' environment: `0` for `claude -p` and `claude --bg` sessions, `1` in a terminal. A
+`--bg` session you attach to still says `0`. `CLAUDE_CODE_ENTRYPOINT` (`sdk-cli` for `-p`, `cli`
+otherwise, `--bg` included) is the fallback for versions without it. When neither is there, a
+mode that doesn't count by itself leaves the session `unknown`. By default `auto` and `headless`
+count.
 
 ## pi
 

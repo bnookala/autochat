@@ -1,0 +1,162 @@
+{
+  "claude": "2.1.273",
+  "how": "claude -p \"…\" --permission-mode manual (Bash isn't allowed, so it asks; nobody answers in -p)",
+  "note": "Recorded from the real Claude Code with these hooks loaded via --settings and --setting-sources project,local, against a local stand-in for the Messages API. Paths scrubbed; env trimmed to what autochat reads.",
+  "events": [
+    {
+      "event": "SessionStart",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_CODE_CHILD_SESSION": "1"
+      },
+      "payload": {
+        "session_id": "097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "SessionStart",
+        "source": "startup"
+      }
+    },
+    {
+      "event": "UserPromptSubmit",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_CODE_CHILD_SESSION": "1"
+      },
+      "payload": {
+        "session_id": "097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "dda7210c-e652-412d-8c9c-0e5258807c9c",
+        "permission_mode": "default",
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "SCENARIO:perm make a file"
+      }
+    },
+    {
+      "event": "PreToolUse",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_EFFORT": "high",
+        "CLAUDE_CODE_CHILD_SESSION": "1"
+      },
+      "payload": {
+        "session_id": "097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "dda7210c-e652-412d-8c9c-0e5258807c9c",
+        "permission_mode": "default",
+        "effort": {
+          "level": "high"
+        },
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "touch perm-test.txt",
+          "description": "Create a file"
+        },
+        "tool_use_id": "toolu_mock_3"
+      }
+    },
+    {
+      "event": "PermissionRequest",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_EFFORT": "high",
+        "CLAUDE_CODE_CHILD_SESSION": "1"
+      },
+      "payload": {
+        "session_id": "097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "dda7210c-e652-412d-8c9c-0e5258807c9c",
+        "permission_mode": "default",
+        "effort": {
+          "level": "high"
+        },
+        "hook_event_name": "PermissionRequest",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "touch perm-test.txt",
+          "description": "Create a file"
+        },
+        "permission_suggestions": [
+          {
+            "type": "addDirectories",
+            "directories": [
+              "/Users/me/code/demo"
+            ],
+            "destination": "session"
+          },
+          {
+            "type": "setMode",
+            "mode": "acceptEdits",
+            "destination": "session"
+          }
+        ]
+      }
+    },
+    {
+      "event": "Stop",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_EFFORT": "high",
+        "CLAUDE_CODE_CHILD_SESSION": "1"
+      },
+      "payload": {
+        "session_id": "097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "dda7210c-e652-412d-8c9c-0e5258807c9c",
+        "permission_mode": "default",
+        "effort": {
+          "level": "high"
+        },
+        "hook_event_name": "Stop",
+        "stop_hook_active": false,
+        "last_assistant_message": "Done with perm.",
+        "background_tasks": [],
+        "session_crons": []
+      }
+    },
+    {
+      "event": "SessionEnd",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_CODE_CHILD_SESSION": "1"
+      },
+      "payload": {
+        "session_id": "097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "dda7210c-e652-412d-8c9c-0e5258807c9c",
+        "hook_event_name": "SessionEnd",
+        "reason": "other"
+      }
+    }
+  ]
+}

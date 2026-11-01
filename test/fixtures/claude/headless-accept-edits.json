@@ -1,0 +1,158 @@
+{
+  "claude": "2.1.273",
+  "how": "claude -p \"…\" --permission-mode acceptEdits (a Write)",
+  "note": "Recorded from the real Claude Code with these hooks loaded via --settings and --setting-sources project,local, against a local stand-in for the Messages API. Paths scrubbed; env trimmed to what autochat reads.",
+  "events": [
+    {
+      "event": "SessionStart",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "9320d095-e16a-45d1-ae4f-2111d247402a",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_CODE_CHILD_SESSION": "1"
+      },
+      "payload": {
+        "session_id": "9320d095-e16a-45d1-ae4f-2111d247402a",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/9320d095-e16a-45d1-ae4f-2111d247402a.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "SessionStart",
+        "source": "startup"
+      }
+    },
+    {
+      "event": "UserPromptSubmit",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "9320d095-e16a-45d1-ae4f-2111d247402a",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_CODE_CHILD_SESSION": "1"
+      },
+      "payload": {
+        "session_id": "9320d095-e16a-45d1-ae4f-2111d247402a",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/9320d095-e16a-45d1-ae4f-2111d247402a.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "b3554dda-93ce-4df1-996f-5ce2325e7c17",
+        "permission_mode": "acceptEdits",
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "SCENARIO:write PATH:/Users/me/code/demo/a.txt write a file"
+      }
+    },
+    {
+      "event": "PreToolUse",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "9320d095-e16a-45d1-ae4f-2111d247402a",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_EFFORT": "high",
+        "CLAUDE_CODE_CHILD_SESSION": "1"
+      },
+      "payload": {
+        "session_id": "9320d095-e16a-45d1-ae4f-2111d247402a",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/9320d095-e16a-45d1-ae4f-2111d247402a.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "b3554dda-93ce-4df1-996f-5ce2325e7c17",
+        "permission_mode": "acceptEdits",
+        "effort": {
+          "level": "high"
+        },
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Write",
+        "tool_input": {
+          "file_path": "/Users/me/code/demo/a.txt",
+          "content": "hello\n"
+        },
+        "tool_use_id": "toolu_mock_5"
+      }
+    },
+    {
+      "event": "PostToolUse",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "9320d095-e16a-45d1-ae4f-2111d247402a",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_EFFORT": "high",
+        "CLAUDE_CODE_CHILD_SESSION": "1"
+      },
+      "payload": {
+        "session_id": "9320d095-e16a-45d1-ae4f-2111d247402a",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/9320d095-e16a-45d1-ae4f-2111d247402a.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "b3554dda-93ce-4df1-996f-5ce2325e7c17",
+        "permission_mode": "acceptEdits",
+        "effort": {
+          "level": "high"
+        },
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Write",
+        "tool_input": {
+          "file_path": "/Users/me/code/demo/a.txt",
+          "content": "hello\n"
+        },
+        "tool_response": {
+          "type": "create",
+          "filePath": "/Users/me/code/demo/a.txt",
+          "content": "hello\n",
+          "structuredPatch": [],
+          "originalFile": null,
+          "userModified": false
+        },
+        "tool_use_id": "toolu_mock_5",
+        "duration_ms": 4
+      }
+    },
+    {
+      "event": "Stop",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "9320d095-e16a-45d1-ae4f-2111d247402a",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_EFFORT": "high",
+        "CLAUDE_CODE_CHILD_SESSION": "1"
+      },
+      "payload": {
+        "session_id": "9320d095-e16a-45d1-ae4f-2111d247402a",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/9320d095-e16a-45d1-ae4f-2111d247402a.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "b3554dda-93ce-4df1-996f-5ce2325e7c17",
+        "permission_mode": "acceptEdits",
+        "effort": {
+          "level": "high"
+        },
+        "hook_event_name": "Stop",
+        "stop_hook_active": false,
+        "last_assistant_message": "Done with write.",
+        "background_tasks": [],
+        "session_crons": []
+      }
+    },
+    {
+      "event": "SessionEnd",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "9320d095-e16a-45d1-ae4f-2111d247402a",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_CODE_CHILD_SESSION": "1"
+      },
+      "payload": {
+        "session_id": "9320d095-e16a-45d1-ae4f-2111d247402a",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/9320d095-e16a-45d1-ae4f-2111d247402a.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "b3554dda-93ce-4df1-996f-5ce2325e7c17",
+        "hook_event_name": "SessionEnd",
+        "reason": "other"
+      }
+    }
+  ]
+}

@@ -3,9 +3,16 @@ import Foundation
 
 /// Persistent subscription to `autochat daemon` over its unix socket (protocol v1, issue #2).
 ///
-/// Connects, sends `subscribe`, decodes `state` snapshots, sends `cmd`s with ids and matches
-/// `reply`s. Reconnects with backoff until `stop()`. Callbacks run on `callbackQueue`.
+/// Connects, sends `subscribe`, decodes snapshots (`state` for the lounge stream, `agents` for
+/// the agent room's human stream, issue #21), sends `cmd`s with ids and matches `reply`s.
+/// Reconnects with backoff until `stop()`. Callbacks run on `callbackQueue`.
 public final class DaemonClient: @unchecked Sendable {
+    /// Which snapshots the subscription asks for.
+    public enum Stream: String, Sendable, Equatable {
+        case lounge
+        case agents
+    }
+
     public enum State: Sendable, Equatable {
         case idle
         case connecting
@@ -33,6 +40,7 @@ public final class DaemonClient: @unchecked Sendable {
     }
 
     public let socketPath: String
+    public let stream: Stream
     public let backoff: Backoff
     public let commandTimeout: TimeInterval
     static let maxLine = 16 * 1024 * 1024
@@ -49,15 +57,18 @@ public final class DaemonClient: @unchecked Sendable {
     private var pending: [Int: CheckedContinuation<Reply, Error>] = [:]
     private var state: State = .idle
     private var onSnapshot: (@Sendable (Snapshot) -> Void)?
+    private var onAgents: (@Sendable (AgentsSnapshot) -> Void)?
     private var onState: (@Sendable (State) -> Void)?
 
     public init(
         socketPath: String,
+        stream: Stream = .lounge,
         callbackQueue: DispatchQueue = .main,
         backoff: Backoff = Backoff(),
         commandTimeout: TimeInterval = 5
     ) {
         self.socketPath = socketPath
+        self.stream = stream
         self.callbackQueue = callbackQueue
         self.backoff = backoff
         self.commandTimeout = commandTimeout
@@ -73,6 +84,17 @@ public final class DaemonClient: @unchecked Sendable {
     ) {
         lock.withLock {
             self.onSnapshot = onSnapshot
+            self.onState = onState
+        }
+    }
+
+    /// Handlers for an agents-stream client.
+    public func setAgentsHandlers(
+        onAgents: (@Sendable (AgentsSnapshot) -> Void)?,
+        onState: (@Sendable (State) -> Void)? = nil
+    ) {
+        lock.withLock {
+            self.onAgents = onAgents
             self.onState = onState
         }
     }
@@ -213,7 +235,7 @@ public final class DaemonClient: @unchecked Sendable {
     }
 
     private func readLoop(_ conn: Int32, onSubscribed: () -> Void) -> Outcome {
-        let subscribed = lock.withLock { (try? UnixSocket.writeAll(conn, Wire.subscribe)) != nil }
+        let subscribed = lock.withLock { (try? UnixSocket.writeAll(conn, Wire.subscribe(stream))) != nil }
         guard subscribed else { return .closed("couldn't subscribe") }
         var lines = LineBuffer(maxLine: Self.maxLine)
         var buf = [UInt8](repeating: 0, count: 64 * 1024)
@@ -228,12 +250,25 @@ public final class DaemonClient: @unchecked Sendable {
             for line in got {
                 switch Inbound.parse(line) {
                 case let .state(snapshot):
+                    guard stream == .lounge else {
+                        // A daemon without agent rooms ignores `stream` and subscribes us to the lounge.
+                        if !gotState { return .incompatible("This autochat doesn't host agent rooms. Update the CLI.") }
+                        continue
+                    }
                     if !gotState {
                         gotState = true
                         onSubscribed()
                         setState(.connected)
                     }
                     deliver(snapshot)
+                case let .agents(snapshot):
+                    guard stream == .agents else { continue }
+                    if !gotState {
+                        gotState = true
+                        onSubscribed()
+                        setState(.connected)
+                    }
+                    deliverAgents(snapshot)
                 case let .reply(reply):
                     resolve(reply.id, .success(reply))
                 case let .oneShot(_, error) where !gotState:
@@ -272,6 +307,11 @@ public final class DaemonClient: @unchecked Sendable {
 
     private func deliver(_ snapshot: Snapshot) {
         guard let handler = lock.withLock({ onSnapshot }) else { return }
+        callbackQueue.async { handler(snapshot) }
+    }
+
+    private func deliverAgents(_ snapshot: AgentsSnapshot) {
+        guard let handler = lock.withLock({ onAgents }) else { return }
         callbackQueue.async { handler(snapshot) }
     }
 

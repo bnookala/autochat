@@ -61,6 +61,12 @@ function inviteText (room) {
   ].join('\n')
 }
 
+// The running daemon or terminal UI picks up a new room right away (docs/protocol.md: reload).
+async function notifyReload () {
+  const { send } = await import('../src/ipc.js')
+  await send({ type: 'reload' }, 500)
+}
+
 const HELP = `autochat: ephemeral, serverless chat rooms for people whose Copilot CLI is on autopilot
 
   autochat setup              install Copilot CLI hooks (~/.copilot/hooks/autochat.json);
@@ -171,6 +177,7 @@ ${dim('More: ' + APP_INSTALL_URL)}`)
       const name = values.public ?? positionals[0] ?? null
       const room = parseRoom(name ?? generatePrivateCode())
       saveConfig({ room: room.code })
+      await notifyReload()
       const id = loadIdentity()
       console.log(`${bold('room ready:')} ${room.display}  ${room.isPublic ? dim('(public, listed in `autochat rooms`)') : dim('(private, invite only)')}
 You'll host it the next time you're on autopilot (as ${id.handle}). It lives while anyone in it is on autopilot.
@@ -182,11 +189,13 @@ ${inviteText(room)}`)
       if (!rest[0]) throw new Error('usage: autochat join <code>')
       const room = parseRoom(rest[0])
       saveConfig({ room: room.code })
+      await notifyReload()
       console.log(`your room is now ${bold(room.display)}. you'll land there next time you're on autopilot.`)
       return
     }
     case 'leave': {
       saveConfig({ room: DEFAULT_ROOM })
+      await notifyReload()
       console.log(`back to ${bold('#' + DEFAULT_ROOM)}.`)
       return
     }
@@ -266,7 +275,7 @@ const ask = async (question) => {
 // End of `autochat setup`: offer the hooks of the other harnesses found here, one at a time,
 // but only when someone can answer.
 async function offerHooks () {
-  const { harnessContext, offeredHooks, planHooks, describeHookPlan } = await import('../src/harness/index.js')
+  const { harnessContext, offeredHooks, planHooks, describeHookPlan, hooksNote } = await import('../src/harness/index.js')
   const ctx = harnessContext()
   const plans = planHooks(offeredHooks(ctx), ctx).filter(p => p.apply)
   if (!plans.length) return
@@ -284,7 +293,7 @@ async function offerHooks () {
     }
     try {
       p.apply()
-      console.log(`✔ ${p.id} hooks installed: new ${p.name} sessions pick them up`)
+      console.log(`✔ ${p.id} hooks installed. ${hooksNote(p.id)}`)
     } catch (err) {
       console.log(`✘ ${p.id}: ${err.message}`)
     }
@@ -321,7 +330,7 @@ async function startCore ({ auto = false, daemon = false }) {
   const { readSpool, releaseLaunchLock } = await import('../src/hook.js')
   const identity = loadIdentity()
   const config = loadConfig()
-  const controller = new Controller({ identity, config, auto, daemon, bootstrap: bootstrap() })
+  const controller = new Controller({ identity, config, loadConfig, auto, daemon, bootstrap: bootstrap() })
   // Only the daemon hosts the local agent room; the terminal UI refuses agent connections.
   let agentRoom = null
   if (daemon) {
@@ -520,6 +529,7 @@ async function sim () {
   r.on('member-status', (m) => log(`~ ${m.handle} is ${m.status}`))
   r.on('member-leave', (m, why) => log(`- ${m.handle} (${why})`))
   r.on('inst', (inst, info) => log(`room instance ${inst.iid} host=${r.hostHandle}${info.created ? ' (me)' : ''}`))
+  r.on('host', (h) => log(h.text))
   r.on('chat', (m) => {
     log(`${m.handle}: ${m.text}`)
     if (!m.self && /\bping\b/i.test(m.text)) r.say('pong')
@@ -574,8 +584,12 @@ async function doctorHooks (ok, cfg) {
     if (h.id === 'copilot') {
       ok(h.hooks.installed, `hooks ${h.hooks.installed ? 'installed' : 'missing (run autochat setup)'}: ${h.hooks.file}`)
       if (h.hooks.legacy) ok(false, `old lolchat hooks still installed: ${h.hooks.legacy} (run autochat setup to remove them)`)
-    } else if (h.hooks.installed) {
-      ok(h.hooks.valid !== false, h.hooks.valid === false ? `${h.id}: hooks run an autochat that no longer exists (rerun autochat setup --harness ${h.id})` : `${h.id}: hooks installed (${tilde(h.hooks.file, ctx)})`)
+    } else if (h.hooks.installed || h.hooks.partial) {
+      const where = tilde(h.hooks.file, ctx)
+      if (h.hooks.partial) ok(false, `${h.id}: some of autochat's hooks are missing from ${where} (rerun autochat setup --harness ${h.id})`)
+      else if (h.hooks.valid === false) ok(false, `${h.id}: hooks run an autochat that no longer exists (rerun autochat setup --harness ${h.id})`)
+      else ok(true, `${h.id}: hooks installed (${where})`)
+      if (h.hooks.disabled) ok(false, `${h.id}: disableAllHooks is on in ${where}, so no hooks run`)
     } else if (h.installed) {
       console.log(`… ${h.id}: installed, no autochat hooks (autochat setup --harness ${h.id})`)
       continue

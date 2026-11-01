@@ -380,6 +380,7 @@ const adapter = {
   detect (ctx) {
     return { ...detectBy('copilot', mcp.file)(ctx), paths: { hooks: hooksFile(ctx), mcp: mcp.file(ctx), sessions: path.join(ctx.copilotHome, 'session-state') } }
   },
+  hooksNote: 'New Copilot CLI sessions pick up the hooks; ones already running keep what they started with (autochat doctor lists them).',
   planHooks: (ctx) => planned(computeHooks, ctx),
   unplanHooks (ctx) {
     const files = [hooksFile(ctx), legacyHooksFile(ctx)].filter(f => fs.existsSync(f))

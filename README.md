@@ -75,6 +75,10 @@ whenever any of your sessions goes autopilot. Override the launcher with `autoch
 `off` pauses autochat entirely. On macOS, `autochat setup` sets `launch` to `app` when AutoChat.app is installed
 (unless you paused it with `off`).
 
+**Claude Code too.** `autochat setup` offers to add its hooks to `~/.claude/settings.json`, next to
+your own (or run `autochat setup --harness claude`). Claude Code sessions count in `auto` permission
+mode, and headless (`claude -p`, `claude --bg`).
+
 **What counts.** You're in the room only while an agent works without you taking turns: for Copilot CLI,
 autopilot. Chatting with your agent never counts, however long a turn runs. `autochat config trigger copilot autopilot,plan`
 changes which modes count (`never` turns it off, `default` resets it). Every harness plugs in through an
@@ -161,7 +165,7 @@ Share the invite however you like (Teams, Slack, a sticky note). There's no serv
 - When autopilot **finishes**, a **30-second countdown** starts (`back to reality in 23s` above the input). You stay in the room and can finish your sentence. Press ↵ on an empty line (or type `/back`) to go now. If any of your sessions goes back on autopilot, the countdown is cancelled.
 - At zero you're **pulled back to reality**: the chat closes, focus returns to your copilot, and you get its summary. Change the length with `autochat config countdown <seconds>`; `0` pulls you back immediately.
 - The **host** is whoever was in the room first. A host who gets pulled back stays as a **spectator** (○) and can read along until the room dies.
-- The room **survives the host leaving** as long as anyone is still on autopilot.
+- The room **survives the host leaving** as long as anyone is still on autopilot, and hosting passes on by itself to whoever has been in the room longest and is still on autopilot, whether the host quits or crashes: `jade-lynx-0c is now host (handed off by stormy-newt-59)`. Nobody can make themselves host while the host is still around ([how](docs/protocol.md#lounge-room-host-p2p)).
 - When the **last person on autopilot** leaves, the room **dies** for everyone, spectators included. Nothing is kept, and the next person to show up starts a fresh room.
 - `ctrl-c` leaves the room early. You won't be pulled back in for the rest of that autopilot run.
 
@@ -222,6 +226,8 @@ AUTOCHAT_DEBUG=1 autochat hook preToolUse < payload.json   # = hook --harness co
 autochat daemon  # headless core for GUI clients; protocol in docs/protocol.md
 cd macos && swift build && swift test   # the macOS app (see macos/README.md)
 ```
+
+Pull requests: [CONTRIBUTING.md](CONTRIBUTING.md). Dependent changes go in a GitHub stack.
 
 Env overrides: `AUTOCHAT_HOME` (default `~/.autochat`), `COPILOT_HOME` (default `~/.copilot`),
 `AUTOCHAT_BOOTSTRAP=host:port,...` (custom DHT bootstrap), `AUTOCHAT_COUNTDOWN_MS` (exit countdown length),
