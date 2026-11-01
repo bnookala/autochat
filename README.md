@@ -75,6 +75,10 @@ whenever any of your sessions goes autopilot. Override the launcher with `autoch
 `off` pauses autochat entirely. On macOS, `autochat setup` sets `launch` to `app` when AutoChat.app is installed
 (unless you paused it with `off`).
 
+**Claude Code too.** `autochat setup` offers to add its hooks to `~/.claude/settings.json`, next to
+your own (or run `autochat setup --harness claude`). Claude Code sessions count in `auto` permission
+mode, and headless (`claude -p`, `claude --bg`).
+
 **What counts.** You're in the room only while an agent works without you taking turns: for Copilot CLI,
 autopilot. Chatting with your agent never counts, however long a turn runs. `autochat config trigger copilot autopilot,plan`
 changes which modes count (`never` turns it off, `default` resets it). Every harness plugs in through an

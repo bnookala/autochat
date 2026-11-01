@@ -120,10 +120,12 @@ export class Controller extends EventEmitter {
       case 'request': {
         if (leftAutopilot) { this._finish(s, 'mode'); break }
         // preToolUse(ask_user) and the elicitation notification describe the same question;
-        // keep whichever text is richer (the former includes the choices).
+        // keep whichever text is richer (the former includes the choices). A request with no
+        // text (Claude's "needs your permission", seconds after the PermissionRequest) keeps
+        // the open one's.
         let req = ev.request || { title: 'Copilot needs you', message: '' }
         const prev = s.request
-        if (prev && Date.now() - prev.at < 5000 && (prev.message || '').startsWith(req.message || '')) req = { ...req, message: prev.message }
+        if (prev && (Date.now() - prev.at < 5000 || (!req.message && !prev.resolved)) && (prev.message || '').startsWith(req.message || '')) req = { ...req, message: prev.message }
         this._run(s, 'needed', req)
         break
       }
