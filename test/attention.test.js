@@ -17,6 +17,8 @@ const { ephemeralIdentity } = await import('../src/identity.js')
 const { saveConfig } = await import('../src/config.js')
 const { serve } = await import('../src/ipc.js')
 const { sockPath } = await import('../src/paths.js')
+const H = await import('../src/harness/index.js')
+const { hookMessage } = await import('../src/harness/event.js')
 
 const FAST = { graceMs: 1200, heartbeatMs: 300, expireMs: 3000, refreshMs: [300, 800, 1500, 2500], refreshEveryMs: 2000 }
 
@@ -188,6 +190,46 @@ test('focus: one agent at a time keeps the pull-back; with more, the queue takes
   await c.command({ cmd: 'returnNow' })
   assert.deepEqual(c.focused, [[{ tmuxPane: '%q2' }, 'copilot']])
   assert.deepEqual(queue(c).map(a => a.sid), ['q1'], "the earlier run's result is still yours to look at")
+})
+
+test('Claude Code from its recorded hooks: the queue alongside its request merging', { timeout: 60000 }, async (t) => {
+  const testnet = await createTestnet(3)
+  t.after(() => testnet.destroy())
+  const c = mk(testnet, { idleMs: 300 })
+  t.after(() => c.shutdown())
+  const claude = H.adapter('claude')
+  const fixture = (name) => JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'claude', name + '.json'), 'utf8')).events
+  const send = (e) => c.handle(hookMessage(H.sessionEvent(claude, e.event, e.payload, { env: e.env }), e.event))
+
+  // AskUserQuestion: PreToolUse and PermissionRequest ask the same question, so it's one item.
+  const q = fixture('interactive-auto-question')
+  send(q[1])
+  send(q[2])
+  const [asked] = queue(c)
+  assert.deepEqual([asked.kind, asked.harness, asked.title, asked.summary], ['blocked', 'claude', 'Claude has a question for you', 'Which color should the button be? [Red / Blue]'])
+  send(q[3])
+  assert.deepEqual(queue(c).map(a => a.id), [asked.id])
+  send(q[4])
+  assert.deepEqual(queue(c), [], 'answered: handled')
+  send(q[5])
+  await new Promise(resolve => setTimeout(resolve, 600))
+  assert.deepEqual(queue(c).map(a => [a.kind, a.title, a.summary]), [['finished', 'Claude Code is waiting for you', 'Done with ask.']], 'Stop, then nothing for idleMs')
+
+  // In auto mode, the bare permission notification 6 s later keeps the PermissionRequest's
+  // detail: in the request, and in the queue (the same item).
+  const m = fixture('interactive-manual').map(e => ({ ...e, payload: { ...e.payload, permission_mode: e.payload.permission_mode && 'auto' } }))
+  const sid = m[0].payload.session_id
+  const mine = () => queue(c).filter(a => a.sid === sid)
+  send(m[1])
+  send(m[3])
+  const [blocked] = mine()
+  assert.deepEqual([blocked.kind, blocked.title, blocked.summary], ['blocked', 'Permission needed', 'Bash: touch perm-test.txt'])
+  c.sessions.get(`claude:${sid}`).request.at -= 6000
+  send(m[4])
+  assert.deepEqual([c.currentRequest().title, c.currentRequest().message], ['Permission needed', 'Bash: touch perm-test.txt'])
+  assert.deepEqual(mine().map(a => [a.id, a.summary]), [[blocked.id, 'Bash: touch perm-test.txt']])
+  send(m[7])
+  assert.deepEqual(mine().map(a => [a.kind, a.title]), [['finished', 'Claude Code is waiting for you']], 'idle_prompt: waiting at its prompt')
 })
 
 test('jumpTo and dismissAttention over the socket; attention in every snapshot', { timeout: 60000 }, async (t) => {
