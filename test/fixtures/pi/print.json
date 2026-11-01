@@ -1,0 +1,91 @@
+{
+  "pi": "0.74.0",
+  "how": "pi -p -e autochat.ts \"…\": the model calls autochat_catch_up, autochat_status, autochat_post and autochat_read",
+  "note": "Recorded from the real pi 0.74.0: the payloads src/harness/pi-extension.js sent to autochat hook --harness pi, with the stub loaded through -e, against a local stand-in for an OpenAI-compatible API. Consecutive activity is coalesced while a hook runs, so not every tool call has its own event. Paths scrubbed; env trimmed to what autochat reads.",
+  "events": [
+    {
+      "event": "session_start",
+      "env": {
+        "PI_CODING_AGENT": "true"
+      },
+      "payload": {
+        "hook_event_name": "session_start",
+        "session_id": "01a195e6-9304-7369-a121-862e74848058",
+        "cwd": "/Users/me/code/demo",
+        "mode": "print",
+        "has_ui": false,
+        "reason": "startup"
+      }
+    },
+    {
+      "event": "tool_call",
+      "env": {
+        "PI_CODING_AGENT": "true"
+      },
+      "payload": {
+        "hook_event_name": "tool_call",
+        "session_id": "01a195e6-9304-7369-a121-862e74848058",
+        "cwd": "/Users/me/code/demo",
+        "mode": "print",
+        "has_ui": false,
+        "tool_name": "autochat_catch_up"
+      }
+    },
+    {
+      "event": "tool_call",
+      "env": {
+        "PI_CODING_AGENT": "true"
+      },
+      "payload": {
+        "hook_event_name": "tool_call",
+        "session_id": "01a195e6-9304-7369-a121-862e74848058",
+        "cwd": "/Users/me/code/demo",
+        "mode": "print",
+        "has_ui": false,
+        "tool_name": "autochat_status"
+      }
+    },
+    {
+      "event": "tool_call",
+      "env": {
+        "PI_CODING_AGENT": "true"
+      },
+      "payload": {
+        "hook_event_name": "tool_call",
+        "session_id": "01a195e6-9304-7369-a121-862e74848058",
+        "cwd": "/Users/me/code/demo",
+        "mode": "print",
+        "has_ui": false,
+        "tool_name": "autochat_read"
+      }
+    },
+    {
+      "event": "agent_end",
+      "env": {
+        "PI_CODING_AGENT": "true"
+      },
+      "payload": {
+        "hook_event_name": "agent_end",
+        "session_id": "01a195e6-9304-7369-a121-862e74848058",
+        "cwd": "/Users/me/code/demo",
+        "mode": "print",
+        "has_ui": false,
+        "last_assistant_message": "Done with room."
+      }
+    },
+    {
+      "event": "session_shutdown",
+      "env": {
+        "PI_CODING_AGENT": "true"
+      },
+      "payload": {
+        "hook_event_name": "session_shutdown",
+        "session_id": "01a195e6-9304-7369-a121-862e74848058",
+        "cwd": "/Users/me/code/demo",
+        "mode": "print",
+        "has_ui": false,
+        "reason": "quit"
+      }
+    }
+  ]
+}

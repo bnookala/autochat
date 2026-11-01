@@ -182,7 +182,7 @@ test('Claude Code: through `claude mcp`, checked with `claude mcp get` first; a 
   assert.equal(agentsStatus(moved).find(h => h.id === 'claude').registered, false)
 })
 
-test('detection: missing harnesses are skipped, pi gets a note, nothing found says so', () => {
+test('detection: missing harnesses are skipped, pi gets its extension, nothing found says so', () => {
   const none = user()
   const lines = []
   const r = setupAgents({ ctx: none.ctx, out: (l) => lines.push(l) })
@@ -192,8 +192,9 @@ test('detection: missing harnesses are skipped, pi gets a note, nothing found sa
   const pi = user({ bins: ['pi'] })
   const out = []
   setupAgents({ ctx: pi.ctx, out: (l) => out.push(l) })
-  assert.ok(out.includes('  pi       no MCP support: pi support comes with the CLI fallback'), out.join('\n'))
-  assert.deepEqual(fs.readdirSync(pi.home), [], 'nothing written')
+  assert.ok(out.includes('  pi       add to ~/.pi/agent/extensions/autochat.ts'), out.join('\n'))
+  assert.ok(out.includes('✔ pi connected'), out.join('\n'))
+  assert.deepEqual(fs.readdirSync(path.join(pi.home, '.pi', 'agent', 'extensions')), ['autochat.ts'], 'pi has no MCP: its tools come with the autochat extension')
 })
 
 test('CLI: setup --agents --dry-run changes nothing; setup --agents, rerun, uninstall; plain setup only hints', () => {
