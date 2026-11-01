@@ -4,7 +4,7 @@ import { parseRoom, sanitize } from './protocol.js'
 import { setOptout } from './hook.js'
 import { notify as defaultNotify } from './launcher.js'
 import { envVar } from './env.js'
-import { loadConfig } from './config.js'
+import { loadConfig as readConfig } from './config.js'
 import { adapter, triggerFor, focusSession } from './harness/index.js'
 import { SessionMap, sessionKey, fromHookMessage, byTrigger, modesOf } from './harness/event.js'
 
@@ -46,6 +46,7 @@ export class Controller extends EventEmitter {
   constructor ({
     identity, config, auto = false, daemon = false, bootstrap, roomOpts = {},
     focus = focusSession, notify = defaultNotify, bannerMs = 6000, watchLogs = true, requestLingerMs = 20000,
+    loadConfig = null,
     countdownMs = countdownMsFor(config)
   }) {
     super()
@@ -56,6 +57,7 @@ export class Controller extends EventEmitter {
     this.requestLingerMs = requestLingerMs
     this.identity = identity
     this.config = config
+    this.loadConfig = loadConfig
     this.auto = auto
     this.daemon = daemon
     this.bootstrap = bootstrap
@@ -80,6 +82,7 @@ export class Controller extends EventEmitter {
 
   handle (msg) {
     if (!msg || typeof msg !== 'object') return { ok: false }
+    if (msg.type === 'reload') return this.reload()
     if (msg.type === 'ping') return { pong: true, phase: this.phase, daemon: this.daemon, pid: process.pid }
     if (msg.type === 'status') return { phase: this.phase, room: this.roomInfo.display, sessions: [...this.sessions.values()].map(s => ({ sid: s.sid, state: s.state, cwd: s.cwd, ...harnessOf(s) })) }
     if (msg.type === 'hook') return { tracked: this._onHook(msg) }
@@ -87,8 +90,9 @@ export class Controller extends EventEmitter {
   }
 
   // Lounge presence: does a session in these modes count, under the trigger config right now?
+  // (Hooks read config.json on every call; so does this, whether or not the room re-reads it.)
   _autonomy (harness, modes) {
-    return byTrigger(modes, triggerFor(loadConfig(), harness || 'copilot'))
+    return byTrigger(modes, triggerFor((this.loadConfig || readConfig)(), harness || 'copilot'))
   }
 
   _onHook (msg) {
@@ -308,6 +312,20 @@ export class Controller extends EventEmitter {
     return this.countdown ? Math.max(0, Math.ceil((this.countdown.endsAt - Date.now()) / 1000)) : null
   }
 
+  // `autochat join`/`host`/`leave` changed the room in config.json. Never switch under an open
+  // room: then it's picked up the next time we enter one.
+  reload () {
+    if (this.room) return { reloaded: false, room: this.roomInfo.display }
+    this._loadRoom()
+    this._changed()
+    return { reloaded: true, room: this.roomInfo.display }
+  }
+
+  _loadRoom () {
+    if (!this.loadConfig) return
+    try { this.roomInfo = parseRoom(this.loadConfig().room) } catch {}
+  }
+
   _enterRoom (status) {
     clearTimeout(this.bannerTimer)
     this.banner = null
@@ -319,6 +337,7 @@ export class Controller extends EventEmitter {
     }
     this.phase = 'room'
     this.messages = []
+    this._loadRoom()
     const room = new Room({ room: this.roomInfo, identity: this.identity, status, bootstrap: this.bootstrap, announce: this.config.announce, ...this.roomOpts })
     this.room = room
     room.on('change', () => this._changed())
@@ -330,6 +349,7 @@ export class Controller extends EventEmitter {
       else if (wasHost) this.sys(`found an older room, merging. ${room.hostHandle} is the host`)
       else this.sys(`joined a live room hosted by ${room.hostHandle}`)
     })
+    room.on('host', (h) => { if (room === this.room) this.sys(h.text, h) })
     room.on('member-join', (m) => this.sys(`${m.handle} ${m.status === 'away' ? 'is here (spectating)' : 'joined (their copilot is on autopilot)'}`, m))
     room.on('member-status', (m) => {
       if (m.status === 'needed') this.sys(`${m.handle}'s copilot is asking them something`, m)
@@ -381,7 +401,7 @@ export class Controller extends EventEmitter {
     this.bannerTimer = setTimeout(() => {
       if (this.phase !== 'reality' && this.phase !== 'dead' && this.phase !== 'left') return
       if (this.auto) this.emit('exit')
-      else { this.phase = 'lounge'; this.banner = null; this._changed() }
+      else { this.phase = 'lounge'; this.banner = null; this._loadRoom(); this._changed() }
     }, this.bannerMs)
     this._changed()
   }
@@ -416,6 +436,8 @@ export class Controller extends EventEmitter {
     this.room = null
     this.phase = 'left'
     this.banner = { kind: 'left' }
+    // Nothing else ever finishes the manual "Join now" pseudo-session, so retire it here.
+    for (const [key, s] of this.sessions) if (s.manual) this.sessions.delete(key)
     if (room) await room.leave('left').catch(() => {})
     this._afterBanner()
   }

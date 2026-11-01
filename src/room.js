@@ -1,8 +1,10 @@
 import { EventEmitter } from 'node:events'
+import nodeCrypto from 'node:crypto'
 import Hyperswarm from 'hyperswarm'
 import {
-  PROTOCOL_VERSION, MAX_LINE, DIRECTORY_TOPIC,
-  topicFor, roomKeyFor, roomTagFor, proofFor, seal, open, randomId, sanitize, signInst, verifyInst
+  PROTOCOL_VERSION, MAX_LINE, DIRECTORY_TOPIC, MAX_SUCCESSION,
+  topicFor, roomKeyFor, roomTagFor, proofFor, seal, open, randomId, sanitize, signInst, verifyInst,
+  hostOf, signHandoff, signTimeout, verifySuccession
 } from './protocol.js'
 import { handleFor, colorFor } from './identity.js'
 
@@ -25,13 +27,42 @@ export function olderInst (a, b) {
   return a.iid < b.iid
 }
 
+const entryKey = (e) => JSON.stringify([e.epoch, e.hostId, e.by, e.kind, e.since ?? null, e.ts, e.sig])
+const entryHash = (e) => nodeCrypto.createHash('sha256').update(entryKey(e)).digest('hex')
+const sharedPrefix = (a, b) => {
+  let k = 0
+  while (k < a.length && k < b.length && entryKey(a[k]) === entryKey(b[k])) k++
+  return k
+}
+
+// Should succession chain `a` replace `b` (same instance)? A chain that extends `b` does. Where
+// they fork, the old host's own handoff beats a timeout claim (so nobody can pad a chain past a
+// handoff), and of two timeout claims the deterministic successor's wins: lower `since`, then lower
+// key. Otherwise (a host that signed two handoffs) the longer chain, then the lower hash of its last entry.
+export function betterSuccession (a, b) {
+  const k = sharedPrefix(a, b)
+  if (k === a.length) return false
+  if (k === b.length) return true
+  const [x, y] = [a[k], b[k]]
+  if (x.kind !== y.kind) return x.kind === 'handoff'
+  if (x.kind === 'timeout' && x.since !== y.since) return x.since < y.since
+  if (x.kind === 'timeout' && x.hostId !== y.hostId) return x.hostId < y.hostId
+  if (a.length !== b.length) return a.length > b.length
+  return entryHash(a[a.length - 1]) < entryHash(b[b.length - 1])
+}
+
+// Only the fields we know, so whatever else a peer attached isn't passed on.
+const cleanEntry = (e) => e.kind === 'timeout'
+  ? { epoch: e.epoch, hostId: e.hostId, by: e.by, kind: e.kind, since: e.since, ts: e.ts, sig: e.sig }
+  : { epoch: e.epoch, hostId: e.hostId, by: e.by, kind: e.kind, ts: e.ts, sig: e.sig }
+
 function capMap (map, max) {
   while (map.size > max) map.delete(map.keys().next().value)
 }
 
 /**
  * One user's presence in one ephemeral room.
- * Events: change, chat, member-join, member-status, member-leave, inst, dead, peers
+ * Events: change, chat, member-join, member-status, member-leave, inst, host, dead, peers
  */
 export class Room extends EventEmitter {
   constructor ({
@@ -65,8 +96,12 @@ export class Room extends EventEmitter {
     this.roomKey = roomKeyFor(room)
     this.roomTag = roomTagFor(room)
     this.inst = null
+    // Host changes since the instance began, and when we entered it (see docs/protocol.md).
+    this.succession = []
+    this.since = null
     this.members = new Map()
     this.tombs = new Map()
+    this.departed = new Map()
     this.budgets = new Map()
     this.conns = new Set()
     this.seen = new Map()
@@ -76,12 +111,17 @@ export class Room extends EventEmitter {
     this.swarm = null
   }
 
+  // The current host: the instance's creator, or whoever the room was handed on to since.
+  get hostId () {
+    return this.inst ? hostOf(this.inst, this.succession) : null
+  }
+
   get isHost () {
-    return !!this.inst && this.inst.hostId === this.me
+    return !!this.inst && this.hostId === this.me
   }
 
   get hostHandle () {
-    return this.inst ? handleFor(this.inst.hostId) : null
+    return this.inst ? handleFor(this.hostId) : null
   }
 
   activeCount () {
@@ -103,7 +143,7 @@ export class Room extends EventEmitter {
     }
     const others = [...this.members.values()]
       .sort((a, b) => a.joinedAt - b.joinedAt)
-      .map(m => ({ key: m.key, from: m.from, handle: m.handle, color: m.color, status: m.status, self: false, host: !!this.inst && this.inst.hostId === m.from }))
+      .map(m => ({ key: m.key, from: m.from, handle: m.handle, color: m.color, status: m.status, self: false, host: !!this.inst && this.hostId === m.from }))
     return [self, ...others]
   }
 
@@ -143,6 +183,7 @@ export class Room extends EventEmitter {
 
   async leave (reason = 'left') {
     if (this.left) return
+    if (!this.dead) this._handOff()
     this.left = true
     if (!this.dead) {
       this._broadcast({ t: 'bye', v: PROTOCOL_VERSION, room: this.roomTag, from: this.me, tag: this.tag, mid: randomId(), ts: this.now(), reason: String(reason).slice(0, 32) })
@@ -167,21 +208,105 @@ export class Room extends EventEmitter {
   _createInstIfNone () {
     if (this.inst || this.left) return
     this.inst = signInst(this.identity, this.roomTag, { iid: randomId(8), createdAt: this.now(), hostId: this.me })
+    this.since = this.inst.createdAt
+    this.succession = []
     this.emit('inst', this.inst, { created: true, wasHost: false })
     this._broadcastState()
     this.emit('change')
   }
 
-  _considerInst (inst) {
+  _considerInst (inst, succession) {
     if (!inst || typeof inst !== 'object') return
-    if (this.inst && (this.inst.iid === inst.iid || !olderInst(inst, this.inst))) return
+    if (this.inst && this.inst.iid === inst.iid) return this._considerSuccession(succession)
+    if (this.inst && !olderInst(inst, this.inst)) return
     if (!verifyInst(this.roomTag, inst)) return
     const t = this.now()
     if (inst.createdAt > t + MAX_SKEW || inst.createdAt < t - MAX_INST_AGE) return
     const wasHost = this.isHost
     this.inst = { iid: inst.iid, createdAt: inst.createdAt, hostId: inst.hostId, sig: inst.sig }
+    this.since = t
+    this.succession = []
+    this._considerSuccession(succession, { quiet: true })
     this.emit('inst', this.inst, { created: false, wasHost })
     this._broadcastState()
+  }
+
+  // --- host succession (docs/protocol.md, "Lounge room host") ---------------
+
+  // Adopt a better chain from a peer, as far as its timeout claims hold up in our own view.
+  _considerSuccession (chain, { quiet = false } = {}) {
+    if (!this.inst || !Array.isArray(chain) || !chain.length || chain.length > MAX_SUCCESSION) return
+    if (!chain.every(e => e && typeof e === 'object') || !betterSuccession(chain, this.succession)) return
+    if (!verifySuccession(this.roomTag, this.inst, chain)) return
+    let n = sharedPrefix(chain, this.succession)
+    while (n < chain.length && (chain[n].kind !== 'timeout' || this._acceptTimeout(chain[n]))) n++
+    const next = chain.slice(0, n).map(cleanEntry)
+    if (betterSuccession(next, this.succession)) this._setSuccession(next, { quiet })
+  }
+
+  // A timeout claim holds if its old host is gone for us, the claimant's `since` is the one it
+  // told us, and nobody active we know (ourselves included) would have been the successor instead.
+  _acceptTimeout (e) {
+    if (!this._gone(e.by)) return false
+    for (const m of this.members.values()) {
+      if (m.from === e.hostId && m.iid === this.inst.iid && m.since !== e.since) return false
+    }
+    return !this._outranked(e.hostId, e.since, e.by)
+  }
+
+  // Has host `id` left, as far as we can tell? Never ourselves; not while any of its connections is
+  // a member; yes once we saw it leave or time out; a stranger only once we've been here long enough
+  // to have heard from it.
+  _gone (id) {
+    if (id === this.me) return false
+    for (const m of this.members.values()) if (m.from === id) return false
+    return this.departed.has(id) || this.now() - this.since >= this.expireMs
+  }
+
+  // Would someone active (with a `since` for this instance) come before `id` as `by`'s successor?
+  // The successor is the active member who entered the instance first; ties go to the lower key.
+  _outranked (id, since, by) {
+    const before = (s, key) => s < since || (s === since && key < id)
+    if (this.me !== id && this.me !== by && ACTIVE.has(this.status) && before(this.since, this.me)) return true
+    for (const m of this.members.values()) {
+      if (m.from === id || m.from === by || !ACTIVE.has(m.status) || m.iid !== this.inst.iid || !Number.isFinite(m.since)) continue
+      if (before(m.since, m.from)) return true
+    }
+    return false
+  }
+
+  // The host left without handing off (crash, network, an older version): if we're its
+  // successor, claim the room.
+  _checkSuccession () {
+    if (!this.inst || this.left || this.dead || !ACTIVE.has(this.status)) return
+    if (this.succession.length >= MAX_SUCCESSION || !this._gone(this.hostId)) return
+    if (this._outranked(this.me, this.since, this.hostId)) return
+    this._setSuccession([...this.succession, signTimeout(this.identity, this.roomTag, this.inst, this.succession, this.since, this.now())])
+  }
+
+  // Leaving as host: hand the room to the earliest-joined active member that knows about
+  // succession (else the earliest-joined spectator). It goes out in one last state before `bye`.
+  _handOff () {
+    if (!this.isHost || this.succession.length >= MAX_SUCCESSION) return
+    const heirs = [...this.members.values()]
+      .filter(m => m.from !== this.me && m.iid === this.inst.iid && Number.isFinite(m.since))
+      .sort((a, b) => a.joinedAt - b.joinedAt)
+    const heir = heirs.find(m => ACTIVE.has(m.status)) || heirs[0]
+    if (!heir) return
+    this.succession = [...this.succession, signHandoff(this.identity, this.roomTag, this.inst, this.succession, heir.from, this.now())]
+    this._broadcastState()
+  }
+
+  _setSuccession (chain, { quiet = false } = {}) {
+    const before = this.hostId
+    this.succession = chain
+    const host = this.hostId
+    if (quiet || host === before) return
+    const { kind, by } = chain[chain.length - 1]
+    const text = `${host === this.me ? "you're" : handleFor(host) + ' is'} now host (${kind === 'timeout' ? handleFor(by) + ' timed out' : 'handed off by ' + handleFor(by)})`
+    this.emit('host', { hostId: host, handle: handleFor(host), color: colorFor(host), self: host === this.me, kind, by, text })
+    this._broadcastState()
+    this.emit('change')
   }
 
   _dirInfo () {
@@ -202,7 +327,15 @@ export class Room extends EventEmitter {
 
   _broadcastState () {
     if (this.left) return
-    this._broadcast({ t: 'state', v: PROTOCOL_VERSION, room: this.roomTag, from: this.me, tag: this.tag, mid: randomId(), ts: this.now(), status: this.status, inst: this.inst })
+    this._broadcast(this._stateBody())
+  }
+
+  _stateBody () {
+    const body = { t: 'state', v: PROTOCOL_VERSION, room: this.roomTag, from: this.me, tag: this.tag, mid: randomId(), ts: this.now(), status: this.status, inst: this.inst }
+    // Host succession; older peers ignore both fields.
+    if (this.inst) body.since = this.since
+    if (this.succession.length) body.succession = this.succession
+    return body
   }
 
   _onConnection (conn) {
@@ -323,7 +456,10 @@ export class Room extends EventEmitter {
     m.ts = body.ts
     m.lastSeen = this.now()
     m.stateLine = line
-    if (body.inst) this._considerInst(body.inst)
+    // When they entered their instance (only meaningful while it's ours too).
+    m.iid = isHex(body.inst?.iid, 16) ? body.inst.iid : null
+    m.since = Number.isFinite(body.since) ? body.since : null
+    if (body.inst) this._considerInst(body.inst, body.succession)
     if (isNew) this.emit('member-join', m)
     else if (prev !== m.status) this.emit('member-status', m, prev)
     this.emit('change')
@@ -342,23 +478,32 @@ export class Room extends EventEmitter {
     capMap(this.tombs, MAX_TOMBS)
     const m = this.members.get(key)
     if (!m) return
-    this.members.delete(key)
+    this._remove(m)
     this.emit('member-leave', m, sanitize(String(body.reason || 'left'), 32))
     this.emit('change')
+    this._checkSuccession()
     this._checkAlive()
+  }
+
+  _remove (m) {
+    this.members.delete(m.key)
+    this.departed.delete(m.from)
+    this.departed.set(m.from, this.now())
+    capMap(this.departed, MAX_TOMBS)
   }
 
   _expire () {
     const t = this.now()
-    for (const [key, m] of this.members) {
+    for (const m of this.members.values()) {
       if (t - m.lastSeen > this.expireMs) {
-        this.members.delete(key)
+        this._remove(m)
         this.emit('member-leave', m, 'timeout')
         this.emit('change')
       }
     }
     for (const [mid, ts] of this.seen) if (t - ts > 10 * 60 * 1000) this.seen.delete(mid)
     for (const [key, ts] of this.tombs) if (t - ts > 10 * 60 * 1000) this.tombs.delete(key)
+    this._checkSuccession()
     this._checkAlive()
   }
 
