@@ -49,8 +49,9 @@ enum SnapshotRenderer {
                 AgentsModel(fixture: Fixtures.agents(now: now), intervening: true),
                 now: now, appearance: appearance, to: dir.appendingPathComponent("agents-ack\(suffix).png")
             ) && ok
-            // P1 (issue #50): here, reconnecting and left on the board.
+            // P1 (issue #50): here, reconnecting and left on the board; titles, handles and child sessions.
             ok = renderAgents(AgentsModel(fixture: Fixtures.agentsPresence(now: now)), now: now, appearance: appearance, to: dir.appendingPathComponent("agents-presence\(suffix).png")) && ok
+            ok = renderAgents(AgentsModel(fixture: Fixtures.agentsNames(now: now)), now: now, appearance: appearance, to: dir.appendingPathComponent("agents-names\(suffix).png")) && ok
             // The attention queue: the badge, the panel when agents are blocked on you, the
             // countdown with several agents, and the strip in the chat (collapsed, expanded, and
             // back in the lounge).

@@ -80,19 +80,53 @@ public struct InterventionGate: Sendable, Equatable {
     }
 }
 
-/// Who sent a message, split for display: an agent's `human/name` (human dimmed), or a
-/// human intervention.
+/// Who sent a message, split for display: an agent's title, or its `human/name` (human
+/// dimmed outside the local tier), or a human intervention.
 public struct AgentSenderLabel: Sendable, Equatable {
     public var owner: String?
     public var name: String
+    /// The agent's name when `name` is its title (hover text).
+    public var handle: String?
     public var isHuman: Bool
     public var isYou: Bool
 
-    public init(owner: String? = nil, name: String, isHuman: Bool = false, isYou: Bool = false) {
+    public init(owner: String? = nil, name: String, handle: String? = nil, isHuman: Bool = false, isYou: Bool = false) {
         self.owner = owner
         self.name = name
+        self.handle = handle
         self.isHuman = isHuman
         self.isYou = isYou
+    }
+}
+
+/// A card's label (issue #66): its title, with its name (the handle for `to` and @mentions)
+/// beside it. From a daemon without titles, the name alone, as before.
+public struct AgentCardLabel: Sendable, Equatable {
+    public var title: String
+    /// The name, when the title isn't it.
+    public var handle: String?
+    /// The human, outside the local tier: shown as `human/` before the name.
+    public var owner: String?
+
+    public init(title: String, handle: String? = nil, owner: String? = nil) {
+        self.title = title
+        self.handle = handle
+        self.owner = owner
+    }
+}
+
+/// One row of the board: a card (indented under its parent), or the disclosure for a card's
+/// child sessions.
+public enum AgentBoardRow: Sendable, Equatable, Identifiable {
+    case card(AgentCard, depth: Int)
+    /// "2 child sessions" under the card with id `parent`.
+    case children(parent: String, count: Int, depth: Int, expanded: Bool)
+
+    public var id: String {
+        switch self {
+        case let .card(card, _): "card:\(card.id)"
+        case let .children(parent, _, _, _): "children:\(parent)"
+        }
     }
 }
 
@@ -236,6 +270,83 @@ public enum AgentsRules {
         }
     }
 
+    // MARK: Names and children (issue #66)
+
+    /// A name as shown: in the local tier there's no `human/` prefix, since it's always the
+    /// same person (names can't contain "/", so only a display can).
+    public static func handle(_ name: String, local: Bool) -> String {
+        guard local, let slash = name.lastIndex(of: "/") else { return name }
+        let rest = String(name[name.index(after: slash)...])
+        return rest.isEmpty ? name : rest
+    }
+
+    /// The card's title with its name beside it, or the name alone (with `human/` outside the
+    /// local tier) from a daemon without titles.
+    public static func cardLabel(_ card: AgentCard, tier: String?) -> AgentCardLabel {
+        let local = isLocal(tier)
+        let parts = AgentName.split(display: card.display, human: card.human, name: card.name)
+        let name = PlainText.clean(handle(parts.name, local: local))
+        let owner = local ? nil : parts.human.map { PlainText.clean($0) }.flatMap(\.nilIfEmpty)
+        if let title = card.title.map({ PlainText.clean($0).trimmingCharacters(in: .whitespaces) }), !title.isEmpty {
+            return AgentCardLabel(title: title, handle: title == name ? nil : name, owner: owner)
+        }
+        return AgentCardLabel(title: name, owner: owner)
+    }
+
+    /// The board as rows: agents that are here first (see `board`), each followed by its child
+    /// sessions (cards whose `parent` names it), one level in, behind a disclosure. A card whose
+    /// parent isn't on the board is top-level, and so is the first card of a parent loop.
+    /// `collapsed` holds the ids of cards whose children are hidden.
+    public static func boardRows(_ cards: [AgentCard], collapsed: Set<String> = []) -> [AgentBoardRow] {
+        let ordered = board(cards)
+        // By name, the first in board order: a name can be reused once its agent has left.
+        var byName: [String: AgentCard] = [:]
+        for c in ordered where byName[c.name] == nil { byName[c.name] = c }
+        var parentOf: [String: String] = [:]
+        for c in ordered {
+            guard let name = c.parent.map({ handle($0, local: true) }), let p = byName[name], p.id != c.id else { continue }
+            parentOf[c.id] = p.id
+        }
+        // Break loops: a card whose parents lead back to it becomes top-level.
+        for c in ordered {
+            var seen: Set<String> = [c.id]
+            var next = parentOf[c.id]
+            while let p = next {
+                if p == c.id {
+                    parentOf[c.id] = nil
+                    break
+                }
+                guard seen.insert(p).inserted else { break }
+                next = parentOf[p]
+            }
+        }
+        var children: [String: [AgentCard]] = [:]
+        var roots: [AgentCard] = []
+        for c in ordered {
+            if let p = parentOf[c.id] { children[p, default: []].append(c) } else { roots.append(c) }
+        }
+        // A tree goes where its most present member would.
+        func rank(_ c: AgentCard) -> Int {
+            (children[c.id] ?? []).reduce(c.presence.rank) { min($0, rank($1)) }
+        }
+        let sortedRoots = roots.enumerated().sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }.map(\.element)
+        var rows: [AgentBoardRow] = []
+        func add(_ c: AgentCard, depth: Int) {
+            rows.append(.card(c, depth: depth))
+            guard let kids = children[c.id], !kids.isEmpty else { return }
+            let expanded = !collapsed.contains(c.id)
+            rows.append(.children(parent: c.id, count: kids.count, depth: depth + 1, expanded: expanded))
+            if expanded { for k in kids { add(k, depth: depth + 1) } }
+        }
+        for r in sortedRoots { add(r, depth: 0) }
+        return rows
+    }
+
+    /// "2 child sessions"
+    public static func childrenLabel(_ count: Int) -> String {
+        AgentsRules.count(count, "child session")
+    }
+
     /// "overlaps with claude-web", or with several.
     public static func overlapText(_ names: [String]) -> String? {
         let clean = names.map { PlainText.clean($0) }.filter { !$0.isEmpty }
@@ -272,9 +383,10 @@ public enum AgentsRules {
         return lines.joined(separator: "\n")
     }
 
-    public static func participants(_ thread: AgentThread) -> String {
-        var names = thread.participants.map { PlainText.clean($0) }
-        if names.isEmpty, let opener = thread.opener { names = [PlainText.clean(opener)] }
+    public static func participants(_ thread: AgentThread, tier: String? = nil) -> String {
+        let local = isLocal(tier)
+        var names = thread.participants.map { PlainText.clean(handle($0, local: local)) }
+        if names.isEmpty, let opener = thread.opener { names = [PlainText.clean(handle(opener, local: local))] }
         return names.count == 2 ? "\(names[0]) ↔ \(names[1])" : names.joined(separator: ", ")
     }
 
@@ -310,27 +422,35 @@ public enum AgentsRules {
         }
     }
 
-    public static func senderLabel(_ m: AgentMessage, me: String?) -> AgentSenderLabel? {
+    /// An agent's title when it has one (its name on hover), else its name, with `human/`
+    /// only outside the local tier. Or a human intervention.
+    public static func senderLabel(_ m: AgentMessage, me: String?, tier: String? = nil) -> AgentSenderLabel? {
         guard let f = m.from else { return nil }
         if m.kind == .human || (f.name == nil && f.harness == nil && f.human != nil) {
             let handle = f.human ?? f.display.map(stripHumanSuffix) ?? "someone"
             return AgentSenderLabel(name: PlainText.clean(handle), isHuman: true, isYou: me != nil && handle == me)
         }
+        let local = isLocal(tier)
         let parts = AgentName.split(display: f.display, human: f.human, name: f.name)
-        let name = PlainText.clean(parts.name)
-        return AgentSenderLabel(owner: parts.human.map { PlainText.clean($0) }, name: name.isEmpty ? "agent" : name)
+        let name = PlainText.clean(handle(parts.name, local: local))
+        if let title = f.title.map({ PlainText.clean($0).trimmingCharacters(in: .whitespaces) }), !title.isEmpty {
+            return AgentSenderLabel(name: title, handle: name.isEmpty || name == title ? nil : name)
+        }
+        let owner = local ? nil : parts.human.map { PlainText.clean($0) }
+        return AgentSenderLabel(owner: owner, name: name.isEmpty ? "agent" : name)
     }
 
     /// "→ claude-web"
-    public static func recipients(_ m: AgentMessage) -> String? {
-        let names = m.to.map { PlainText.clean($0) }.filter { !$0.isEmpty }
+    public static func recipients(_ m: AgentMessage, tier: String? = nil) -> String? {
+        let local = isLocal(tier)
+        let names = m.to.map { PlainText.clean(handle($0, local: local)) }.filter { !$0.isEmpty }
         return names.isEmpty ? nil : "→ " + names.joined(separator: ", ")
     }
 
     /// The sender of the message this one replies to, if it's still in the window.
-    public static func replyTarget(_ m: AgentMessage, in all: [AgentMessage]) -> String? {
+    public static func replyTarget(_ m: AgentMessage, in all: [AgentMessage], tier: String? = nil) -> String? {
         guard let seq = m.replyTo, let target = all.first(where: { $0.seq == seq }) else { return nil }
-        return senderLabel(target, me: nil)?.name
+        return senderLabel(target, me: nil, tier: tier)?.name
     }
 
     /// Message text for display: plain, newlines kept.

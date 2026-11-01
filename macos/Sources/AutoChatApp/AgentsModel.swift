@@ -12,6 +12,8 @@ public final class AgentsModel {
     public private(set) var connection: DaemonClient.State = .idle
     public private(set) var selection: AgentStream = .main
     public private(set) var gate = InterventionGate()
+    /// Cards (by id) whose child sessions are folded away on the board.
+    public private(set) var collapsedChildren: Set<String> = []
     public var draft: String = "" {
         didSet { if draft.count > AgentsRules.maxSayLength { draft = String(draft.prefix(AgentsRules.maxSayLength)) } }
     }
@@ -75,6 +77,8 @@ public final class AgentsModel {
     /// The selected stream is a resolved thread, which takes no more messages.
     public var streamIsClosed: Bool { !AgentsRules.acceptsInterventions(stream, in: snapshot) }
     public var isFixture: Bool { frozen }
+    /// The board: cards with their child sessions nested under them.
+    public var boardRows: [AgentBoardRow] { AgentsRules.boardRows(snapshot?.agents ?? [], collapsed: collapsedChildren) }
 
     /// The daemon's clock at local time `date`, for "left 4 min ago": the snapshot's `now`
     /// moved on by the time since it arrived (the local clock if it has none). A fixture's
@@ -150,6 +154,11 @@ public final class AgentsModel {
     public func select(_ stream: AgentStream) {
         selection = AgentsRules.resolve(stream, in: snapshot)
         lastError = nil
+    }
+
+    /// The disclosure under a parent card: show or hide its child sessions.
+    public func toggleChildren(of cardID: String) {
+        if collapsedChildren.remove(cardID) == nil { collapsedChildren.insert(cardID) }
     }
 
     /// Intervene…: the one-time warning sheet, or straight to the input once acknowledged.

@@ -164,6 +164,20 @@ struct AgentsDecodingTests {
         #expect(AgentCard(id: "x", name: "x", present: false, presence: .here).present)
     }
 
+    @Test func titlesParentsAndAuthorTitles() throws {
+        let s = try decode(#"""
+        {"type":"agents","tier":"local","human":"stormy-newt-59","agents":[
+          {"id":"a1","name":"lolchat-macos-menu-bar-app","display":"Lolchat macos menu bar app","title":"Lolchat macos menu bar app","parent":"autochat","human":"stormy-newt-59"},
+          {"id":"a2","name":"autochat","title":"","parent":null},
+          {"id":"a3","name":"copilot-x","display":"stormy-newt-59/copilot-x","title":7,"parent":["x"]}],
+         "messages":[{"seq":1,"kind":"note","text":"hi","from":{"name":"lolchat-macos-menu-bar-app","display":"Lolchat macos menu bar app","title":"Lolchat macos menu bar app","human":"stormy-newt-59","harness":"copilot"}},
+                     {"seq":2,"kind":"note","text":"yo","from":{"name":"copilot-x","display":"stormy-newt-59/copilot-x","human":"stormy-newt-59","harness":"copilot"}}]}
+        """#.replacingOccurrences(of: "\n", with: ""))
+        #expect(s.agents.map(\.title) == ["Lolchat macos menu bar app", nil, nil])
+        #expect(s.agents.map(\.parent) == ["autochat", nil, nil])
+        #expect(s.messages.map(\.from?.title) == ["Lolchat macos menu bar app", nil])
+    }
+
     @Test func harnessesStatesAndKinds() {
         let names = ["copilot", "Claude", "codex", "opencode", "gemini", "pi", "agent", "", "x-agent"]
         #expect(names.map { AgentHarness(raw: $0) } == [.copilot, .claude, .codex, .opencode, .gemini, .pi, .generic(nil), .generic(nil), .generic("x-agent")])
@@ -285,8 +299,10 @@ struct AgentsRulesTests {
 
     @Test func senders() throws {
         let s = Fixtures.agents(now: t0)
-        let agent = AgentsRules.senderLabel(s.messages[0], me: s.human)
-        #expect(agent == AgentSenderLabel(owner: "stormy-newt-59", name: "copilot-docs"))
+        // The local tier drops the human/ prefix (issue #66); a team room keeps it.
+        let agent = AgentsRules.senderLabel(s.messages[0], me: s.human, tier: s.tier)
+        #expect(agent == AgentSenderLabel(name: "copilot-docs"))
+        #expect(AgentsRules.senderLabel(s.messages[0], me: s.human, tier: "team") == AgentSenderLabel(owner: "stormy-newt-59", name: "copilot-docs"))
         #expect(AgentsRules.senderLabel(s.messages[1], me: s.human) == nil, "overlap lines have no sender")
         let human = try #require(s.messages.first { $0.kind == .human })
         #expect(AgentsRules.senderLabel(human, me: s.human) == AgentSenderLabel(name: "stormy-newt-59", isHuman: true, isYou: true))
@@ -297,7 +313,8 @@ struct AgentsRulesTests {
         #expect(AgentsRules.recipients(reply) == nil)
         // A display-only sender still splits into human and name.
         let bare = AgentMessage(kind: .note, from: AgentSender(display: "jade/claude-x"), text: "x")
-        #expect(AgentsRules.senderLabel(bare, me: nil) == AgentSenderLabel(owner: "jade", name: "claude-x"))
+        #expect(AgentsRules.senderLabel(bare, me: nil, tier: "team") == AgentSenderLabel(owner: "jade", name: "claude-x"))
+        #expect(AgentsRules.senderLabel(bare, me: nil) == AgentSenderLabel(name: "claude-x"))
     }
 
     @Test func presenceOnTheBoard() {
@@ -339,6 +356,93 @@ struct AgentsRulesTests {
         #expect(ago(86_399) == "23 h ago")
         #expect(ago(2 * 86_400) == "2 d ago")
         #expect(ago(-30) == "just now", "a leftAt ahead of the clock")
+    }
+
+    @Test func titlesAndHandles() throws {
+        // The title is the label, with the handle beside it.
+        let titled = AgentCard(id: "1", name: "lolchat-macos-menu-bar-app", display: "Lolchat macos menu bar app", title: "Lolchat macos menu bar app", human: "stormy-newt-59")
+        #expect(AgentsRules.cardLabel(titled, tier: "local") == AgentCardLabel(title: "Lolchat macos menu bar app", handle: "lolchat-macos-menu-bar-app"))
+        // No handle when the title is the name (a folder title, say).
+        let folder = AgentCard(id: "2", name: "docs-site", display: "docs-site", title: "docs-site")
+        #expect(AgentsRules.cardLabel(folder, tier: "local") == AgentCardLabel(title: "docs-site"))
+        // A daemon without titles: the name alone, and no human/ prefix in the local tier.
+        let old = AgentCard(id: "3", name: "copilot-x", display: "stormy-newt-59/copilot-x", human: "stormy-newt-59")
+        #expect(AgentsRules.cardLabel(old, tier: "local") == AgentCardLabel(title: "copilot-x"))
+        #expect(AgentsRules.cardLabel(old, tier: nil) == AgentCardLabel(title: "copilot-x"))
+        // A team room keeps the human.
+        #expect(AgentsRules.cardLabel(old, tier: "team") == AgentCardLabel(title: "copilot-x", owner: "stormy-newt-59"))
+        #expect(AgentsRules.cardLabel(titled, tier: "team") == AgentCardLabel(title: "Lolchat macos menu bar app", handle: "lolchat-macos-menu-bar-app", owner: "stormy-newt-59"))
+        // Titles are peer text: cleaned, and a blank one doesn't count.
+        let messy = AgentCard(id: "4", name: "x", title: " \u{1b}[31mRed\u{202E} title ")
+        #expect(AgentsRules.cardLabel(messy, tier: "local") == AgentCardLabel(title: "[31mRed title", handle: "x"))
+        #expect(AgentsRules.cardLabel(AgentCard(id: "5", name: "x", title: "  "), tier: "local") == AgentCardLabel(title: "x"))
+
+        #expect(AgentsRules.handle("stormy-newt-59/copilot-x", local: true) == "copilot-x")
+        #expect(AgentsRules.handle("stormy-newt-59/copilot-x", local: false) == "stormy-newt-59/copilot-x")
+        #expect(AgentsRules.handle("copilot-x", local: true) == "copilot-x")
+        #expect(AgentsRules.handle("odd/", local: true) == "odd/")
+
+        // Authors show from.title when there is one, with the handle on hover.
+        let s = Fixtures.agentsNames(now: t0)
+        let note = s.messages[0]
+        #expect(AgentsRules.senderLabel(note, me: s.human, tier: s.tier) == AgentSenderLabel(name: "AutoChat P1 agent rooms", handle: "autochat-p1-agent-rooms"))
+        let docs = try #require(s.messages.first { $0.kind == .handoff })
+        #expect(AgentsRules.senderLabel(docs, me: s.human, tier: s.tier) == AgentSenderLabel(name: "docs-site"))
+        let reply = try #require(s.messages.first { $0.kind == .reply && $0.thread == Fixtures.namesThread })
+        #expect(AgentsRules.replyTarget(reply, in: s.messages, tier: s.tier) == "Mac app: presence and names")
+        // Recipients, participants and openers are handles, without a human/ prefix locally.
+        let prefixed = AgentMessage(kind: .note, to: ["stormy-newt-59/claude-web", "copilot-x"], text: "x")
+        #expect(AgentsRules.recipients(prefixed, tier: "local") == "→ claude-web, copilot-x")
+        #expect(AgentsRules.recipients(prefixed, tier: "team") == "→ stormy-newt-59/claude-web, copilot-x")
+        let thread = AgentThread(id: "t", title: "t", opener: "stormy-newt-59/a", participants: ["stormy-newt-59/a", "b"])
+        #expect(AgentsRules.participants(thread, tier: "local") == "a ↔ b")
+        #expect(AgentsRules.participants(AgentThread(id: "t", title: "t", opener: "stormy-newt-59/a"), tier: "local") == "a")
+    }
+
+    @Test func childSessionsNestUnderTheirParent() {
+        func rows(_ cards: [AgentCard], collapsed: Set<String> = []) -> [String] {
+            AgentsRules.boardRows(cards, collapsed: collapsed).map { row in
+                switch row {
+                case let .card(c, depth): String(repeating: "  ", count: depth) + c.name
+                case let .children(parent, count, depth, expanded): String(repeating: "  ", count: depth) + "\(expanded ? "▾" : "▸") \(count) under \(parent)"
+                }
+            }
+        }
+        let s = Fixtures.agentsNames(now: t0)
+        #expect(rows(s.agents) == [
+            "autochat-p1-agent-rooms",
+            "  ▾ 2 under 1f2e3d4c",
+            "  mac-app-presence-and-names",
+            "  daemon-names-and-hello-titles",
+            "api-server-fix-session-expiry",
+            "docs-site"
+        ])
+        // The disclosure folds them; the parent keeps its place.
+        #expect(rows(s.agents, collapsed: ["1f2e3d4c"]) == ["autochat-p1-agent-rooms", "  ▸ 2 under 1f2e3d4c", "api-server-fix-session-expiry", "docs-site"])
+        #expect(AgentsRules.childrenLabel(2) == "2 child sessions")
+        #expect(AgentsRules.childrenLabel(1) == "1 child session")
+
+        func card(_ name: String, parent: String? = nil, _ presence: AgentPresence = .here) -> AgentCard {
+            AgentCard(id: name, name: name, parent: parent, presence: presence)
+        }
+        // Without parents, nothing changes: presence order.
+        #expect(rows([card("a", .left), card("b"), card("c", .away)]) == ["b", "c", "a"])
+        // A parent that isn't on the board, or the card itself: top-level.
+        #expect(rows([card("a", parent: "ghost"), card("b", parent: "b")]) == ["a", "b"])
+        // Grandchildren go a level further.
+        #expect(rows([card("c", parent: "b"), card("a"), card("b", parent: "a")]) == ["a", "  ▾ 1 under a", "  b", "    ▾ 1 under b", "    c"])
+        // A loop: its first card in board order is top-level.
+        #expect(rows([card("a", parent: "b"), card("b", parent: "a")]) == ["a", "  ▾ 1 under a", "  b"])
+        #expect(rows([card("a", parent: "c"), card("b", parent: "a"), card("c", parent: "b"), card("d", parent: "b")]) == [
+            "a", "  ▾ 1 under a", "  b", "    ▾ 2 under b", "    c", "    d"
+        ])
+        // A reused name: the agent that's here is the parent, not the one that left.
+        let gone = AgentCard(id: "old", name: "lead", presence: .left)
+        #expect(rows([gone, card("lead"), card("kid", parent: "lead")]) == ["lead", "  ▾ 1 under lead", "  kid", "lead"])
+        // A tree sorts by its most present member: a parent that left, with a child that's here.
+        #expect(rows([card("x"), card("p", .left), card("k", parent: "p"), card("y", .away)]) == ["x", "p", "  ▾ 1 under p", "  k", "y"])
+        // A human/ prefix on `parent` still finds the agent.
+        #expect(rows([card("a"), card("b", parent: "stormy-newt-59/a")]) == ["a", "  ▾ 1 under a", "  b"])
     }
 
     @Test func peerTextStaysPlain() {

@@ -57,7 +57,7 @@ enum AgentText {
         return out
     }
 
-    /// The sender of a message: an agent's `human/name`, or a human's handle.
+    /// The sender of a message: an agent's title or name, or a human's handle.
     static func sender(_ label: AgentSenderLabel, font: Font = .callout) -> AttributedString {
         guard label.isHuman else { return name(owner: label.owner, name: label.name, font: font) }
         var out = name(owner: nil, name: label.name, font: font, nameColor: Theme.intervene)
@@ -67,9 +67,22 @@ enum AgentText {
         out += tag
         return out
     }
+
+    /// A card's title with its handle smaller beside it (issue #66), or the name alone (with
+    /// `human/` dimmed outside the local tier).
+    static func handle(_ label: AgentCardLabel) -> String? {
+        label.handle.map { (label.owner.map { $0 + "/" } ?? "") + $0 }
+    }
 }
 
 // MARK: - Sidebar: board and streams
+
+enum AgentsSidebarLayout {
+    /// Child sessions sit one step in, up to a few levels.
+    static func indent(_ depth: Int) -> CGFloat {
+        CGFloat(min(max(depth, 0), 3)) * 16
+    }
+}
 
 private struct AgentsSidebar: View {
     let agents: AgentsModel
@@ -92,8 +105,17 @@ private struct AgentsSidebar: View {
                 TimelineView(.periodic(from: .now, by: 20)) { context in
                     let now = agents.daemonNow(at: context.date)
                     VStack(alignment: .leading, spacing: 8) {
-                        ForEach(AgentsRules.board(snapshot.agents)) { card in
-                            AgentCardView(card: card, now: now)
+                        ForEach(agents.boardRows) { row in
+                            switch row {
+                            case let .card(card, depth):
+                                AgentCardView(card: card, now: now, tier: snapshot.tier)
+                                    .padding(.leading, AgentsSidebarLayout.indent(depth))
+                            case let .children(parent, count, depth, expanded):
+                                BoardDisclosure(title: AgentsRules.childrenLabel(count), expanded: expanded) {
+                                    agents.toggleChildren(of: parent)
+                                }
+                                .padding(.leading, AgentsSidebarLayout.indent(depth))
+                            }
                         }
                     }
                 }
@@ -104,7 +126,7 @@ private struct AgentsSidebar: View {
                     selected: agents.stream == .main
                 ) { agents.select(.main) }
                 ForEach(Self.threads(snapshot.threads)) { thread in
-                    ThreadCardView(thread: thread, selected: agents.stream == .thread(thread.id)) {
+                    ThreadCardView(thread: thread, tier: snapshot.tier, selected: agents.stream == .thread(thread.id)) {
                         agents.select(.thread(thread.id))
                     }
                 }
@@ -174,23 +196,46 @@ private struct SidebarHeader: View {
 
 // MARK: Agent card
 
+/// A one-line disclosure on the board: "▸ 2 child sessions". Clicking it shows or hides them.
+struct BoardDisclosure: View {
+    let title: String
+    let expanded: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .bold))
+                    .rotationEffect(.degrees(expanded ? 90 : 0))
+                    .frame(width: 10)
+                Text(verbatim: title)
+                    .font(.caption.weight(.medium))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .animation(.smooth(duration: 0.15), value: expanded)
+        .help(expanded ? "Hide them" : "Show them")
+        .accessibilityLabel(title)
+        .accessibilityValue(expanded ? "expanded" : "collapsed")
+    }
+}
+
 struct AgentCardView: View {
     let card: AgentCard
     /// The daemon's clock, for "left 4 min ago".
     var now: Date?
+    var tier: String? = "local"
 
     var body: some View {
-        let parts = AgentName.split(display: card.display, human: card.human, name: card.name)
+        let label = AgentsRules.cardLabel(card, tier: tier)
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                PresenceDot(presence: card.presence)
-                Text(AgentText.name(owner: parts.human.map { PlainText.clean($0) }, name: PlainText.clean(parts.name), font: .body))
-                    .lineLimit(1)
-                    .truncationMode(.head)
-                    .layoutPriority(1)
-                Spacer(minLength: 4)
-                HarnessBadge(harness: card.harness)
-            }
+            header(label)
             if let location = AgentsRules.location(card) {
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.triangle.branch")
@@ -239,8 +284,61 @@ struct AgentCardView: View {
         .background(RoundedRectangle(cornerRadius: Theme.cardCorner, style: .continuous).fill(Theme.cardFill))
         .overlay(RoundedRectangle(cornerRadius: Theme.cardCorner, style: .continuous).strokeBorder(Theme.cardStroke, lineWidth: 0.5))
         .opacity(Self.opacity(card.presence))
-        .help(help)
+        .help(help(label))
         .accessibilityElement(children: .combine)
+    }
+
+    /// The title with its handle beside it when both fit on a line, else the handle on its own
+    /// line under the title (a handle never breaks). From a daemon without titles, the name.
+    @ViewBuilder
+    private func header(_ label: AgentCardLabel) -> some View {
+        if let handle = AgentText.handle(label) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    PresenceDot(presence: card.presence)
+                    title(label).lineLimit(1)
+                    handleText(handle)
+                    Spacer(minLength: 4)
+                    HarnessBadge(harness: card.harness)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        PresenceDot(presence: card.presence)
+                        title(label)
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .layoutPriority(1)
+                        Spacer(minLength: 4)
+                        HarnessBadge(harness: card.harness)
+                    }
+                    handleText(handle)
+                        .truncationMode(.middle)
+                        .padding(.leading, PresenceDot.width + 6)
+                }
+            }
+        } else {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                PresenceDot(presence: card.presence)
+                Text(AgentText.name(owner: label.owner, name: label.title, font: .body))
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                    .layoutPriority(1)
+                Spacer(minLength: 4)
+                HarnessBadge(harness: card.harness)
+            }
+        }
+    }
+
+    private func title(_ label: AgentCardLabel) -> some View {
+        Text(verbatim: label.title)
+            .font(.body.weight(.semibold))
+    }
+
+    private func handleText(_ handle: String) -> some View {
+        Text(verbatim: handle)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
     }
 
     /// Dimmed once it isn't here; a little less while it may still come back.
@@ -252,8 +350,9 @@ struct AgentCardView: View {
         }
     }
 
-    private var help: String {
+    private func help(_ label: AgentCardLabel) -> String {
         var lines: [String] = []
+        if let handle = label.handle { lines.append("Handle: \(handle)") }
         switch card.presence {
         case .here: break
         case .away: lines.append("Its connection dropped. autochat keeps its place for a few seconds in case it comes back.")
@@ -266,6 +365,7 @@ struct AgentCardView: View {
 
 struct PresenceDot: View {
     let presence: AgentPresence
+    static let width: CGFloat = 8
 
     var body: some View {
         Group {
@@ -279,6 +379,7 @@ struct PresenceDot: View {
             }
         }
         .font(.system(size: 7, weight: .bold))
+        .frame(width: Self.width)
         .accessibilityLabel(Self.label(presence))
     }
 
@@ -397,6 +498,7 @@ private struct MainStreamRow: View {
 
 struct ThreadCardView: View {
     let thread: AgentThread
+    var tier: String? = "local"
     let selected: Bool
     let action: () -> Void
 
@@ -414,7 +516,7 @@ struct ThreadCardView: View {
                     Spacer(minLength: 4)
                     ThreadStatusPill(status: thread.status)
                 }
-                Text(verbatim: AgentsRules.participants(thread))
+                Text(verbatim: AgentsRules.participants(thread, tier: tier))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -493,7 +595,7 @@ private struct StreamPane: View {
         let stream = agents.stream
         let messages = agents.messages
         VStack(spacing: 0) {
-            StreamHeader(thread: snapshot.thread(stream.threadID), count: messages.count)
+            StreamHeader(thread: snapshot.thread(stream.threadID), count: messages.count, tier: snapshot.tier)
             Divider()
             AgentMessageList(stream: stream, messages: messages, snapshot: snapshot) { agents.select(.thread($0)) }
             VStack(spacing: 0) {
@@ -508,6 +610,7 @@ private struct StreamPane: View {
 private struct StreamHeader: View {
     let thread: AgentThread?
     let count: Int
+    var tier: String? = "local"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -569,9 +672,9 @@ private struct StreamHeader: View {
     }
 
     private func details(_ t: AgentThread) -> String {
-        var bits = [AgentsRules.participants(t)]
+        var bits = [AgentsRules.participants(t, tier: tier)]
         if let opener = t.opener {
-            bits.append("opened by \(PlainText.clean(opener))" + (t.openedAt.map { " at \(AgentText.time($0))" } ?? ""))
+            bits.append("opened by \(PlainText.clean(AgentsRules.handle(opener, local: AgentsRules.isLocal(tier))))" + (t.openedAt.map { " at \(AgentText.time($0))" } ?? ""))
         }
         if let n = t.messageCount { bits.append("\(n) message\(n == 1 ? "" : "s")") }
         return bits.joined(separator: " · ")
@@ -618,8 +721,9 @@ private struct AgentMessageList: View {
                     ForEach(rows) { row in
                         AgentMessageRow(
                             message: row.message,
-                            sender: AgentsRules.senderLabel(row.message, me: snapshot.human),
-                            replyTarget: AgentsRules.replyTarget(row.message, in: snapshot.messages),
+                            sender: AgentsRules.senderLabel(row.message, me: snapshot.human, tier: snapshot.tier),
+                            replyTarget: AgentsRules.replyTarget(row.message, in: snapshot.messages, tier: snapshot.tier),
+                            recipients: AgentsRules.recipients(row.message, tier: snapshot.tier),
                             threadTitle: stream == .main ? snapshot.thread(row.message.thread)?.title : nil,
                             onOpenThread: row.message.thread.map { id in { onOpenThread(id) } }
                         )
@@ -665,6 +769,8 @@ struct AgentMessageRow: View {
     let message: AgentMessage
     let sender: AgentSenderLabel?
     let replyTarget: String?
+    /// "→ claude-web"
+    var recipients: String?
     /// Set when a thread's decision shows in the main stream.
     let threadTitle: String?
     let onOpenThread: (() -> Void)?
@@ -739,10 +845,11 @@ struct AgentMessageRow: View {
             if let sender {
                 Text(AgentText.sender(sender))
                     .lineLimit(1)
-                    .truncationMode(.head)
+                    .truncationMode(sender.handle == nil ? .head : .tail)
                     .layoutPriority(1)
+                    .help(sender.handle ?? "")
             }
-            if let to = AgentsRules.recipients(message) {
+            if let to = recipients {
                 Text(verbatim: to)
                     .font(.caption)
                     .foregroundStyle(.secondary)

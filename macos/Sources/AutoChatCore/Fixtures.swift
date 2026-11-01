@@ -248,6 +248,88 @@ public enum Fixtures {
         return s
     }
 
+    public static let namesThread = "handles-in-the-stream-5c"
+    public static let childrenThread = "child-cards-9e"
+
+    /// Names (issue #66): titles with handles, a coordinator with two child sessions, a
+    /// `repo@branch` title, a folder title, and authors shown by their titles. P1's local tier
+    /// has no `human/` prefix: `display` is the title.
+    public static func agentsNames(now: Date) -> AgentsSnapshot {
+        func ago(_ minutes: Double) -> Date { now.addingTimeInterval(-minutes * 60) }
+        let autochat = "bnookala/autochat"
+        func card(
+            _ id: String, _ name: String, _ title: String, parent: String? = nil, _ harness: AgentHarness, repo: String? = autochat, branch: String?,
+            worktree: String, state: AgentState, summary: String, focus: AgentFocus, presence: AgentPresence = .here, leftAt: Date? = nil,
+            joined: Double, overlaps: [String] = []
+        ) -> AgentCard {
+            AgentCard(
+                id: id, name: name, display: title, title: title, parent: parent, human: me.handle, harness: harness, repo: repo, branch: branch,
+                worktree: worktree, state: state, summary: summary, focus: focus, presence: presence, leftAt: leftAt, joinedAt: ago(joined),
+                updatedAt: ago(joined / 3), overlaps: overlaps
+            )
+        }
+        let lead = card(
+            "1f2e3d4c", "autochat-p1-agent-rooms", "AutoChat P1 agent rooms", .copilot, branch: "main", worktree: "autochat", state: .editing,
+            summary: "Coordinating the four app layers and the daemon modules", focus: AgentFocus(issue: 50, components: ["agent room"]), joined: 40
+        )
+        let app = card(
+            "5a6b7c8d", "mac-app-presence-and-names", "Mac app: presence and names", parent: lead.name, .copilot, branch: "app/p1-names",
+            worktree: "p1-app", state: .editing, summary: "Nesting child sessions under their parent on the board",
+            focus: AgentFocus(issue: 66, components: ["names"], paths: ["macos/Sources/AutoChatApp/AgentsView.swift"]), joined: 31,
+            overlaps: ["daemon-names-and-hello-titles"]
+        )
+        let daemon = card(
+            "9e0f1a2b", "daemon-names-and-hello-titles", "Daemon: names and hello titles", parent: lead.name, .copilot, branch: "core/p1-names",
+            worktree: "p1-core", state: .testing, summary: "Slugging titles into handles, with the branch on a collision",
+            focus: AgentFocus(issue: 66, components: ["names"], paths: ["src/agents/names.js"]), joined: 30, overlaps: ["mac-app-presence-and-names"]
+        )
+        let web = card(
+            "e5f6a7b8", "api-server-fix-session-expiry", "api-server@fix/session-expiry", .claude, repo: repo, branch: "fix/session-expiry",
+            worktree: "api-server-web", state: .testing, summary: "Refreshing tokens a minute early so web sessions stop expiring",
+            focus: AgentFocus(issue: 57, components: ["web"], paths: ["web/session.ts"]), joined: 25
+        )
+        let docs = card(
+            "c9d0e1f2", "docs-site", "docs-site", .codex, repo: nil, branch: nil, worktree: "docs-site", state: .done,
+            summary: "Proofread the agent room docs", focus: AgentFocus(components: ["docs"]), presence: .left, leftAt: ago(4), joined: 35
+        )
+        func sender(_ c: AgentCard) -> AgentSender {
+            AgentSender(name: c.name, display: c.title, title: c.title, human: me.handle, harness: c.harness, repo: c.repo)
+        }
+        let names = AgentThread(
+            id: namesThread, title: "handles in the stream", opener: app.name, participants: [app.name, daemon.name],
+            status: .resolved, outcome: namesOutcome, messageCount: 3, openedAt: ago(16), lastAt: ago(11)
+        )
+        let children = AgentThread(
+            id: childrenThread, title: "child cards", opener: lead.name, participants: [lead.name, app.name],
+            status: .open, messageCount: 2, openedAt: ago(6), lastAt: ago(3)
+        )
+        var seq = 100
+        func msg(_ at: Double, _ kind: AgentMessageKind, _ from: AgentSender?, _ text: String, thread: String? = nil, to: [String] = [], replyTo: Int? = nil) -> AgentMessage {
+            seq += 1
+            return AgentMessage(seq: seq, messageID: String(seq * 2_654_435_761 & 0xffff_ffff, radix: 16), ts: ago(at), kind: kind, from: from, thread: thread, to: to, replyTo: replyTo, text: text)
+        }
+        let messages = [
+            msg(20, .note, sender(lead), "Layers: presence, then names, then idle, then connect. Each app branch builds on the one below."),
+            msg(18, .overlap, nil, "\(app.name) and \(daemon.name) both touch the names component", to: [app.name, daemon.name]),
+            msg(16, .sys, nil, "🧵 \(app.name) opened “handles in the stream” with \(daemon.name)"),
+            msg(16, .question, sender(app), "Does message.from carry the title too, or only the cards?", thread: namesThread, to: [daemon.name]),
+            msg(14, .reply, sender(daemon), "Both: from.title, up to 80 characters. display is the title in the local tier, with no human/ prefix.", thread: namesThread, replyTo: 104),
+            msg(11, .sys, nil, "🧵 \(app.name) resolved “handles in the stream”"),
+            msg(11, .decision, sender(app), namesOutcome, thread: namesThread),
+            msg(9, .handoff, sender(docs), "Handing off: docs/agent-room/names.md needs the collision rule once it lands.", to: [lead.name]),
+            msg(8, .note, sender(web), "Heads up: the session cookie is now __Host-session in web/session.ts. No API impact."),
+            msg(6, .sys, nil, "🧵 \(lead.name) opened “child cards” with \(app.name)"),
+            msg(6, .question, sender(lead), "Should child sessions start folded on the board?", thread: childrenThread, to: [app.name]),
+            msg(4, .sys, nil, "docs-site left"),
+            msg(3, .reply, sender(app), "Unfolded: the disclosure under the parent folds them, and the parent keeps its place.", thread: childrenThread, replyTo: 111),
+            msg(2, .human, humanSender, "Keep handles stable once agents start using them in to."),
+            msg(1, .reply, sender(lead), "Will do: a handle only changes when its agent renames itself.", replyTo: 114)
+        ]
+        return AgentsSnapshot(now: now, tier: "local", human: me.handle, ack: false, agents: [lead, docs, app, daemon, web], threads: [children, names], messages: messages)
+    }
+
+    static let namesOutcome = "Authors show from.title. Handles stay for → recipients and @mentions, and cards show both."
+
     /// The objects from issue #21, plus fields, kinds and values a newer daemon might send.
     public static let agentsExampleJSON = #"""
     {"type":"agents","v":1,"now":1730400005000,"tier":"local","human":"stormy-newt-59","ack":false,"future":{"x":1},

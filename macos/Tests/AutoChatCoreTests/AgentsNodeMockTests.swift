@@ -144,6 +144,19 @@ struct AgentsNodeMockTests {
         #expect(!s.messages.contains { $0.kind == .sys && $0.text == "\(daemon) left" })
         #expect(s.messages.contains { $0.kind == .sys && $0.text == "\(web) left" })
         #expect(AgentsRules.boardCounts(s.agents) == "3 active · 2 left")
+        // Names (#66): every card has a title, `display` is that title (no human/ prefix), a
+        // coordinator has two child sessions, and authors carry their titles.
+        let lead = try #require(card("autochat-p1-agent-rooms", in: s))
+        #expect(lead.title == "AutoChat P1 agent rooms")
+        #expect(s.agents.allSatisfy { $0.title != nil && $0.display == $0.title })
+        #expect(s.agents.filter { $0.parent == lead.name }.map(\.name) == ["mac-app-presence-and-names", daemon])
+        #expect(AgentsRules.cardLabel(try #require(card(web, in: s)), tier: s.tier) == AgentCardLabel(title: "api-server@fix/session-expiry", handle: web))
+        #expect(AgentsRules.cardLabel(try #require(card(docs, in: s)), tier: s.tier) == AgentCardLabel(title: docs))
+        let rows = AgentsRules.boardRows(s.agents)
+        #expect(rows.prefix(2) == [.card(lead, depth: 0), .children(parent: lead.id, count: 2, depth: 1, expanded: true)])
+        let authored = s.messages.filter { $0.from?.name != nil }
+        #expect(!authored.isEmpty)
+        #expect(authored.allSatisfy { $0.from?.title != nil && AgentsRules.senderLabel($0, me: s.human, tier: s.tier)?.name == $0.from?.title })
         // The lounge counts the agents that are here.
         #expect(await eventually { lounge.value.last?.agents?.present == 3 })
         #expect(lounge.value.contains { $0.agents?.present == 2 }, "two away at once")

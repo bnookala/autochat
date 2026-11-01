@@ -124,9 +124,15 @@ public struct AgentFocus: Sendable, Equatable, Decodable {
 /// One agent on the board. Replaced, never appended.
 public struct AgentCard: Sendable, Equatable, Decodable, Identifiable {
     public var id: String
+    /// The handle for `to` and @mentions.
     public var name: String
-    /// `human/name`.
+    /// `human/name`, or in P1's local tier the title.
     public var display: String?
+    /// The label people read (issue #66): the session's title, `repo@branch`, or the folder.
+    /// nil from a daemon without titles.
+    public var title: String?
+    /// The name of the agent this one is a child session of, if it said.
+    public var parent: String?
     public var human: String?
     public var harness: AgentHarness
     public var repo: String?
@@ -149,14 +155,16 @@ public struct AgentCard: Sendable, Equatable, Decodable, Identifiable {
     public var present: Bool { presence == .here }
 
     public init(
-        id: String, name: String, display: String? = nil, human: String? = nil, harness: AgentHarness = .generic(nil),
-        repo: String? = nil, branch: String? = nil, worktree: String? = nil, state: AgentState? = nil, summary: String? = nil,
-        focus: AgentFocus? = nil, present: Bool = true, presence: AgentPresence? = nil, leftAt: Date? = nil,
-        joinedAt: Date? = nil, updatedAt: Date? = nil, overlaps: [String] = []
+        id: String, name: String, display: String? = nil, title: String? = nil, parent: String? = nil, human: String? = nil,
+        harness: AgentHarness = .generic(nil), repo: String? = nil, branch: String? = nil, worktree: String? = nil,
+        state: AgentState? = nil, summary: String? = nil, focus: AgentFocus? = nil, present: Bool = true,
+        presence: AgentPresence? = nil, leftAt: Date? = nil, joinedAt: Date? = nil, updatedAt: Date? = nil, overlaps: [String] = []
     ) {
         self.id = id
         self.name = name
         self.display = display
+        self.title = title
+        self.parent = parent
         self.human = human
         self.harness = harness
         self.repo = repo
@@ -173,7 +181,7 @@ public struct AgentCard: Sendable, Equatable, Decodable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, display, human, harness, repo, branch, worktree, state, summary, focus, present, presence, leftAt, joinedAt, updatedAt, overlaps
+        case id, name, display, title, parent, human, harness, repo, branch, worktree, state, summary, focus, present, presence, leftAt, joinedAt, updatedAt, overlaps
     }
 
     public init(from decoder: Decoder) throws {
@@ -185,6 +193,8 @@ public struct AgentCard: Sendable, Equatable, Decodable, Identifiable {
         }
         self.name = name
         self.display = display
+        title = c.nonEmpty(.title)
+        parent = c.nonEmpty(.parent)
         id = c.nonEmpty(.id) ?? name
         human = c.nonEmpty(.human)
         harness = AgentHarness(raw: c.lenient(String.self, .harness))
@@ -288,24 +298,28 @@ public enum AgentMessageKind: Sendable, Equatable, Hashable {
 public struct AgentSender: Sendable, Equatable, Decodable {
     public var name: String?
     public var display: String?
+    /// The author's title (issue #66), shown instead of its name when there is one.
+    public var title: String?
     public var human: String?
     public var harness: AgentHarness?
     public var repo: String?
 
-    public init(name: String? = nil, display: String? = nil, human: String? = nil, harness: AgentHarness? = nil, repo: String? = nil) {
+    public init(name: String? = nil, display: String? = nil, title: String? = nil, human: String? = nil, harness: AgentHarness? = nil, repo: String? = nil) {
         self.name = name
         self.display = display
+        self.title = title
         self.human = human
         self.harness = harness
         self.repo = repo
     }
 
-    enum CodingKeys: String, CodingKey { case name, display, human, harness, repo }
+    enum CodingKeys: String, CodingKey { case name, display, title, human, harness, repo }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = c.nonEmpty(.name)
         display = c.nonEmpty(.display)
+        title = c.nonEmpty(.title)
         human = c.nonEmpty(.human)
         harness = c.nonEmpty(.harness).map { AgentHarness(raw: $0) }
         repo = c.nonEmpty(.repo)
