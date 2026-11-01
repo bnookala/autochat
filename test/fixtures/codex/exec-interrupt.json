@@ -1,0 +1,91 @@
+{
+  "codex": "codex-cli 0.166.0",
+  "how": "codex exec \"…\" stopped with Ctrl+C (SIGINT) while a command runs: the turn is interrupted and codex exec exits",
+  "note": "Recorded from Codex 0.166.0 (macOS) by a capture hook next to autochat's, against a local stand-in for the Responses API, in a throwaway CODEX_HOME; paths scrubbed. The test writes each rollout (transcript_path, under a temp $CODEX_HOME) as Codex wrote it, in brief: its session_meta first line (source, originator), then a turn_context line per turn (collaboration mode, approvals reviewer, approval policy).",
+  "rollouts": {
+    "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-58-07-01a1980c-0670-7973-ba7f-59f18114d703.jsonl": {
+      "source": "exec",
+      "originator": "codex_exec",
+      "thread_source": "user",
+      "cli_version": "0.166.0",
+      "turns": {
+        "01a1980c-0698-7bf2-9073-2fb436533e43": {
+          "mode": "default",
+          "reviewer": "user",
+          "approval_policy": "never"
+        }
+      }
+    }
+  },
+  "events": [
+    {
+      "event": "SessionStart",
+      "env": {},
+      "payload": {
+        "session_id": "01a1980c-0670-7973-ba7f-59f18114d703",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-58-07-01a1980c-0670-7973-ba7f-59f18114d703.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "SessionStart",
+        "model": "gpt-5.5",
+        "permission_mode": "bypassPermissions",
+        "source": "startup"
+      }
+    },
+    {
+      "event": "UserPromptSubmit",
+      "env": {},
+      "payload": {
+        "session_id": "01a1980c-0670-7973-ba7f-59f18114d703",
+        "turn_id": "01a1980c-0698-7bf2-9073-2fb436533e43",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-58-07-01a1980c-0670-7973-ba7f-59f18114d703.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "UserPromptSubmit",
+        "model": "gpt-5.5",
+        "permission_mode": "bypassPermissions",
+        "prompt": "SCENARIO:sleep interrupt me"
+      }
+    },
+    {
+      "event": "PreToolUse",
+      "env": {},
+      "payload": {
+        "session_id": "01a1980c-0670-7973-ba7f-59f18114d703",
+        "turn_id": "01a1980c-0698-7bf2-9073-2fb436533e43",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-58-07-01a1980c-0670-7973-ba7f-59f18114d703.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "PreToolUse",
+        "model": "gpt-5.5",
+        "permission_mode": "bypassPermissions",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sleep 60"
+        },
+        "tool_use_id": "call_59"
+      }
+    },
+    {
+      "event": "Interrupt",
+      "env": {},
+      "payload": {
+        "session_id": "01a1980c-0670-7973-ba7f-59f18114d703",
+        "turn_id": "01a1980c-0698-7bf2-9073-2fb436533e43",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-58-07-01a1980c-0670-7973-ba7f-59f18114d703.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "Interrupt",
+        "model": "gpt-5.5",
+        "permission_mode": "bypassPermissions"
+      }
+    },
+    {
+      "event": "SessionEnd",
+      "env": {},
+      "payload": {
+        "session_id": "01a1980c-0670-7973-ba7f-59f18114d703",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-58-07-01a1980c-0670-7973-ba7f-59f18114d703.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "SessionEnd",
+        "reason": "other"
+      }
+    }
+  ]
+}
