@@ -275,7 +275,7 @@ const ask = async (question) => {
 // End of `autochat setup`: offer the hooks of the other harnesses found here, one at a time,
 // but only when someone can answer.
 async function offerHooks () {
-  const { harnessContext, offeredHooks, planHooks, describeHookPlan } = await import('../src/harness/index.js')
+  const { harnessContext, offeredHooks, planHooks, describeHookPlan, hooksNote } = await import('../src/harness/index.js')
   const ctx = harnessContext()
   const plans = planHooks(offeredHooks(ctx), ctx).filter(p => p.apply)
   if (!plans.length) return
@@ -293,7 +293,7 @@ async function offerHooks () {
     }
     try {
       p.apply()
-      console.log(`✔ ${p.id} hooks installed: new ${p.name} sessions pick them up`)
+      console.log(`✔ ${p.id} hooks installed. ${hooksNote(p.id)}`)
     } catch (err) {
       console.log(`✘ ${p.id}: ${err.message}`)
     }
@@ -584,8 +584,12 @@ async function doctorHooks (ok, cfg) {
     if (h.id === 'copilot') {
       ok(h.hooks.installed, `hooks ${h.hooks.installed ? 'installed' : 'missing (run autochat setup)'}: ${h.hooks.file}`)
       if (h.hooks.legacy) ok(false, `old lolchat hooks still installed: ${h.hooks.legacy} (run autochat setup to remove them)`)
-    } else if (h.hooks.installed) {
-      ok(h.hooks.valid !== false, h.hooks.valid === false ? `${h.id}: hooks run an autochat that no longer exists (rerun autochat setup --harness ${h.id})` : `${h.id}: hooks installed (${tilde(h.hooks.file, ctx)})`)
+    } else if (h.hooks.installed || h.hooks.partial) {
+      const where = tilde(h.hooks.file, ctx)
+      if (h.hooks.partial) ok(false, `${h.id}: some of autochat's hooks are missing from ${where} (rerun autochat setup --harness ${h.id})`)
+      else if (h.hooks.valid === false) ok(false, `${h.id}: hooks run an autochat that no longer exists (rerun autochat setup --harness ${h.id})`)
+      else ok(true, `${h.id}: hooks installed (${where})`)
+      if (h.hooks.disabled) ok(false, `${h.id}: disableAllHooks is on in ${where}, so no hooks run`)
     } else if (h.installed) {
       console.log(`… ${h.id}: installed, no autochat hooks (autochat setup --harness ${h.id})`)
       continue

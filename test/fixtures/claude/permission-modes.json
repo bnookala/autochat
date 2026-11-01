@@ -1,0 +1,94 @@
+{
+  "claude": "2.1.273",
+  "how": "claude -p \"…\" with --permission-mode dontAsk, then plan, then --dangerously-skip-permissions (PreToolUse of each)",
+  "note": "Recorded from the real Claude Code with these hooks loaded via --settings and --setting-sources project,local, against a local stand-in for the Messages API. Paths scrubbed; env trimmed to what autochat reads.",
+  "events": [
+    {
+      "event": "PreToolUse",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "b22c923b-7c20-46d4-9b8b-9adf12bd6a4e",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_EFFORT": "high",
+        "CLAUDE_CODE_CHILD_SESSION": "1"
+      },
+      "payload": {
+        "session_id": "b22c923b-7c20-46d4-9b8b-9adf12bd6a4e",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/b22c923b-7c20-46d4-9b8b-9adf12bd6a4e.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "d42a7cbd-a870-45d0-881f-335fe52af4b7",
+        "permission_mode": "dontAsk",
+        "effort": {
+          "level": "high"
+        },
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "echo hi",
+          "description": "Say hi"
+        },
+        "tool_use_id": "toolu_mock_7"
+      }
+    },
+    {
+      "event": "PreToolUse",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "cbae804e-5c6a-492a-96ab-8e4020b3d843",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_EFFORT": "high",
+        "CLAUDE_CODE_CHILD_SESSION": "1"
+      },
+      "payload": {
+        "session_id": "cbae804e-5c6a-492a-96ab-8e4020b3d843",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/cbae804e-5c6a-492a-96ab-8e4020b3d843.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "21edc8f7-fb98-4807-a376-ab7999b6a8ce",
+        "permission_mode": "plan",
+        "effort": {
+          "level": "high"
+        },
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "echo hi",
+          "description": "Say hi"
+        },
+        "tool_use_id": "toolu_mock_9"
+      }
+    },
+    {
+      "event": "PreToolUse",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "4a19b2e3-b2f6-4cb5-9a9f-21dc2a0bc315",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_EFFORT": "high",
+        "CLAUDE_CODE_CHILD_SESSION": "1"
+      },
+      "payload": {
+        "session_id": "4a19b2e3-b2f6-4cb5-9a9f-21dc2a0bc315",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/4a19b2e3-b2f6-4cb5-9a9f-21dc2a0bc315.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "a5d9a1ec-e193-49f2-aa54-cfbbaa144840",
+        "permission_mode": "bypassPermissions",
+        "effort": {
+          "level": "high"
+        },
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "echo hi",
+          "description": "Say hi"
+        },
+        "tool_use_id": "toolu_mock_11"
+      }
+    }
+  ]
+}

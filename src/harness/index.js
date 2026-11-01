@@ -101,6 +101,9 @@ export const unplanHooks = (ctx = harnessContext()) => ADAPTERS.filter(a => a.un
 /** Per harness with hooks, for doctor: {id, name, installed (the harness), hooks: {installed, file, …}}. */
 export const hooksStatus = (ctx = harnessContext()) => ADAPTERS.filter(a => a.hookStatus).map(a => ({ id: a.id, name: a.name, installed: a.detect(ctx).installed, hooks: a.hookStatus(ctx) }))
 
+/** When a harness starts running new hooks (adapter.hooksNote). */
+export const hooksNote = (id) => adapter(id)?.hooksNote || 'New sessions pick up the hooks.'
+
 /** `--harness a,b --harness c` → ['a', 'b', 'c']; `all` is every adapter with hooks. */
 export function hookIds (values) {
   const ids = [values].flat().flatMap(v => String(v).split(',')).map(v => v.trim()).filter(Boolean)
@@ -129,8 +132,8 @@ export function setupHooks ({ ids, ctx = harnessContext(), dryRun = false, out =
       out(`✘ ${p.id}: ${err.message}`)
     }
   }
-  if (applied.length) out('New sessions pick up the hooks; sessions that are already running keep the ones they started with.')
-  else if (!failed.length) out('Nothing to change.')
+  for (const note of new Set(applied.map(hooksNote))) out(note)
+  if (!applied.length && !failed.length) out('Nothing to change.')
   return { plans, applied, failed }
 }
 
