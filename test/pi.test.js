@@ -402,7 +402,8 @@ test('extension: the agent-room tools against a real daemon: presence, status, p
   await again.emit('session_start', { reason: 'reload' }, ctx)
   await until(() => /agent pi-room-repo \(pi\) back/.test(daemonErr), 'the same agent is back')
   await again.emit('session_shutdown', { reason: 'quit' }, ctx)
-  await until(() => (daemonErr.match(/agent pi-room-repo \(pi\) away/g) || []).length === 2, 'away again')
+  await until(() => /agent pi-room-repo \(pi\) left/.test(daemonErr), 'quitting leaves')
+  assert.equal((daemonErr.match(/agent pi-room-repo \(pi\) away/g) || []).length, 1, 'at once: away only on /reload')
   assert.doesNotMatch(daemonErr, /pi-room-repo-2/, 'never a second pi agent')
 })
 

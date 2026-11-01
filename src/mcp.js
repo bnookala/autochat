@@ -165,9 +165,9 @@ export async function runMcp ({ harness = null, stdin = process.stdin, stdout = 
     if (finished) return
     finished = true
     clearTimeout(joinTimer)
-    link.close()
-    // Let queued responses flush first; closing the daemon connection ends our presence.
-    stdout.write('', () => resolveDone())
+    // Leave the room now (`bye`) rather than show as away for the resume window; let queued
+    // responses flush first. Both are bounded, so the harness's shutdown never waits on us.
+    Promise.all([link.bye(), new Promise(resolve => stdout.write('', resolve))]).then(() => resolveDone())
     setTimeout(resolveDone, 500).unref()
   }
   for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(sig, finish)
