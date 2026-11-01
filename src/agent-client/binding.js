@@ -4,6 +4,8 @@ import path from 'node:path'
 import { spawnSync, execFile } from 'node:child_process'
 import { isValidSessionId } from '../paths.js'
 import { envVar } from '../env.js'
+import { sanitize } from '../text.js'
+import { findSecret } from '../secrets.js'
 
 // The session binding: which harness runs us (its process, its session id), the git facts for
 // the agent's hello and card, and the paths it touches (auto paths for `status`).
@@ -121,8 +123,48 @@ export function gitInfo (cwd) {
   return { top, repo, branch: branch && branch !== 'HEAD' ? branch : null, worktree: path.basename(top) }
 }
 
-/** The agent-hello line (docs/protocol.md, "Agent connection"): who the agent is and where it works. */
-export function agentHello ({ harness, pid, harnessPid = null, sessionId = null, cwd, git: g = gitInfo(cwd), env = process.env }) {
+// A double-quoted YAML scalar's escapes.
+const YAML_ESCAPES = { 0: '\0', a: '\x07', b: '\b', t: '\t', n: '\n', v: '\v', f: '\f', r: '\r', e: '\x1b', N: '\x85', _: '\xa0', L: '\u2028', P: '\u2029' }
+
+/** A top-level one-line YAML string (plain, 'single' or "double" quoted), or null. */
+export function yamlField (text, key) {
+  const m = new RegExp(`^${key}:[ \\t]+(.*?)\\r?$`, 'm').exec(typeof text === 'string' ? text : '')
+  const v = m ? m[1].trim() : ''
+  if (v.startsWith('"')) {
+    const q = /^"((?:[^"\\]|\\.)*)"/.exec(v)
+    return q ? q[1].replace(/\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|.)/g, (_, e) => e.length > 1 ? String.fromCodePoint(parseInt(e.slice(1), 16)) : (YAML_ESCAPES[e] ?? e)) : null
+  }
+  if (v.startsWith("'")) {
+    const q = /^'((?:[^']|'')*)'/.exec(v)
+    return q ? q[1].replace(/''/g, "'") : null
+  }
+  const plain = v.replace(/\s#.*$/, '').trim()
+  return !plain || /^[|>~]|^null$/i.test(plain) ? null : plain
+}
+
+/** A session title for the hello: one line, at most 80 characters; null if it looks like a secret. */
+export function titleLine (title) {
+  const clean = sanitize(typeof title === 'string' ? title : '', 80)
+  return clean && !findSecret(clean) ? clean : null
+}
+
+/**
+ * The harness's title for this session, where one is cheap and reliable to read: Copilot's session
+ * name, `name:` in its session's workspace.yaml. pi's comes from its extension. What the other
+ * harnesses expose is in docs/agents.md ("Who it is").
+ */
+export function sessionTitle ({ harness, sessionId = null, env = process.env }) {
+  if (harness !== 'copilot' || !isValidSessionId(sessionId)) return null
+  const home = env.COPILOT_HOME || path.join(os.homedir(), '.copilot')
+  try {
+    return titleLine(yamlField(fs.readFileSync(path.join(home, 'session-state', sessionId, 'workspace.yaml'), 'utf8'), 'name'))
+  } catch {
+    return null
+  }
+}
+
+/** The agent-hello line (docs/agent-room/hello.md): who the agent is and where it works. */
+export function agentHello ({ harness, pid, harnessPid = null, sessionId = null, cwd, git: g = gitInfo(cwd), env = process.env, title = null }) {
   return {
     type: 'agent-hello',
     v: 1,
@@ -135,14 +177,15 @@ export function agentHello ({ harness, pid, harnessPid = null, sessionId = null,
     repo: g.repo,
     branch: g.branch,
     worktree: g.worktree,
+    title,
     resume: null
   }
 }
 
 /**
  * Who we are: harness (--harness, else the nearest harness among our ancestor processes, else
- * env hints, else "agent"), the harness pid, its session id when the env exposes one, and the
- * git facts. Builds the agent-hello line.
+ * env hints, else "agent"), the harness pid, its session id when the env exposes one, its title
+ * when we can read it, and the git facts. Builds the agent-hello line.
  */
 export function bindSession ({ harness: flag = null, env = process.env, cwd = process.cwd(), ps = psTable, pid = process.pid } = {}) {
   let harness = flag ? String(flag).toLowerCase().replace(/[^a-z0-9-]+/g, '-').slice(0, 20) : null
@@ -162,13 +205,16 @@ export function bindSession ({ harness: flag = null, env = process.env, cwd = pr
   // Some harnesses start MCP servers in $HOME or /: use the harness's own directory then.
   if (harnessPid && (cwd === os.homedir() || cwd === '/')) cwd = processCwd(harnessPid) || cwd
   const g = gitInfo(cwd)
+  // Sessions often get their title after the harness starts us: the status tool reads it again.
+  const readTitle = () => sessionTitle({ harness, sessionId, env })
   return {
     harness,
     harnessPid,
     sessionId,
     cwd,
     top: g.top,
-    hello: agentHello({ harness, pid, harnessPid, sessionId, cwd, git: g, env })
+    readTitle,
+    hello: agentHello({ harness, pid, harnessPid, sessionId, cwd, git: g, env, title: readTitle() })
   }
 }
 
