@@ -363,11 +363,14 @@ public struct Snapshot: Sendable, Equatable, Decodable {
     public var sessions: [SessionInfo]
     public var countdown: Countdown?
     public var banner: Banner?
+    /// The local agent room's summary; nil until an agent has connected since the daemon
+    /// started (and always nil from a daemon without agent rooms).
+    public var agents: LoungeAgents?
 
     public init(
         version: Int? = 1, now: Date? = nil, phase: Phase = .lounge, room: RoomInfo? = nil, me: Me? = nil, members: [Member] = [],
         messages: [ChatMessage] = [], request: CopilotRequest? = nil, sessions: [SessionInfo] = [],
-        countdown: Countdown? = nil, banner: Banner? = nil
+        countdown: Countdown? = nil, banner: Banner? = nil, agents: LoungeAgents? = nil
     ) {
         self.version = version
         self.now = now
@@ -380,9 +383,10 @@ public struct Snapshot: Sendable, Equatable, Decodable {
         self.sessions = sessions
         self.countdown = countdown
         self.banner = banner
+        self.agents = agents
     }
 
-    enum CodingKeys: String, CodingKey { case v, now, phase, room, me, members, messages, request, sessions, countdown, banner }
+    enum CodingKeys: String, CodingKey { case v, now, phase, room, me, members, messages, request, sessions, countdown, banner, agents }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -397,6 +401,7 @@ public struct Snapshot: Sendable, Equatable, Decodable {
         sessions = c.lenient(LossyList<SessionInfo>.self, .sessions)?.items ?? []
         countdown = c.lenient(Countdown.self, .countdown)
         banner = c.lenient(Banner.self, .banner)
+        agents = c.lenient(LoungeAgents.self, .agents)
     }
 
     /// Host handle from the room info, else from the member flagged as host.

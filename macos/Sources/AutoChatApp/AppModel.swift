@@ -4,7 +4,7 @@ import Observation
 
 /// Single source of UI state: the latest daemon snapshot plus local, time-driven state
 /// (the ticking countdown, the autopilot notice, the closeout timer). Shared by the status
-/// item, the descending panel and the chat window.
+/// item, the descending panel and the chat window. The Agents tab's state lives in `agents`.
 @MainActor
 @Observable
 public final class AppModel {
@@ -19,7 +19,12 @@ public final class AppModel {
     public private(set) var dismissedRequestKey: String?
     public private(set) var closeoutClosesAt: Date?
     public private(set) var lastError: String?
-    public var chatWindow: ChatWindowState = .closed
+    public var chatWindow: ChatWindowState = .closed {
+        didSet { if chatWindow != oldValue { updateAgentsSubscription() } }
+    }
+    /// The tab the user picked; `effectiveTab` is what the window shows.
+    public private(set) var chatTab: ChatTab = .lounge
+    public let agents: AgentsModel
     public var draft: String = "" {
         didSet { if draft.count > 500 { draft = String(draft.prefix(500)) } }
     }
@@ -34,9 +39,10 @@ public final class AppModel {
     public static let closeoutSeconds: TimeInterval = 5
 
     /// Live model wired to a daemon client and supervisor.
-    public init(client: DaemonClient, supervisor: DaemonSupervisor) {
+    public init(client: DaemonClient, supervisor: DaemonSupervisor, agents: AgentsModel? = nil) {
         self.client = client
         self.supervisor = supervisor
+        self.agents = agents ?? AgentsModel(socketPath: client.socketPath)
         self.now = Date()
         self.frozen = false
         client.setHandlers(
@@ -47,9 +53,14 @@ public final class AppModel {
     }
 
     /// Static model for snapshot rendering and tests: nothing ticks, actions are no-ops.
-    public init(fixture: Snapshot?, now: Date, connection: DaemonClient.State = .connected, daemon: DaemonSupervisor.Status = .spawned(pid: 4242), chatWindow: ChatWindowState = .closed, draft: String = "") {
+    public init(
+        fixture: Snapshot?, now: Date, connection: DaemonClient.State = .connected, daemon: DaemonSupervisor.Status = .spawned(pid: 4242),
+        chatWindow: ChatWindowState = .closed, draft: String = "", agents: AgentsModel? = nil, tab: ChatTab = .lounge
+    ) {
         self.client = nil
         self.supervisor = nil
+        self.agents = agents ?? AgentsModel(fixture: nil)
+        self.chatTab = tab
         self.frozen = true
         self.now = now
         self.connection = connection
@@ -70,6 +81,11 @@ public final class AppModel {
 
     public var connected: Bool { connection == .connected }
 
+    /// The daemon hosts an agent room (the lounge snapshot reports `agents`).
+    public var showsAgentsTab: Bool { AgentsRules.showsTab(connected: connected, lounge: snapshot) }
+
+    public var effectiveTab: ChatTab { AgentsRules.effectiveTab(chatTab, showsAgents: showsAgentsTab) }
+
     /// A static model for snapshot rendering.
     public var isFixture: Bool { frozen }
 
@@ -81,7 +97,7 @@ public final class AppModel {
         PanelRules.decide(PanelInputs(
             connected: connected, phase: snapshot?.phase ?? .lounge, countdown: countdown,
             request: snapshot?.request, dismissedRequestKey: dismissedRequestKey,
-            autopilotNoticeUntil: autopilotNoticeUntil, chat: chatWindow, now: now
+            autopilotNoticeUntil: autopilotNoticeUntil, chat: chatWindow, chatShowsLounge: effectiveTab == .lounge, now: now
         ))
     }
 
@@ -119,7 +135,9 @@ public final class AppModel {
             countdown = expired ? Countdown(endsAt: min(c.endsAt, now), total: c.total, reason: c.reason, summary: c.summary, cwd: c.cwd) : nil
         }
         if !next.phase.isCloseout { closeoutClosesAt = nil }
+        if (previous?.agents == nil) != (next.agents == nil) { DebugLog.log("agent room \(next.agents == nil ? "gone" : "available")") }
         reschedule()
+        updateAgentsSubscription()
     }
 
     func connectionChanged(_ state: DaemonClient.State) {
@@ -129,6 +147,13 @@ public final class AppModel {
         case .disconnected, .incompatible: supervisor?.connectionLost()
         default: break
         }
+        updateAgentsSubscription()
+    }
+
+    /// The agents stream is only subscribed while there's a room to show and the window is open.
+    private func updateAgentsSubscription() {
+        guard !frozen else { return }
+        agents.setActive(showsAgentsTab && chatWindow.isVisible)
     }
 
     private func daemonChanged(_ status: DaemonSupervisor.Status) {
@@ -175,6 +200,17 @@ public final class AppModel {
 
     public func dismissAutopilotNotice() {
         autopilotNoticeUntil = nil
+    }
+
+    public func selectTab(_ tab: ChatTab) {
+        guard chatTab != tab else { return }
+        chatTab = tab
+        DebugLog.log("tab \(tab)")
+    }
+
+    /// Open Chat: the lounge when something is happening there, otherwise the last tab.
+    public func selectTabForOpening() {
+        selectTab(AgentsRules.tabOnOpen(current: chatTab, lounge: snapshot))
     }
 
     /// Hides the request panel for this question without dismissing it in the core.
