@@ -1,13 +1,17 @@
 import { EventEmitter } from 'node:events'
 import { Room } from './room.js'
-import { SessionLog, objectiveStatus } from './session.js'
 import { parseRoom, sanitize } from './protocol.js'
 import { setOptout } from './hook.js'
-import { focusOrigin as defaultFocus, notify as defaultNotify } from './launcher.js'
+import { notify as defaultNotify } from './launcher.js'
 import { envVar } from './env.js'
+import { loadConfig } from './config.js'
+import { adapter, triggerFor, focusSession } from './harness/index.js'
+import { SessionMap, sessionKey, fromHookMessage, byTrigger, modesOf } from './harness/event.js'
 
 const MAX_MESSAGES = 400
 const RUNNING = new Set(['running', 'needed'])
+// sessions[].harness, when the hook said which harness (hooks from before adapters don't).
+const harnessOf = (s) => s.harness ? { harness: s.harness } : {}
 export const DEFAULT_COUNTDOWN_SECONDS = 30
 
 // AUTOCHAT_COUNTDOWN_MS (tests) beats config.countdownSeconds; 0 pulls you back immediately.
@@ -31,16 +35,17 @@ export function hexColor (n) {
 }
 
 /**
- * Brain of the UI process: tracks Copilot sessions (via hook messages + session logs),
- * enters the room while any of them is on autopilot, and pulls the user back out
- * (after a non-blocking exit countdown, during which they can keep chatting).
+ * Brain of the UI process: tracks agent sessions (SessionEvents from hooks, plus each adapter's
+ * session log and fallback observer), keyed `${harness}:${sid}`, enters the room while any of
+ * them works autonomously (autopilot), and pulls the user back out (after a non-blocking exit
+ * countdown, during which they can keep chatting).
  *
  * phase: lounge | room | spectating | reality | dead | left
  */
 export class Controller extends EventEmitter {
   constructor ({
     identity, config, auto = false, daemon = false, bootstrap, roomOpts = {},
-    focus = defaultFocus, notify = defaultNotify, bannerMs = 6000, watchLogs = true, requestLingerMs = 20000,
+    focus = focusSession, notify = defaultNotify, bannerMs = 6000, watchLogs = true, requestLingerMs = 20000,
     countdownMs = countdownMsFor(config)
   }) {
     super()
@@ -60,7 +65,7 @@ export class Controller extends EventEmitter {
     this.bannerMs = bannerMs
     this.watchLogs = watchLogs
     this.roomInfo = parseRoom(config.room)
-    this.sessions = new Map()
+    this.sessions = new SessionMap()
     this.finished = new Map()
     this.messages = []
     this.msgSeq = 0
@@ -76,24 +81,34 @@ export class Controller extends EventEmitter {
   handle (msg) {
     if (!msg || typeof msg !== 'object') return { ok: false }
     if (msg.type === 'ping') return { pong: true, phase: this.phase, daemon: this.daemon, pid: process.pid }
-    if (msg.type === 'status') return { phase: this.phase, room: this.roomInfo.display, sessions: [...this.sessions.values()].map(s => ({ sid: s.sid, state: s.state, cwd: s.cwd })) }
+    if (msg.type === 'status') return { phase: this.phase, room: this.roomInfo.display, sessions: [...this.sessions.values()].map(s => ({ sid: s.sid, state: s.state, cwd: s.cwd, ...harnessOf(s) })) }
     if (msg.type === 'hook') return { tracked: this._onHook(msg) }
     return { ok: false }
   }
 
+  // Lounge presence: does a session in these modes count, under the trigger config right now?
+  _autonomy (harness, modes) {
+    return byTrigger(modes, triggerFor(loadConfig(), harness || 'copilot'))
+  }
+
   _onHook (msg) {
-    let s = this.sessions.get(msg.sessionId)
+    const ev = fromHookMessage(msg)
+    if (!ev) return false
+    // Hook messages from before adapters carry only Copilot's mode.
+    if (!ev.autonomy) ev.autonomy = this._autonomy(ev.harness, modesOf(ev))
+    let s = this.sessions.get(sessionKey(ev.harness, ev.sid))
     if (!s) {
-      if (!(msg.mode === 'autopilot' && (msg.kind === 'activity' || msg.kind === 'request'))) return false
-      s = this._track(msg)
+      if (!(ev.autonomy === 'autonomous' && (ev.kind === 'activity' || ev.kind === 'request'))) return false
+      s = this._track(ev)
     }
-    if (msg.via === 'scan') s.adopted = true
+    if (ev.harness) s.harness = ev.harness
+    if (ev.via === 'scan') s.adopted = true
     else s.hooked = true
-    if (msg.cwd) s.cwd = msg.cwd
-    if (msg.origin && (msg.origin.tmuxPane || msg.origin.bundleId || msg.origin.termProgram)) s.origin = msg.origin
-    if (s.optout && msg.kind !== 'complete' && msg.kind !== 'end') return true
-    const leftAutopilot = typeof msg.mode === 'string' && msg.mode !== 'autopilot'
-    switch (msg.kind) {
+    if (ev.cwd) s.cwd = ev.cwd
+    if (ev.origin && (ev.origin.tmuxPane || ev.origin.bundleId || ev.origin.termProgram)) s.origin = ev.origin
+    if (s.optout && ev.kind !== 'complete' && ev.kind !== 'end') return true
+    const leftAutopilot = ev.autonomy === 'interactive'
+    switch (ev.kind) {
       case 'activity':
         if (leftAutopilot) this._finish(s, 'mode')
         else this._run(s, 'running', null)
@@ -102,18 +117,25 @@ export class Controller extends EventEmitter {
         if (leftAutopilot) { this._finish(s, 'mode'); break }
         // preToolUse(ask_user) and the elicitation notification describe the same question;
         // keep whichever text is richer (the former includes the choices).
-        let req = msg.request || { title: 'Copilot needs you', message: '' }
+        let req = ev.request || { title: 'Copilot needs you', message: '' }
         const prev = s.request
         if (prev && Date.now() - prev.at < 5000 && (prev.message || '').startsWith(req.message || '')) req = { ...req, message: prev.message }
         this._run(s, 'needed', req)
         break
       }
       case 'complete':
-        this._finish(s, 'complete', msg.summary)
+        this._finish(s, 'complete', ev.summary)
         break
-      case 'stop':
+      case 'idle':
         if (leftAutopilot) this._finish(s, 'mode')
-        else this._armIdle(s)
+        else {
+          if (ev.summary) s.summary = sanitize(ev.summary, 2000)
+          this._armIdle(s)
+        }
+        break
+      case 'waiting':
+        // Done with its turn and waiting at its prompt: the agent no longer works on its own.
+        this._finish(s, leftAutopilot ? 'mode' : 'idle', ev.summary)
         break
       case 'end':
         this._finish(s, 'end')
@@ -121,19 +143,22 @@ export class Controller extends EventEmitter {
     }
     // Start tailing only now, replaying lifecycle events logged since this hook fired
     // (e.g. a task_complete that landed while the UI was still launching).
-    if (s.log && !s.log.timer && this.sessions.get(s.sid) === s) s.log.start({ since: msg.ts })
+    if (s.log && !s.log.timer && this.sessions.get(s.key) === s) s.log.start({ since: ev.ts })
     return true
   }
 
-  _track (msg) {
-    const s = { sid: msg.sessionId, cwd: msg.cwd, origin: msg.origin, state: 'idle', request: null, idleTimer: null, summary: '', doneAt: 0, optout: false, log: null }
-    this.sessions.set(s.sid, s)
-    if (this.watchLogs) {
-      s.log = new SessionLog(s.sid)
+  _track (ev) {
+    const key = sessionKey(ev.harness, ev.sid)
+    const s = { key, sid: ev.sid, harness: ev.harness || null, cwd: ev.cwd, origin: ev.origin, state: 'idle', request: null, idleTimer: null, summary: '', doneAt: 0, optout: false, log: null }
+    this.sessions.set(key, s)
+    // The adapter's session log (Copilot's events.jsonl) reports what no hook does.
+    const a = adapter(s.harness || 'copilot')
+    if (this.watchLogs && a?.follow) {
+      s.log = a.follow(s.sid)
       s.log.on('task-complete', ({ summary }) => this._finish(s, 'complete', summary))
       s.log.on('abort', () => this._finish(s, 'abort'))
       s.log.on('shutdown', () => this._finish(s, 'end'))
-      s.log.on('mode', (m) => { if (m !== 'autopilot') this._finish(s, 'mode') })
+      s.log.on('mode', (m) => { if (this._autonomy(s.harness, [m]) !== 'autonomous') this._finish(s, 'mode') })
       s.log.on('activity', () => { if (RUNNING.has(s.state)) this._clearIdle(s) })
     }
     return s
@@ -168,14 +193,14 @@ export class Controller extends EventEmitter {
   }
 
   // agentStop without task_complete: the agent may be waiting on the user, or autopilot
-  // may continue. Wait a bit; an active objective keeps the session in the room.
+  // may continue. Wait a bit; the adapter can keep it (Copilot: an active objective).
   _armIdle (s) {
     this._clearIdle(s)
     if (!RUNNING.has(s.state)) return
     s.idleTimer = setTimeout(() => {
       s.idleTimer = null
       if (!RUNNING.has(s.state)) return
-      if (objectiveStatus(s.sid) === 'active') return this._armIdle(s)
+      if (adapter(s.harness || 'copilot')?.continues?.(s)) return this._armIdle(s)
       this._finish(s, 'idle')
     }, this.config.idleMs)
     s.idleTimer.unref?.()
@@ -187,8 +212,8 @@ export class Controller extends EventEmitter {
     this._clearIdle(s)
     clearTimeout(s.reqTimer)
     s.log?.stop()
-    if (this.sessions.get(s.sid) === s) this.sessions.delete(s.sid)
-    this.finished.set(s.sid, Date.now())
+    if (this.sessions.get(s.key) === s) this.sessions.delete(s.key)
+    this.finished.set(s.key, Date.now())
     if (this.finished.size > 200) this.finished.delete(this.finished.keys().next().value)
     if (s.state === 'done' || s.state === 'idle') { s.state = 'done'; return }
     s.state = 'done'
@@ -200,30 +225,32 @@ export class Controller extends EventEmitter {
   }
 
   /**
-   * Pick up autopilot sessions that never call our hooks (their Copilot process started
-   * before `autochat setup`), using liveSessions() from scan.js. Hooks stay authoritative
-   * for sessions that have them; adopted ones are released when they go idle or exit.
+   * Pick up autopilot sessions that never call our hooks (say, their Copilot process started
+   * before `autochat setup`), from an adapter's fallback observer: `live` is everything it sees
+   * of `harness` right now (Copilot: liveSessions()). Hooks stay authoritative for sessions
+   * that have them; adopted ones are released when they go idle or exit.
    */
-  adopt (live) {
+  adopt (live, harness = 'copilot') {
     const seen = new Set()
     for (const l of live) {
-      seen.add(l.sid)
-      const s = this.sessions.get(l.sid)
+      const key = sessionKey(harness, l.sid)
+      seen.add(key)
+      const s = this.sessions.get(key)
       if (s) {
         if (s.adopted && !s.hooked && RUNNING.has(s.state) && !l.running) {
           // Let the log report *why* it stopped (task_complete + summary, abort, mode) first.
           s.log?.poll()
-          if (RUNNING.has(s.state)) this._finish(s, l.mode === 'autopilot' ? 'idle' : 'mode')
+          if (RUNNING.has(s.state)) this._finish(s, this._autonomy(harness, l.mode ? [l.mode] : []) === 'autonomous' ? 'idle' : 'mode')
         }
         continue
       }
       if (!l.running) continue
-      const done = this.finished.get(l.sid)
+      const done = this.finished.get(key)
       if (done && l.lastStart <= done) continue
-      this.handle({ type: 'hook', via: 'scan', event: 'scan', kind: 'activity', mode: 'autopilot', sessionId: l.sid, cwd: l.cwd, ts: l.scannedAt })
+      this.handle({ type: 'hook', via: 'scan', event: 'scan', harness, kind: 'activity', autonomy: 'autonomous', mode: l.mode, sessionId: l.sid, cwd: l.cwd, ts: l.scannedAt })
     }
     for (const s of this.sessions.values()) {
-      if (s.adopted && !s.hooked && !s.manual && RUNNING.has(s.state) && !seen.has(s.sid)) this._finish(s, 'end')
+      if (s.adopted && !s.hooked && !s.manual && RUNNING.has(s.state) && (s.harness || 'copilot') === harness && !seen.has(s.key)) this._finish(s, 'end')
     }
   }
 
@@ -235,7 +262,7 @@ export class Controller extends EventEmitter {
 
   currentRequest () {
     const s = this.runningSessions().find(x => x.state === 'needed' && x.request) || this.runningSessions().find(x => x.request)
-    return s ? { ...s.request, cwd: s.cwd, sid: s.sid } : null
+    return s ? { ...s.request, cwd: s.cwd, sid: s.sid, key: s.key } : null
   }
 
   dismissRequest () {
@@ -323,7 +350,7 @@ export class Controller extends EventEmitter {
   _pulledBack () {
     const room = this.room
     const s = this.lastFinished
-    if (s) this.focus(s.origin)
+    if (s) this.focus(s.origin, s.harness)
     this.notifyFn('autochat', 'Back to reality: your copilot ' + (s?.reason === 'complete' ? 'finished.' : 'needs you.'))
     const othersActive = room ? room.activeCount() - (room.status === 'away' ? 0 : 1) : 0
     if (room && room.isHost && othersActive > 0) {
@@ -377,14 +404,14 @@ export class Controller extends EventEmitter {
 
   jumpToCopilot () {
     const req = this.currentRequest()
-    const s = (req && this.sessions.get(req.sid)) || this.runningSessions()[0] || this.lastFinished
-    if (s) this.focus(s.origin)
+    const s = (req && this.sessions.get(req.key)) || this.runningSessions()[0] || this.lastFinished
+    if (s) this.focus(s.origin, s.harness)
   }
 
   // ctrl-c: leave the room for good (for the sessions currently running).
   async leaveRoom () {
     this._clearCountdown()
-    for (const s of this.runningSessions()) { s.optout = true; setOptout(s.sid) }
+    for (const s of this.runningSessions()) { s.optout = true; setOptout(s.sid, s.harness) }
     const room = this.room
     this.room = null
     this.phase = 'left'
@@ -395,7 +422,7 @@ export class Controller extends EventEmitter {
 
   // Manual "I'm here" mode (autochat ui --now): a pseudo-session that counts as autopilot.
   joinNow () {
-    const s = this._track({ sessionId: 'manual-' + process.pid, mode: 'autopilot' })
+    const s = this._track({ sid: 'manual-' + process.pid })
     s.log?.stop()
     s.manual = true
     this._run(s, 'running', null)
@@ -461,7 +488,7 @@ export class Controller extends EventEmitter {
         : [],
       messages: this.messages.map(m => ({ id: m.id, kind: m.kind, from: m.kind === 'chat' ? m.handle : null, text: m.text, ts: m.ts, color: hexColor(m.color), you: !!m.self })),
       request: req ? { sid: req.sid, cwd: req.cwd ?? null, title: req.title || '', message: req.message || '', resolved: !!req.resolved } : null,
-      sessions: [...this.sessions.values()].map(s => ({ sid: s.sid, state: s.state, cwd: s.cwd ?? null })),
+      sessions: [...this.sessions.values()].map(s => ({ sid: s.sid, state: s.state, cwd: s.cwd ?? null, ...harnessOf(s) })),
       countdown: this.countdown ? { ...this.countdown, remaining: this.countdownRemaining() } : null,
       banner: b ? { kind: b.kind, reason: b.reason ?? null, summary: b.summary || null, cwd: b.cwd ?? null } : null
     }

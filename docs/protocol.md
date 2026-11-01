@@ -83,8 +83,8 @@ These are what hooks and `autochat status` use. Replies always carry `ok`.
 | Request | Reply |
 | --- | --- |
 | `{"type":"ping"}` | `{"ok":true,"pong":true,"phase":"lounge","daemon":true,"pid":123,"agentRoom":true}` |
-| `{"type":"status"}` | `{"ok":true,"phase":"room","room":"#lobby","sessions":[{"sid","state","cwd"}]}` |
-| `{"type":"hook",…}` | `{"ok":true,"tracked":true}` (message built by `autochat hook`, see `src/hook.js`) |
+| `{"type":"status"}` | `{"ok":true,"phase":"room","room":"#lobby","sessions":[{"sid","state","cwd","harness"}]}` |
+| `{"type":"hook",…}` | `{"ok":true,"tracked":true}` (a session event sent by `autochat hook`, see [harnesses.md](harnesses.md#the-hook-message)) |
 
 `daemon` is `true` for `autochat daemon` and `false` for the terminal UI. `agentRoom` says
 whether this process hosts the agent room (only the daemon does). Unparseable lines get
@@ -129,7 +129,7 @@ shuts down, every subscriber connection is closed (EOF).
  "members":[{"handle":"jade-lynx-0c","color":"#5fd787","status":"active","isHost":true,"you":false,"needed":false}],
  "messages":[{"id":12,"kind":"chat","from":"jade-lynx-0c","text":"lol same","ts":1730400000000,"color":"#5fd787","you":false}],
  "request":{"sid":"5d0c…","cwd":"/Users/me/code/x","title":"Permission needed","message":"Run tests?","resolved":false},
- "sessions":[{"sid":"5d0c…","state":"running","cwd":"/Users/me/code/x"}],
+ "sessions":[{"sid":"5d0c…","state":"running","cwd":"/Users/me/code/x","harness":"copilot"}],
  "countdown":null,
  "banner":null,
  "agents":{"present":2,"openThreads":1}}
@@ -158,7 +158,8 @@ shuts down, every subscriber connection is closed (EOF).
 | `messages[].color` | string \| null | sender's (or the subject member's) color; `null` for plain `sys` lines |
 | `messages[].you` | bool | you sent it |
 | `request` | object \| null | what your copilot is asking you. `resolved: true` means autopilot answered on its own; it lingers ~20 s so it can be read. |
-| `sessions[]` | array | tracked Copilot sessions: `state` is `running`, `needed`, or `idle` (finished sessions are dropped) |
+| `sessions[]` | array | tracked agent sessions: `state` is `running`, `needed`, or `idle` (finished sessions are dropped) |
+| `sessions[].harness` | string | which harness runs it: `copilot`, `claude`, … (see [harnesses.md](harnesses.md)). Missing for sessions reported only by hooks from before harness adapters, which are Copilot CLI's. A session is identified by `harness` and `sid` together. |
 | `countdown` | object \| null | the exit countdown, see [below](#exit-countdown) |
 | `banner` | object \| null | `{"kind","reason","summary","cwd"}` while `phase` is `reality`, `dead`, or `left` |
 | `agents` | object \| null | the [agent room](#agent-room-local) at a glance: `{"present","openThreads"}` (agents connected now, open threads). `null` if no agent has connected since the daemon started, and always `null` in the terminal UI. |

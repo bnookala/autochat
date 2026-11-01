@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import createTestnet from 'hyperdht/testnet.js'
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'autochat-harness-'))
 process.env.AUTOCHAT_HOME = path.join(tmp, 'ac')
@@ -10,6 +11,9 @@ process.env.COPILOT_HOME = path.join(tmp, 'copilot')
 const H = await import('../src/harness/index.js')
 const E = await import('../src/harness/event.js')
 const copilot = await import('../src/harness/copilot.js')
+const { Controller } = await import('../src/controller.js')
+const { ephemeralIdentity } = await import('../src/identity.js')
+const { saveConfig } = await import('../src/config.js')
 
 // The parent env minus anything pointing at a real home or harness.
 const baseEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(AUTOCHAT|LOLCHAT)_|^(HOME|COPILOT_HOME|XDG_CONFIG_HOME|CODEX_HOME|CLAUDE_CONFIG_DIR|TMUX|TMUX_PANE)$/.test(k)))
@@ -142,4 +146,84 @@ test('observers: each adapter fallback watcher feeds adopt(live, harness)', asyn
   await new Promise(resolve => setTimeout(resolve, 50))
   assert.equal(got.length, n, 'stopped')
   assert.deepEqual(copilot.liveSessions({ trigger: 'never' }).filter(l => l.running), [])
+})
+
+const FAST = { graceMs: 1200, heartbeatMs: 300, expireMs: 3000, refreshMs: [300, 800, 1500, 2500], refreshEveryMs: 2000 }
+function mk (testnet, config = {}) {
+  const focused = []
+  const c = new Controller({
+    identity: ephemeralIdentity(),
+    config: { room: 'lc1-harness-' + Math.random().toString(36).slice(2, 12), idleMs: 300, announce: false, countdownSeconds: 30, ...config },
+    bootstrap: testnet.bootstrap,
+    roomOpts: FAST,
+    focus: (o, harness) => focused.push([o, harness]),
+    notify: () => {},
+    bannerMs: 300,
+    requestLingerMs: 500,
+    watchLogs: false
+  })
+  c.focused = focused
+  return c
+}
+const hook = (harness, sid, kind, extra = {}) => ({ type: 'hook', harness, sessionId: sid, kind, autonomy: 'autonomous', cwd: '/w/' + sid, ts: Date.now(), origin: { tmuxPane: '%' + sid }, ...extra })
+
+test('Controller: sessions keyed by harness:sid, harness in the snapshot, autonomy decides presence', { timeout: 60000 }, async (t) => {
+  const testnet = await createTestnet(3)
+  t.after(() => testnet.destroy())
+  const c = mk(testnet)
+  t.after(() => c.shutdown())
+
+  assert.equal(c.handle(hook('claude', 'same', 'activity', { autonomy: 'interactive' })).tracked, false, 'interactive sessions never count')
+  assert.equal(c.handle(hook('claude', 'same', 'activity', { autonomy: 'unknown' })).tracked, false)
+  assert.equal(c.handle(hook('claude', 'same', 'start')).tracked, false, 'starting is not working')
+  c.handle(hook('claude', 'same', 'activity'))
+  c.handle(hook('copilot', 'same', 'activity'))
+  assert.equal(c.phase, 'room')
+  assert.deepEqual([...c.sessions.keys()], ['claude:same', 'copilot:same'])
+  assert.deepEqual(c.snapshot().sessions, [
+    { sid: 'same', state: 'running', cwd: '/w/same', harness: 'claude' },
+    { sid: 'same', state: 'running', cwd: '/w/same', harness: 'copilot' }
+  ])
+  assert.deepEqual(c.handle({ type: 'status' }).sessions.map(s => s.harness), ['claude', 'copilot'])
+
+  // A request from one harness's session, then that session leaves autonomy.
+  c.handle(hook('claude', 'same', 'request', { request: { title: 'Permission needed', message: 'Bash: npm test' } }))
+  assert.deepEqual([c.currentRequest().sid, c.currentRequest().key, c.currentRequest().message], ['same', 'claude:same', 'Bash: npm test'])
+  c.jumpToCopilot()
+  assert.deepEqual(c.focused.at(-1), [{ tmuxPane: '%same' }, 'claude'], 'focus goes through the harness adapter')
+  c.handle(hook('claude', 'same', 'activity', { autonomy: 'interactive' }))
+  assert.equal(c.sessions.has('claude:same'), false, 'switching to an interactive mode retires the session')
+  assert.equal(c.sessions.get('same').harness, 'copilot', 'the Copilot session with the same id is untouched')
+
+  // Another harness's observer never releases Copilot's adopted sessions.
+  c.adopt([], 'claude')
+  assert.equal(c.sessions.size, 1)
+
+  // waiting (at its prompt) ends autonomy right away; idle carries the last message as summary.
+  c.handle(hook('gemini', 'g1', 'activity'))
+  c.handle(hook('gemini', 'g1', 'waiting'))
+  assert.equal(c.sessions.has('gemini:g1'), false)
+  c.handle(hook('copilot', 'same', 'idle', { summary: 'all tests pass' }))
+  await new Promise(resolve => setTimeout(resolve, 600))
+  assert.equal(c.countdown.reason, 'idle')
+  assert.equal(c.countdown.summary, 'all tests pass')
+})
+
+test('Controller: hook messages from before adapters still work, and their snapshot entries look as before', { timeout: 60000 }, async (t) => {
+  const testnet = await createTestnet(3)
+  t.after(() => testnet.destroy())
+  const c = mk(testnet)
+  t.after(() => c.shutdown())
+  assert.equal(c.handle({ type: 'hook', sessionId: 'old', kind: 'activity', mode: 'plan', ts: Date.now() }).tracked, false)
+  assert.equal(c.handle({ type: 'hook', sessionId: 'old', kind: 'activity', mode: 'autopilot', cwd: '/w/old', ts: Date.now() }).tracked, true)
+  assert.deepEqual(c.snapshot().sessions, [{ sid: 'old', state: 'running', cwd: '/w/old' }])
+  c.handle({ type: 'hook', sessionId: 'old', kind: 'activity', harness: 'copilot', autonomy: 'autonomous', ts: Date.now() })
+  assert.deepEqual(c.snapshot().sessions, [{ sid: 'old', state: 'running', cwd: '/w/old', harness: 'copilot' }], 'the same session, now tagged')
+
+  // The trigger config also decides for messages that only carry Copilot's mode.
+  saveConfig({ trigger: { copilot: ['autopilot', 'plan'] } })
+  t.after(() => saveConfig({ trigger: {} }))
+  assert.equal(c.handle({ type: 'hook', sessionId: 'old2', kind: 'activity', mode: 'plan', ts: Date.now() }).tracked, true)
+  c.handle({ type: 'hook', sessionId: 'old2', kind: 'stop', mode: 'interactive', ts: Date.now() })
+  assert.equal(c.sessions.has('old2'), false, 'stop in a mode that does not count: retired')
 })
