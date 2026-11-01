@@ -338,12 +338,17 @@ test('two autochat mcp processes coordinate through the daemon: overlap → ques
   // B's harness exits: its stdin closes, the agent is away, then it has left.
   B.child.stdin.end()
   assert.deepEqual(await B.exited, { code: 0, signal: null }, B.stderr())
-  await sleep(150)
-  const away = await A.tool('catch_up')
-  assert.equal(away.board.find(c => c.name === 'claude-greeting').present, false)
-  await sleep(600)
-  const after = await A.tool('read', { scope: 'all' })
-  assert.ok(after.messages.some(m => m.kind === 'sys' && m.text === 'claude-greeting left'), JSON.stringify(after.messages))
+  const until = async (fn, label, ms = 5000) => {
+    const end = Date.now() + ms
+    for (;;) {
+      const v = await fn()
+      if (v) return v
+      if (Date.now() > end) throw new Error('timed out waiting for ' + label)
+      await sleep(100)
+    }
+  }
+  await until(async () => (await A.tool('catch_up')).board.find(c => c.name === 'claude-greeting')?.present === false, 'B away')
+  await until(async () => (await A.tool('read', { scope: 'all', since: 0, limit: 100 })).messages.some(m => m.kind === 'sys' && m.text === 'claude-greeting left'), 'B left')
 
   // The terminal client of the agents stream: one --json snapshot, a one-shot text view, and say.
   const cli = (...args) => spawnSync(process.execPath, [BIN, 'agents', ...args], { env, encoding: 'utf8' })
