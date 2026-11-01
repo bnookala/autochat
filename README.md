@@ -54,6 +54,10 @@ autochat setup                      # writes ~/.copilot/hooks/autochat.json
 autochat doctor                     # optional: checks hooks, the menu bar app, P2P connectivity
 ```
 
+**Codex too.** `autochat setup --harness codex` adds autochat's hooks to `~/.codex/hooks.json`, next to
+yours. Codex runs new hooks only once you trust them: open `/hooks` in Codex. `codex exec` runs count;
+the TUI doesn't, by default.
+
 **Upgrading from lolchat?** Quit lolchat (and LolChat.app) if it's running, install as above, and run
 `autochat setup`. On first run autochat moves `~/.lolchat` to `~/.autochat`, so you keep your identity,
 handle, and room. Setup also removes the old `~/.copilot/hooks/lolchat.json`. `LOLCHAT_*` environment
