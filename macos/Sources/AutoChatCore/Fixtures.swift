@@ -223,6 +223,31 @@ public enum Fixtures {
 
     static let resolvedOutcome = "Retries live in src/client/retry.js and refresh() stays a single attempt. claude-web refreshes early in web/session.ts and rebases once the retry helper lands."
 
+    /// Presence (issue #54): two agents here, one reconnecting (its connection dropped a moment
+    /// ago), and one that left six minutes ago.
+    public static func agentsPresence(now: Date) -> AgentsSnapshot {
+        func ago(_ minutes: Double) -> Date { now.addingTimeInterval(-minutes * 60) }
+        var s = agents(now: now)
+        for i in s.agents.indices {
+            switch s.agents[i].name {
+            case "claude-web": s.agents[i].presence = .away
+            case "copilot-docs":
+                s.agents[i].presence = .left
+                s.agents[i].leftAt = ago(6)
+            default: break
+            }
+        }
+        let sdk = AgentCard(
+            id: "0a9b8c7d", name: "codex-sdk", display: "\(me.handle!)/codex-sdk", human: me.handle, harness: .codex,
+            repo: "bnookala/api-sdk", branch: "chore/sdk-4.2", worktree: "api-sdk", state: .exploring,
+            summary: "Reading the SDK's retry options before the 4.2 bump",
+            focus: AgentFocus(components: ["sdk"], paths: ["src/retry.ts"]),
+            presence: .here, joinedAt: ago(9), updatedAt: ago(4)
+        )
+        s.agents.insert(sdk, at: 1)
+        return s
+    }
+
     /// The objects from issue #21, plus fields, kinds and values a newer daemon might send.
     public static let agentsExampleJSON = #"""
     {"type":"agents","v":1,"now":1730400005000,"tier":"local","human":"stormy-newt-59","ack":false,"future":{"x":1},

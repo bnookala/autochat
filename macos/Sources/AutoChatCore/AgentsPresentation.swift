@@ -192,11 +192,48 @@ public enum AgentsRules {
         return bits.joined(separator: " · ")
     }
 
-    /// "2 active · 1 left" for the board header.
+    /// "2 active · 1 reconnecting · 1 left" for the board header.
     public static func boardCounts(_ cards: [AgentCard]) -> String {
-        let present = cards.filter(\.present).count
-        let gone = cards.count - present
-        return gone > 0 ? "\(present) active · \(gone) left" : "\(present) active"
+        let here = cards.filter { $0.presence == .here }.count
+        let away = cards.filter { $0.presence == .away }.count
+        let gone = cards.filter { $0.presence == .left }.count
+        var bits = ["\(here) active"]
+        if away > 0 { bits.append("\(away) reconnecting") }
+        if gone > 0 { bits.append("\(gone) left") }
+        return bits.joined(separator: " · ")
+    }
+
+    // MARK: Presence
+
+    /// Here first, then reconnecting, then gone; otherwise in the daemon's order.
+    public static func board(_ cards: [AgentCard]) -> [AgentCard] {
+        cards.enumerated()
+            .sorted { ($0.element.presence.rank, $0.offset) < ($1.element.presence.rank, $1.offset) }
+            .map(\.element)
+    }
+
+    /// What a card says instead of its state once the agent isn't here: "reconnecting…" while the
+    /// daemon holds its place (`away`), and "left 4 min ago" once it's gone (just "left" when the
+    /// daemon doesn't say when). `now` is the daemon's clock.
+    public static func presenceNote(_ card: AgentCard, now: Date?) -> String? {
+        switch card.presence {
+        case .here: return nil
+        case .away: return "reconnecting…"
+        case .left:
+            guard let leftAt = card.leftAt, let now else { return "left" }
+            return "left \(ago(leftAt, now: now))"
+        }
+    }
+
+    /// "just now", "4 min ago", "2 h ago", "3 d ago".
+    public static func ago(_ date: Date, now: Date) -> String {
+        let seconds = max(0, now.timeIntervalSince(date))
+        switch seconds {
+        case ..<60: return "just now"
+        case ..<3600: return "\(Int(seconds / 60)) min ago"
+        case ..<86_400: return "\(Int(seconds / 3600)) h ago"
+        default: return "\(Int(seconds / 86_400)) d ago"
+        }
     }
 
     /// "overlaps with claude-web", or with several.

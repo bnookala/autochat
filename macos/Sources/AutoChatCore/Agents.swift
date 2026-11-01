@@ -73,6 +73,30 @@ public enum AgentState: Sendable, Equatable, Hashable {
     }
 }
 
+/// Where an agent is (issue #54): connected, dropped and inside its resume window, or gone.
+public enum AgentPresence: Sendable, Equatable, Hashable {
+    case here, away, left
+
+    /// nil for anything else: then the card's `present` decides.
+    public init?(raw: String?) {
+        switch raw?.trimmingCharacters(in: .whitespaces).lowercased() {
+        case "here": self = .here
+        case "away": self = .away
+        case "left": self = .left
+        default: return nil
+        }
+    }
+
+    /// Board order: here, then reconnecting, then gone.
+    public var rank: Int {
+        switch self {
+        case .here: 0
+        case .away: 1
+        case .left: 2
+        }
+    }
+}
+
 /// `focus` on a card: what overlap is computed from.
 public struct AgentFocus: Sendable, Equatable, Decodable {
     public var issue: Int?
@@ -111,17 +135,24 @@ public struct AgentCard: Sendable, Equatable, Decodable, Identifiable {
     public var state: AgentState?
     public var summary: String?
     public var focus: AgentFocus?
-    /// False once its connection closed (reconnecting, or left). Missing means present.
-    public var present: Bool
+    /// here, away (reconnecting) or left. A daemon without `presence` only says `present`:
+    /// then present is `here` and anything else is `left`, as before.
+    public var presence: AgentPresence
+    /// When it left, once `presence` is `left` (if the daemon says).
+    public var leftAt: Date?
     public var joinedAt: Date?
     public var updatedAt: Date?
     /// Names of the agents it overlaps with.
     public var overlaps: [String]
 
+    /// Connected now (`presence == .here`): the protocol's `present`.
+    public var present: Bool { presence == .here }
+
     public init(
         id: String, name: String, display: String? = nil, human: String? = nil, harness: AgentHarness = .generic(nil),
         repo: String? = nil, branch: String? = nil, worktree: String? = nil, state: AgentState? = nil, summary: String? = nil,
-        focus: AgentFocus? = nil, present: Bool = true, joinedAt: Date? = nil, updatedAt: Date? = nil, overlaps: [String] = []
+        focus: AgentFocus? = nil, present: Bool = true, presence: AgentPresence? = nil, leftAt: Date? = nil,
+        joinedAt: Date? = nil, updatedAt: Date? = nil, overlaps: [String] = []
     ) {
         self.id = id
         self.name = name
@@ -134,14 +165,15 @@ public struct AgentCard: Sendable, Equatable, Decodable, Identifiable {
         self.state = state
         self.summary = summary
         self.focus = focus
-        self.present = present
+        self.presence = presence ?? (present ? .here : .left)
+        self.leftAt = leftAt
         self.joinedAt = joinedAt
         self.updatedAt = updatedAt
         self.overlaps = overlaps
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, display, human, harness, repo, branch, worktree, state, summary, focus, present, joinedAt, updatedAt, overlaps
+        case id, name, display, human, harness, repo, branch, worktree, state, summary, focus, present, presence, leftAt, joinedAt, updatedAt, overlaps
     }
 
     public init(from decoder: Decoder) throws {
@@ -162,7 +194,8 @@ public struct AgentCard: Sendable, Equatable, Decodable, Identifiable {
         state = AgentState(raw: c.lenient(String.self, .state))
         summary = c.nonEmpty(.summary)
         focus = c.lenient(AgentFocus.self, .focus)
-        present = c.lenient(Bool.self, .present) ?? true
+        presence = AgentPresence(raw: c.lenient(String.self, .presence)) ?? ((c.lenient(Bool.self, .present) ?? true) ? .here : .left)
+        leftAt = c.lenientDate(.leftAt)
         joinedAt = c.lenientDate(.joinedAt)
         updatedAt = c.lenientDate(.updatedAt)
         overlaps = c.lenient(LossyList<String>.self, .overlaps)?.items.filter { !$0.isEmpty } ?? []
