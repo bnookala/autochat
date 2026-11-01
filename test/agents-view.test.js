@@ -82,7 +82,7 @@ async function host (t, opts = {}) {
   t.after(async () => { room.close(); await new Promise(resolve => server.close(resolve)) })
   // One agent, so there's someone to read the intervention.
   const sent = []
-  const agent = room.connect({ type: 'agent-hello', v: 1, harness: 'copilot', repo: 'o/r', cwd: '/w' }, { send: (m) => sent.push(m), end () {} })
+  const agent = room.connect({ type: 'agent-hello', v: 1, harness: 'copilot', name: 'copilot-r', repo: 'o/r', cwd: '/w' }, { send: (m) => sent.push(m), end () {} })
   const read = () => { agent.message({ type: 'cmd', id: 1, cmd: 'read' }); return sent.at(-1).result.messages }
   return { room, acks, read }
 }

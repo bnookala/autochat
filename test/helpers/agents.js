@@ -71,9 +71,13 @@ export function client () {
 
 export const HELLO = { type: 'agent-hello', v: 1, harness: 'copilot', name: null, pid: 4242, harnessPid: 4200, sessionId: null, cwd: '/w/x', repo: 'owner/repo', branch: 'feat-x', worktree: 'x', resume: null }
 
+// Test agents are named <harness>-<repo name or cwd basename> (the default name before #66, which
+// derives names from titles), unless the test passes a `name`: `name: null` gets the default.
+export const testName = (h) => `${h.harness}-${(h.repo && h.repo.split('/').pop()) || path.basename(h.cwd || '')}`.toLowerCase().replace(/[^a-z0-9-]+/g, '-')
+
 export async function agent (hello = {}) {
   const c = client()
-  c.send({ ...HELLO, ...hello })
+  c.send({ ...HELLO, ...hello, name: hello.name !== undefined ? hello.name : testName({ ...HELLO, ...hello }) })
   c.welcome = await c.next(m => m.type === 'agent-welcome' || m.type === 'error', 5000, 'welcome')
   c.name = c.welcome.agent?.name
   return c

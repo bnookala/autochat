@@ -25,6 +25,6 @@ test('catchUp: you, tier, board, threads, last decisions, recent main stream, un
   const fresh = await agent({ harness: 'gemini' })
   const card = ok(await fresh.cmd('catchUp')).you
   assert.deepEqual([card.state, card.summary, card.focus], ['idle', null, { issue: null, components: [], paths: [] }])
-  assert.deepEqual(Object.keys(card), ['id', 'name', 'display', 'human', 'harness', 'repo', 'branch', 'worktree', 'state', 'summary', 'focus', 'present', 'joinedAt', 'updatedAt', 'overlaps'])
+  assert.deepEqual(Object.keys(card), ['id', 'name', 'display', 'human', 'title', 'parent', 'harness', 'repo', 'branch', 'worktree', 'state', 'summary', 'focus', 'present', 'joinedAt', 'updatedAt', 'overlaps'])
   for (const x of [a, b, fresh]) x.close()
 })

@@ -32,7 +32,7 @@ export const methods = {
       if (this._live().length >= this.limits.maxAgents) return refuse('too many agents')
       const now = this.now()
       const taken = this._takenNames()
-      const name = dedupeName(normalizeName(hello.name) || defaultName(info), taken)
+      const name = dedupeName(normalizeName(hello.name) || defaultName(info), taken, info.branch)
       agent = {
         id: this._newAgentId(),
         token: hex(16),
@@ -68,7 +68,7 @@ export const methods = {
       tier: TIER,
       room: 'local',
       resume: agent.token,
-      agent: { id: agent.id, name: agent.name, human: this.human, display: this._display(agent), harness: agent.harness }
+      agent: { id: agent.id, name: agent.name, human: this.human, display: this._display(agent), harness: agent.harness, title: this._titleOf(agent) }
     })
     // presence.js posts "<name> joined" for a new agent; overlap.js recomputes a resumed one's.
     this._hook('join', agent, { resumed })
@@ -85,6 +85,7 @@ export const methods = {
     const pid = (v) => int(v) && v > 0 ? v : null
     const repo = isStr(h.repo) && /^[\w.-]+\/[\w.-]+$/.test(h.repo) && h.repo.length <= 140 ? h.repo : null
     return {
+      helloTitle: this._helloTitle(h.title),
       harness: normalizeName(h.harness).slice(0, 20) || 'agent',
       pid: pid(h.pid),
       harnessPid: pid(h.harnessPid),

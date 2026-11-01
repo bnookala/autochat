@@ -8,15 +8,15 @@ See the [module map](README.md#module-map).
 The agent's first line:
 
 ```json
-{"type":"agent-hello","v":1,"harness":"copilot","name":null,"pid":4242,"harnessPid":4200,"sessionId":null,
- "cwd":"/Users/me/code/x","repo":"owner/repo","branch":"feat-x","worktree":"x","resume":null}
+{"type":"agent-hello","v":1,"harness":"copilot","name":null,"pid":4242,"harnessPid":4200,"sessionId":"0b7c9d36-…",
+ "cwd":"/Users/me/code/x","repo":"owner/repo","branch":"feat-x","worktree":"x","title":"Lolchat macos menu bar app","resume":null}
 ```
 
 The daemon replies:
 
 ```json
 {"type":"agent-welcome","v":1,"tier":"local","room":"local","resume":"<opaque token>",
- "agent":{"id":"a1b2c3d4","name":"copilot-x","human":"stormy-newt-59","display":"stormy-newt-59/copilot-x","harness":"copilot"}}
+ "agent":{"id":"a1b2c3d4","name":"lolchat-macos-menu-bar-app","human":"stormy-newt-59","display":"Lolchat macos menu bar app","harness":"copilot","title":"Lolchat macos menu bar app"}}
 ```
 
 or refuses with one line and closes: `{"type":"error","v":1,"error":…}`, where `error` is
@@ -24,19 +24,20 @@ or refuses with one line and closes: `{"type":"error","v":1,"error":…}`, where
 `1` or omitted). Malformed hello fields are dropped (`null`) rather than refused; `repo` must look
 like `owner/repo`.
 
+- **`title`** is the harness's title for the session, if the client can read one (Copilot's session
+  name, pi's `/name`: [agents.md](../agents.md#the-mcp-server-autochat-mcp) has each harness). It
+  becomes the card's title, and the agent's name is a slug of it ([names.md](names.md)). The daemon
+  keeps one line of it, removes ID-like tokens, cuts it to 80 characters, and drops it when it
+  looks like a secret. A resume's hello updates it.
+- **`sessionId`** is the harness's session id, when the client's environment has it
+  (`COPILOT_AGENT_SESSION_ID`, `CLAUDE_CODE_SESSION_ID`, pi's session id).
+- **`welcome.agent`**: `display` is the card's title in the local tier, with no `human/` prefix,
+  and `title` is the card's title too.
+
 A resume is a new connection whose hello carries the welcome's `resume` token; see
 [presence.md](presence.md). Names are in [names.md](names.md).
 
 ### Planned in P1
-
-From "Names and hello" (#66, `hello.js` and `names.js`):
-
-- `agent-hello` += `title`: the harness's session title, up to 80 characters.
-  - `autochat mcp` fills it in for Copilot from `name:` in
-    `~/.copilot/session-state/<COPILOT_AGENT_SESSION_ID>/workspace.yaml`.
-  - It also sets `sessionId` from `COPILOT_AGENT_SESSION_ID`.
-  - Other harnesses fill it in where their adapter can read a title.
-- `welcome.agent` += `title`.
 
 From "Doorbell" (#52, `inbox.js` and the harness hooks):
 

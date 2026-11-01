@@ -38,6 +38,9 @@ export const methods = {
       if (typeof msg.focus !== 'object' || Array.isArray(msg.focus)) fail('focus must be an object')
       patch.focus = this._focus(msg.focus, agent.focus)
     }
+    // names.js: the card's title ("" restores the default) and its parent agent (null or "" for none).
+    if (!opt(msg.title)) patch.ownTitle = this._statusTitle(msg.title)
+    if (msg.parent !== undefined) patch.parent = this._statusParent(agent, msg.parent)
     let name = null
     if (!opt(msg.name)) {
       if (!isStr(msg.name) || !normalizeName(msg.name)) fail('name must use a-z, 0-9 and -')

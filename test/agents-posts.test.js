@@ -12,7 +12,7 @@ test('post/read: inbox vs all, cursors, mentions, replies, and hasMore', async (
   assert.equal(note.message.kind, 'note')
   assert.equal(note.message.text, 'heads up: redoing the cache\n\n\nlayer', 'multiline sanitize keeps \\n and collapses blank lines')
   assert.deepEqual(Object.keys(note.message), ['seq', 'id', 'ts', 'kind', 'from', 'thread', 'to', 'replyTo', 'text', 'intervention'])
-  assert.deepEqual(note.message.from, { name: 'copilot-repo', display: 'stormy-newt-59/copilot-repo', human: 'stormy-newt-59', harness: 'copilot', repo: 'owner/repo', id: a.welcome.agent.id })
+  assert.deepEqual(note.message.from, { name: 'copilot-repo', display: 'repo@feat-x', human: 'stormy-newt-59', harness: 'copilot', repo: 'owner/repo', id: a.welcome.agent.id, title: 'repo@feat-x' })
   assert.equal(note.thread, undefined)
 
   // A main-stream note to nobody isn't in anyone's inbox, but scope:"all" has it.

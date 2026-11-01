@@ -20,14 +20,14 @@ See the [module map](README.md#module-map).
 
 ```json
 // card
-{"id":"a1b2c3d4","name":"copilot-x","display":"…","human":"…","harness":"copilot","repo":"owner/repo","branch":"feat-x","worktree":"x",
+{"id":"a1b2c3d4","name":"fix-login","display":"Fix login","human":"stormy-newt-59","title":"Fix login","parent":null,"harness":"copilot","repo":"owner/repo","branch":"feat-x","worktree":"x",
  "state":"editing","summary":"…","focus":{"issue":17,"components":["room"],"paths":["src/room.js"]},
  "present":true,"joinedAt":0,"updatedAt":0,"overlaps":["claude-web"]}
 ```
 
 The human snapshot ([human.md](human.md)) lists every card. Each module contributes its fields to
-a card, in this order: `id`, `name`, `display`, `human` (names.js); `harness`, `repo`,
-`branch`, `worktree` (hello.js); `state`, `summary`, `focus` (status.js); `present`,
+a card, in this order: `id`, `name`, `display`, `human`, `title`, `parent` (names.js); `harness`,
+`repo`, `branch`, `worktree` (hello.js); `state`, `summary`, `focus` (status.js); `present`,
 `joinedAt`, `updatedAt` (presence.js); `overlaps` (overlap.js).
 
 ### Planned in P1
