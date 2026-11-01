@@ -350,3 +350,116 @@ test('two autochat mcp processes coordinate through the daemon: overlap → ques
   await new Promise(resolve => daemon.on('exit', resolve))
   assert.match(daemonErr, /agent claude-greeting \(claude\) left/)
 })
+
+// --- leaving: `bye` ---------------------------------------------------------------------------
+
+test('DaemonLink.bye: says bye, then closes for good; bounded when the daemon never answers; a no-op when not connected', async (t) => {
+  const net = await import('node:net')
+  const { sockPath } = await import('../src/paths.js')
+  const { DaemonLink, BYE_TIMEOUT_MS } = await import('../src/agent-client/client.js')
+  assert.ok(BYE_TIMEOUT_MS <= 500, 'short: it runs in the harness\'s shutdown')
+  const home = path.join(tmp, 'bye')
+  fs.mkdirSync(home, { recursive: true })
+  process.env.AUTOCHAT_HOME = home
+  let connections = 0
+  let answer = true
+  const got = []
+  const server = net.createServer((sock) => {
+    connections++
+    let buf = ''
+    sock.setEncoding('utf8')
+    sock.on('error', () => {})
+    sock.on('data', (d) => {
+      buf += d
+      let i
+      while ((i = buf.indexOf('\n')) !== -1) {
+        const msg = JSON.parse(buf.slice(0, i))
+        buf = buf.slice(i + 1)
+        got.push(msg.type === 'cmd' ? msg.cmd : msg.type)
+        if (msg.type === 'agent-hello') sock.write(JSON.stringify({ type: 'agent-welcome', v: 1, resume: 'tok', agent: { id: 'a1b2c3d4', name: 'x' } }) + '\n')
+        else if (msg.cmd === 'bye' && answer) sock.end(JSON.stringify({ type: 'reply', id: msg.id, ok: true, result: {}, inbox: { unread: 0, mentions: 0 } }) + '\n')
+      }
+    })
+  })
+  fs.mkdirSync(path.dirname(sockPath()), { recursive: true })
+  await new Promise(resolve => server.listen(sockPath(), resolve))
+  t.after(() => server.close())
+  const hello = { type: 'agent-hello', v: 1, harness: 'copilot' }
+
+  const link = new DaemonLink({ hello, wake: () => false })
+  link.start()
+  assert.equal(await link.ready(3000), true)
+  let t0 = Date.now()
+  await link.bye()
+  assert.ok(Date.now() - t0 < 200, 'the daemon answered at once')
+  assert.deepEqual(got.splice(0), ['agent-hello', 'bye'])
+  assert.equal(link.closed, true)
+
+  answer = false
+  const silent = new DaemonLink({ hello, wake: () => false })
+  silent.start()
+  assert.equal(await silent.ready(3000), true)
+  t0 = Date.now()
+  await silent.bye(150)
+  const took = Date.now() - t0
+  assert.ok(took >= 140 && took < 1000, `gave up after the timeout (${took} ms)`)
+  assert.deepEqual(got.splice(0), ['agent-hello', 'bye'])
+
+  const never = new DaemonLink({ hello, wake: () => false })
+  t0 = Date.now()
+  await never.bye()
+  assert.ok(Date.now() - t0 < 50, 'nothing to say without a connection')
+  never.start()
+  await sleep(800)
+  assert.equal(connections, 2, 'no reconnects after bye, and none for a link that never connected')
+  assert.deepEqual(got, [])
+})
+
+test('autochat mcp says bye when its harness closes it (stdin EOF, SIGTERM, SIGINT): the others see it left at once, not after the 10 s window', { timeout: 60000 }, async (t) => {
+  const home = path.join(tmp, 'e')
+  fs.mkdirSync(home, { recursive: true })
+  const env = { ...process.env, AUTOCHAT_HOME: home, COPILOT_HOME: path.join(tmp, 'copilot'), AUTOCHAT_APP_DIRS: path.join(tmp, 'no-apps'), AUTOCHAT_NO_NOTIFY: '1', AUTOCHAT_NO_FOCUS: '1' }
+  delete env.AUTOCHAT_AGENT_RESUME_MS
+  process.env.AUTOCHAT_HOME = home
+  const daemon = spawn(process.execPath, [BIN, 'daemon'], { env, stdio: ['ignore', 'ignore', 'pipe'] })
+  let daemonErr = ''
+  daemon.stderr.on('data', (d) => { daemonErr += d })
+  t.after(() => daemon.kill('SIGKILL'))
+  let pong = null
+  for (let i = 0; i < 100 && !pong; i++) {
+    pong = await send({ type: 'ping' }, 300)
+    if (!pong) await sleep(100)
+  }
+  assert.equal(pong?.agentRoom, true)
+
+  // Another agent watches the board.
+  const { DaemonLink, agentHello } = await import('../src/agent-client.js')
+  const watcher = new DaemonLink({ hello: agentHello({ harness: 'claude', pid: process.pid, cwd: tmp, git: {}, env: {} }), wake: () => false })
+  watcher.start()
+  t.after(() => watcher.close())
+  assert.equal(await watcher.ready(5000), true)
+  const card = async (name) => (await watcher.request('catchUp')).result.board.find(c => c.name === name)
+
+  for (const how of ['EOF', 'SIGTERM', 'SIGINT']) {
+    const name = 'copilot-' + how.toLowerCase()
+    const p = mcpProcess(tmp, 'copilot', { ...env, AUTOCHAT_AGENT_NAME: name })
+    t.after(() => p.child.kill('SIGKILL'))
+    await p.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } })
+    assert.equal((await p.tool('catch_up')).you.name, name)
+    assert.equal((await card(name)).presence, 'here')
+
+    const t0 = Date.now()
+    if (how === 'EOF') p.child.stdin.end()
+    else p.child.kill(how)
+    assert.deepEqual(await p.exited, { code: 0, signal: null }, p.stderr())
+    assert.ok(Date.now() - t0 < 2000, `${how}: exits promptly`)
+    let c = await card(name)
+    for (let i = 0; i < 40 && c.presence !== 'left'; i++) { await sleep(50); c = await card(name) }
+    assert.deepEqual([c.presence, c.present], ['left', false], `${how}: left`)
+    assert.ok(Date.now() - t0 < 5000, `${how}: left long before the resume window ends`)
+    const all = (await watcher.request('read', { scope: 'all', since: 0, limit: 100 })).result.messages
+    assert.ok(all.some(m => m.kind === 'sys' && m.text === `${name} left`), `${how}: the "left" line`)
+  }
+  assert.doesNotMatch(daemonErr, /agent copilot-\w+ \(copilot\) away/, 'never away first')
+  assert.match(daemonErr, /agent copilot-sigint \(copilot\) left/)
+})

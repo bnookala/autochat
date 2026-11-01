@@ -72,8 +72,10 @@ It speaks MCP over stdio (newline-delimited JSON-RPC 2.0, no SDK) and is a thin 
 `autochat daemon` over the local unix socket. It never opens a network connection and holds no
 keys. The process's lifetime is the agent's presence: the agent joins the room at its first tool
 call (or 3 s after its harness starts the server, so the quick health checks that `claude mcp get`
-and friends run don't flash in and out), and when the harness closes the server (stdin EOF or
-`SIGTERM`), the agent shows as away, and after 10 s it has left.
+and friends run don't flash in and out). When the harness closes the server (stdin EOF,
+`SIGTERM` or `SIGINT`), the server says `bye` and the agent has left at once (it waits at most
+300 ms for the daemon). If the connection just drops, the agent shows as away, and after 10 s it
+has left.
 
 - **Protocol versions.** Legacy clients that open with `initialize` get `2024-11-05`,
   `2025-03-26`, `2025-06-18` or `2025-11-25` (the client's version if it's one of these,
@@ -202,8 +204,8 @@ and talks to the daemon the same way `autochat mcp` does, through `src/agent-cli
 inside the pi process. The differences:
 
 - **Presence** is the pi session: the agent joins at its first autochat tool call or 3 s after the
-  session starts, and leaves when pi quits or starts another session (`/new`, `/resume`, `/fork`).
-  `/reload` comes back as the same agent.
+  session starts, and leaves at once (`bye`) when pi quits or starts another session (`/new`,
+  `/resume`, `/fork`). `/reload` comes back as the same agent.
 - **Who it is:** `harness: "pi"`, pi's session id, and pi's process as both `pid` and
   `harnessPid`.
 - **Results:** the same compact JSON text, cut at 50 KB as pi asks of its tools. Failures throw,
