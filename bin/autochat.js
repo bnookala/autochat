@@ -6,13 +6,21 @@ const cmd = ['--help', '-h'].includes(argv[0]) ? 'help' : argv[0] && !argv[0].st
 const rest = cmd === argv[0] ? argv.slice(1) : argv
 
 // The hook path is hot (runs on every tool call) and must never fail: handle it first.
+// `autochat hook [--harness <id>] <event>`: no --harness means copilot (what older installs run).
 if (cmd === 'hook') {
   let debug = false
   try {
     const { envVar } = await import('../src/env.js')
     debug = !!envVar('DEBUG')
+    let harness = 'copilot'
+    const args = []
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === '--harness') harness = rest[++i] ?? ''
+      else if (rest[i].startsWith('--harness=')) harness = rest[i].slice('--harness='.length)
+      else args.push(rest[i])
+    }
     const { runHook } = await import('../src/hook.js')
-    const res = await runHook(rest[0] || 'unknown')
+    const res = await runHook(args[0] || 'unknown', { harness })
     if (debug) process.stderr.write(JSON.stringify(res) + '\n')
   } catch (err) {
     if (debug) process.stderr.write(String(err?.stack || err) + '\n')
@@ -299,15 +307,16 @@ async function startCore ({ auto = false, daemon = false }) {
   drain()
   const drainTimer = setInterval(drain, 1000)
 
-  // Also follow autopilot sessions whose Copilot process predates the hooks.
-  const { liveSessions } = await import('../src/scan.js')
-  const scan = () => { try { controller.adopt(liveSessions({ idleMs: controller.config.idleMs })) } catch {} }
-  scan()
-  const scanTimer = setInterval(scan, 3000)
+  // Also follow sessions that never call the hooks (say, their process predates them): each
+  // adapter's fallback observer (Copilot: the session-state scan).
+  const { observeAll, triggerFor } = await import('../src/harness/index.js')
+  const stopObserving = observeAll({ idleMs: controller.config.idleMs, trigger: (id) => triggerFor(loadConfig(), id) }, (live, harness) => {
+    try { controller.adopt(live, harness) } catch {}
+  })
 
   const stop = async () => {
     clearInterval(drainTimer)
-    clearInterval(scanTimer)
+    stopObserving()
     agentRoom?.close()
     server.close()
     await controller.shutdown()

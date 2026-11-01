@@ -1,14 +1,16 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { quickMode } from './session.js'
 import { send } from './ipc.js'
 import { loadConfig } from './config.js'
 import { launchUI, pickMethod, notify } from './launcher.js'
 import { runDir, ensureDir, isValidSessionId } from './paths.js'
-import { parseRoom, sanitize } from './protocol.js'
+import { parseRoom } from './protocol.js'
+import { adapter, sessionEvent } from './harness/index.js'
+import { hookMessage } from './harness/event.js'
 
-export const HOOK_EVENTS = ['sessionStart', 'userPromptSubmitted', 'preToolUse', 'postToolUse', 'agentStop', 'notification', 'sessionEnd']
-const REQUEST_NOTIFICATIONS = new Set(['permission_prompt', 'elicitation_dialog'])
+// `autochat hook [--harness <id>] <event>`: the harness's adapter turns the payload into a
+// SessionEvent, which goes to the running core (or wakes one). Without --harness it's Copilot.
+export { HOOK_EVENTS } from './harness/copilot.js'
 // How long a launch may take before another hook tries again. Events in between are
 // spooled for the new process. Covers a cold AutoChat.app start (~2-3 s) plus its daemon.
 const LOCK_STALE_MS = 15000
@@ -16,24 +18,26 @@ const SPOOL_TTL_MS = 2 * 60 * 1000
 const NOTIFY_COOLDOWN_MS = 30 * 60 * 1000
 const OPTOUT_TTL_MS = 2 * 60 * 60 * 1000
 
-const optoutFile = (sid) => path.join(runDir(), 'optout-' + sid)
+// Per-session files: Copilot's keep the names they had before there were other harnesses.
+const fileKey = (sid, harness) => !harness || harness === 'copilot' ? sid : `${harness}-${sid}`
+const optoutFile = (sid, harness) => path.join(runDir(), 'optout-' + fileKey(sid, harness))
 const lockFile = () => path.join(runDir(), 'launch.lock')
 
-export function setOptout (sid) {
+export function setOptout (sid, harness) {
   if (!isValidSessionId(sid)) return
   ensureDir(runDir())
-  fs.writeFileSync(optoutFile(sid), String(Date.now()))
+  fs.writeFileSync(optoutFile(sid, harness), String(Date.now()))
 }
 
-export function clearOptout (sid) {
-  try { fs.unlinkSync(optoutFile(sid)) } catch {}
+export function clearOptout (sid, harness) {
+  try { fs.unlinkSync(optoutFile(sid, harness)) } catch {}
 }
 
-function optedOut (sid) {
+function optedOut (sid, harness) {
   try {
-    const st = fs.statSync(optoutFile(sid))
+    const st = fs.statSync(optoutFile(sid, harness))
     if (Date.now() - st.mtimeMs < OPTOUT_TTL_MS) return true
-    clearOptout(sid)
+    clearOptout(sid, harness)
   } catch {}
   return false
 }
@@ -59,95 +63,9 @@ export function releaseLaunchLock () {
   try { fs.unlinkSync(lockFile()) } catch {}
 }
 
-function describeQuestion (args) {
-  if (!args || typeof args !== 'object') return ''
-  let text = args.question || args.message || ''
-  if (Array.isArray(args.choices) && args.choices.length) text += ' [' + args.choices.join(' / ') + ']'
-  const props = args.requestedSchema?.properties
-  if (props && typeof props === 'object') {
-    const fields = Object.values(props).filter(p => p && p.title).map(p => Array.isArray(p.enum) ? `${p.title}: ${p.enum.join(' / ')}` : p.title)
-    if (fields.length) text += ' (' + fields.join(', ') + ')'
-  }
-  return text
-}
-
-function parseArgs (a) {
-  if (typeof a === 'string') { try { return JSON.parse(a) } catch { return { question: a } } }
-  return a
-}
-
-// Real CLI payloads differ from the docs: preToolUse batches `toolCalls: [{name, args}]`
-// and notifications use `notificationType`. Accept every shape we've seen.
-function toolCalls (p) {
-  if (Array.isArray(p.toolCalls)) return p.toolCalls.filter(c => c && typeof c === 'object').map(c => ({ name: c.name || c.toolName, args: parseArgs(c.args ?? c.arguments ?? c.toolArgs) }))
-  const name = p.toolName || p.tool_name
-  return name ? [{ name, args: parseArgs(p.toolArgs ?? p.tool_input) }] : []
-}
-
-export function buildMessage (event, p, env, mode) {
-  const sessionId = p.sessionId || p.session_id || env.COPILOT_AGENT_SESSION_ID
-  if (!isValidSessionId(sessionId)) return null
-  const calls = toolCalls(p)
-  const find = (n) => calls.find(c => c.name === n)
-  const msg = {
-    type: 'hook',
-    event,
-    sessionId,
-    mode,
-    cwd: typeof p.cwd === 'string' ? sanitize(p.cwd, 300) : undefined,
-    ts: Date.now(),
-    origin: { tmux: env.TMUX, tmuxPane: env.TMUX_PANE, termProgram: env.TERM_PROGRAM, bundleId: env.__CFBundleIdentifier },
-    kind: 'notice'
-  }
-  switch (event) {
-    case 'userPromptSubmitted':
-    case 'UserPromptSubmit':
-      msg.kind = 'activity'
-      break
-    case 'postToolUse':
-    case 'PostToolUse':
-    case 'preToolUse':
-    case 'PreToolUse': {
-      const done = find('task_complete')
-      const ask = find('ask_user')
-      if (done && /^post/i.test(event)) {
-        msg.kind = 'complete'
-        msg.summary = sanitize(done.args?.summary || '', 2000)
-      } else if (ask && /^pre/i.test(event)) {
-        msg.kind = 'request'
-        msg.request = { title: 'Copilot has a question for you', message: sanitize(describeQuestion(ask.args), 600) }
-      } else {
-        msg.kind = 'activity'
-      }
-      break
-    }
-    case 'notification':
-    case 'Notification': {
-      const t = p.notification_type || p.notificationType
-      if (REQUEST_NOTIFICATIONS.has(t)) {
-        msg.kind = 'request'
-        msg.request = {
-          title: sanitize(p.title || (t === 'permission_prompt' ? 'Permission needed' : 'Copilot needs input'), 80),
-          message: sanitize(p.message || '', 600)
-        }
-      }
-      break
-    }
-    case 'agentStop':
-    case 'Stop':
-      msg.kind = 'stop'
-      break
-    case 'sessionEnd':
-    case 'SessionEnd':
-      msg.kind = 'end'
-      msg.reason = sanitize(String(p.reason || 'end'), 32)
-      break
-  }
-  return msg
-}
-
-export function shouldLaunch (msg) {
-  return msg.mode === 'autopilot' && (msg.kind === 'activity' || msg.kind === 'request')
+// Only an agent working on its own opens autochat: see byTrigger() in src/harness/event.js.
+export function shouldLaunch (ev) {
+  return ev.autonomy === 'autonomous' && (ev.kind === 'activity' || ev.kind === 'request')
 }
 
 function readStdin (timeoutMs = 3000) {
@@ -163,26 +81,27 @@ function readStdin (timeoutMs = 3000) {
 }
 
 /**
- * Entry point for Copilot CLI hooks. Must never fail or print: preToolUse
+ * Entry point for harness hooks. Must never fail or print: preToolUse
  * command hooks are fail-closed, so any error here could block a tool call.
  */
-export async function runHook (event, env = process.env) {
+export async function runHook (event, { harness = 'copilot', env = process.env } = {}) {
   const raw = await readStdin()
   let payload = {}
   try { payload = JSON.parse(raw || '{}') || {} } catch {}
   const cfg = loadConfig()
   if (cfg.launch === 'off') return { action: 'disabled' }
-  const sid = payload.sessionId || payload.session_id || env.COPILOT_AGENT_SESSION_ID
-  if (!isValidSessionId(sid)) return { action: 'no-session' }
-  const msg = buildMessage(event, payload, env, quickMode(sid))
-  if (!msg) return { action: 'no-session' }
-  if (msg.kind === 'complete' || msg.kind === 'end') clearOptout(sid)
+  const a = adapter(harness)
+  if (!a) return { action: 'unknown-harness' }
+  const ev = sessionEvent(a, event, payload, { env, config: cfg })
+  if (!ev) return { action: 'no-session' }
+  const msg = hookMessage(ev, event)
+  if (ev.kind === 'complete' || ev.kind === 'end') clearOptout(ev.sid, ev.harness)
 
   if (await send(msg, 600)) return { action: 'delivered' }
   // A UI is being launched right now: queue *every* event (including completions) for it.
   if (launchPending()) { spool(msg); return { action: 'spooled' } }
-  if (!shouldLaunch(msg)) return { action: 'ignored' }
-  if (optedOut(sid)) return { action: 'opted-out' }
+  if (!shouldLaunch(ev)) return { action: 'ignored' }
+  if (optedOut(ev.sid, ev.harness)) return { action: 'opted-out' }
 
   let roomDisplay = cfg.room
   try { roomDisplay = parseRoom(cfg.room).display } catch {}
@@ -190,8 +109,8 @@ export async function runHook (event, env = process.env) {
   if (method === 'off') return { action: 'disabled' }
   if (method === 'notify') {
     // No terminal we can open: nudge once per session rather than on every tool call.
-    if (!cooledDown(sid)) return { action: 'ignored' }
-    notify('autochat', `Autopilot engaged. Run \`autochat\` to join ${roomDisplay}.`)
+    if (!cooledDown(fileKey(ev.sid, ev.harness))) return { action: 'ignored' }
+    notify('autochat', `${a.id === 'copilot' ? 'Autopilot engaged' : `${a.name} is working on its own`}. Run \`autochat\` to join ${roomDisplay}.`)
     return { action: 'launched', method }
   }
   if (!acquireLock()) { spool(msg); return { action: 'spooled' } }
@@ -204,8 +123,8 @@ function launchPending () {
   try { return Date.now() - fs.statSync(lockFile()).mtimeMs < LOCK_STALE_MS } catch { return false }
 }
 
-function cooledDown (sid) {
-  const f = path.join(runDir(), 'notified-' + sid)
+function cooledDown (key) {
+  const f = path.join(runDir(), 'notified-' + key)
   try { if (Date.now() - fs.statSync(f).mtimeMs < NOTIFY_COOLDOWN_MS) return false } catch {}
   ensureDir(runDir())
   fs.writeFileSync(f, '')
