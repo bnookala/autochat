@@ -14,7 +14,7 @@ test('a question with `to` opens a thread automatically; thread open/resolve →
   assert.deepEqual({ ...thread, id: 0, openedAt: 0, lastAt: 0 }, { id: 0, title: 'Should token refresh live in src/auth.js or the client?', opener: 'copilot-repo', participants: ['copilot-repo', 'claude-repo'], status: 'open', outcome: null, messages: 1, openedAt: 0, lastAt: 0, owner: null, next: [], resolvedBy: null, resolvedAt: null })
   assert.equal(message.thread, thread.id)
   assert.equal(message.kind, 'question')
-  const sys = room.snapshot().messages.filter(m => m.kind === 'sys').at(-1)
+  const sys = room.snapshot().messages.filter(m => m.kind === 'sys' && m.text.startsWith('🧵')).at(-1)
   assert.equal(sys.text, '🧵 copilot-repo opened “Should token refresh live in src/auth.js or the client?” with claude-repo')
   assert.equal(sys.thread, null, 'the advertisement is on the main stream')
 

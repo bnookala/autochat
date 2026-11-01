@@ -23,7 +23,7 @@ export const methods = {
     this.tokens.delete(agent.token)
     // overlap.js forgets the agent's overlapping pairs.
     this._hook('leave', agent)
-    this._sys(`${agent.name} left`)
+    if (agent.active !== false) this._sys(`${agent.name} left`)
     agent.removeTimer = setTimeout(() => this._remove(agent), this.limits.lingerMs)
     agent.removeTimer.unref?.()
     this.emit('presence', 'left', this.card(agent))
@@ -44,9 +44,6 @@ export const methods = {
 }
 
 export function register (r) {
-  r.on('join', function (agent, { resumed }) {
-    if (!resumed) this._sys(`${agent.name} joined`)
-  })
   r.contribute('card', function ({ agent }) {
     return { present: agent.present, joinedAt: agent.joinedAt, updatedAt: agent.updatedAt }
   })

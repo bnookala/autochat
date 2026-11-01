@@ -29,7 +29,7 @@ export const methods = {
       if (old) old.end()
       Object.assign(agent, info)
     } else {
-      if (this._live().length >= this.limits.maxAgents) return refuse('too many agents')
+      if (this._full()) return refuse('too many agents')
       const now = this.now()
       const taken = this._takenNames()
       const name = dedupeName(normalizeName(hello.name) || defaultName(info), taken, info.branch)
@@ -70,7 +70,7 @@ export const methods = {
       resume: agent.token,
       agent: { id: agent.id, name: agent.name, human: this.human, display: this._display(agent), harness: agent.harness, title: this._titleOf(agent) }
     })
-    // presence.js posts "<name> joined" for a new agent; overlap.js recomputes a resumed one's.
+    // board.js makes a new agent idle until it speaks; overlap.js recomputes a resumed one's.
     this._hook('join', agent, { resumed })
     this.emit('presence', resumed ? 'back' : 'joined', this.card(agent))
     this._changed()
@@ -107,6 +107,9 @@ export const methods = {
 export function register (r) {
   // Resume tokens → agent ids, while an agent can still resume.
   r.on('init', function () { this.tokens = new Map() })
+  // board.js: a first status makes the agent active. Registered here, before overlap.js, so its
+  // "<name> joined" comes before that status's overlap notices.
+  r.on('status', function (agent) { this._activate(agent) })
   r.contribute('card', function ({ agent }) {
     return { harness: agent.harness, repo: agent.repo, branch: agent.branch, worktree: agent.worktree }
   })

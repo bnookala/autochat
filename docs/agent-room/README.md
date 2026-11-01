@@ -76,7 +76,7 @@ flat files, `test/agents-<module>.test.js`, with shared helpers in `test/helpers
 | hello | [`hello.js`](../../src/agents/hello.js): `connect`, hello parsing, welcome, resume tokens | `agents-hello` | [hello.md](hello.md) | #66, #52 |
 | presence | [`presence.js`](../../src/agents/presence.js): close, leave, remove, the live set, the resume window | `agents-presence` | [presence.md](presence.md) | #54 |
 | names | [`names.js`](../../src/agents/names.js): titles, normalize, default (a slug of the title), dedupe, display names, renames, parents, `to` and mentions | `agents-hello` | [names.md](names.md) | #66 |
-| board | [`board.js`](../../src/agents/board.js): cards, `catchUp`, the snapshot's cards | `agents-board` | [board.md](board.md) | #67 |
+| board | [`board.js`](../../src/agents/board.js): cards, `catchUp` and its scope, active and idle agents, the caps, the snapshot's cards | `agents-board` | [board.md](board.md) | #67 |
 | status | [`status.js`](../../src/agents/status.js): `status`, focus | `agents-status`, `agents-overlap`, `agents-guardrails` | [status.md](status.md) | #57, #53 |
 | overlap | [`overlap.js`](../../src/agents/overlap.js): paths, overlap computation, notices | `agents-overlap` | [overlap.md](overlap.md) | #56 |
 | posts | [`posts.js`](../../src/agents/posts.js): `post`, recipients | `agents-posts` | [posts.md](posts.md) | #54, #53, #57 |

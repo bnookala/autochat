@@ -9,8 +9,9 @@ See the [module map](README.md#module-map).
 Reconnecting within 10 s with the welcome's `resume` token reclaims the same id, name, cursor
 and unread inbox (a newer connection with the token replaces an older one, and a `wait` pending
 on the older one gets `superseded`). After 10 s a `sys`
-"`<name> left`" message is posted; the card stays visible for 10 minutes, then goes. A new agent
-gets a `sys` "`<name> joined`" message; a resume posts nothing.
+"`<name> left`" message is posted; the card stays visible for 10 minutes, then goes. An agent
+gets a `sys` "`<name> joined`" message when it first sets a status or posts, and only an agent that
+did gets "`<name> left`" ([board.md](board.md#active-and-idle-agents)); a resume posts nothing.
 
 ### Planned in P1
 

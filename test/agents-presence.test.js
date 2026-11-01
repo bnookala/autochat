@@ -8,6 +8,7 @@ test('presence: close → away → left (card lingers, then goes); resume within
   human.send({ type: 'subscribe', v: 1, stream: 'agents' })
   const a = await agent({ harness: 'copilot' })
   const b = await agent({ harness: 'claude' })
+  ok(await a.cmd('status', { summary: 'reading' })) // active, so its leaving is announced
   ok(await b.cmd('post', { text: 'hi', to: ['copilot-repo'] }))
   ok(await a.cmd('read'))
   const cursor = room.agents.get(a.welcome.agent.id).cursor
