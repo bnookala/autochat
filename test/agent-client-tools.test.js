@@ -55,10 +55,14 @@ test('tool calls: post passes a title', async () => {
   assert.deepEqual(calls.at(-1), { cmd: 'post', args: { text: 'Can you keep greet()?', kind: 'question', to: ['claude-web'], title: 'greet() stays' } })
 })
 
-test('tool calls: thread passes owner and next (a string is one step per line)', async () => {
+test('tool calls: thread passes owner and next (a string is one step per line); catch_up returns relevant', async () => {
   const { Tools } = await import('../src/agent-client.js')
   const calls = []
-  const result = () => ({ thread: {}, record: '### Decision' })
+  const decision = { seq: 3, kind: 'decision', from: { id: 'ffff0000' }, text: 'One cache per repo.' }
+  let relevant = [decision]
+  const result = (cmd) => cmd === 'catchUp'
+    ? { you: {}, tier: 'local', board: [], threads: [], ...(relevant && { relevant }), decisions: [], recent: [], inbox: [], cursor: 3 }
+    : { thread: {}, record: '### Decision' }
   const link = { on () {}, agent: { id: 'a1b2c3d4' }, request: async (cmd, args) => { calls.push({ cmd, args }); return { ok: true, result: result(cmd), inbox: { unread: 0, mentions: 0 } } } }
   const tools = new Tools({ link, session: { cwd: tmp, top: null } })
   const r = (await tools.call('thread', { action: 'resolve', thread: 'cache-1f', outcome: 'One cache per repo.', owner: 'claude-web', next: 'Key it by repo\n  Drop the old cache \n\n' })).structuredContent
@@ -66,4 +70,8 @@ test('tool calls: thread passes owner and next (a string is one step per line)',
   assert.equal(r.record, '### Decision')
   await tools.call('thread', { action: 'resolve', thread: 'cache-1f', outcome: 'x', next: ['a', 'b'] })
   assert.deepEqual(calls.at(-1).args.next, ['a', 'b'])
+  const out = (await tools.call('catch_up', {})).structuredContent
+  assert.deepEqual(out.relevant, [{ ...decision, untrusted: true }])
+  relevant = null
+  assert.deepEqual((await tools.call('catch_up', {})).structuredContent.relevant, [], 'an older daemon: none')
 })

@@ -210,3 +210,52 @@ test('seenBy: whoever resolved, then each agent that catchUp, read or wait retur
   for (const x of [c, d, e]) x.close()
 })
 
+test('decisions outlive their agents: catchUp.relevant has the ones whose thread focus overlaps yours', async (t) => {
+  const { room } = await start(t, { limits: { decisions: 1, relevant: 2, resumeMs: 30, lingerMs: 60 } })
+  const a = await agent({ harness: 'copilot' })
+  const b = await agent({ harness: 'claude' })
+  const c = await agent({ harness: 'codex' })
+  const early = await agent({ harness: 'early' })
+  ok(await a.cmd('status', { focus: { paths: ['src/auth.js'], components: ['Auth'] } }))
+  ok(await b.cmd('status', { focus: { issue: 12 } }))
+  ok(await c.cmd('status', { focus: { paths: ['src/ui.js'] } }))
+  ok(await early.cmd('status', { focus: { paths: ['src/auth.js'] } }))
+  ok(await early.cmd('catchUp'))
+  const decide = async (who, title, outcome, extra = {}) => {
+    const { thread } = ok(await who.cmd('thread', { action: 'open', title, ...extra }))
+    return ok(await who.cmd('thread', { action: 'resolve', thread: thread.id, outcome })).thread
+  }
+  await decide(a, 'token format', 'JWTs, not opaque tokens.')
+  await decide(a, 'refresh', 'Refresh lives in the client.', { with: ['claude-repo'] })
+  await decide(c, 'buttons', 'Primary buttons are blue.')
+  await decide(c, 'icons', 'SF Symbols only.')
+  // Everyone who decided has gone; their focus stays with their threads.
+  for (const x of [a, b, c]) x.close()
+  await until(() => room.agents.size === 1, 'a, b and c gone')
+
+  const relevantTo = async (harness, focus, hello = {}) => {
+    const n = await agent({ harness, ...hello })
+    if (focus) ok(await n.cmd('status', { focus }))
+    const r = ok(await n.cmd('catchUp'))
+    n.close()
+    return r
+  }
+  let r = await relevantTo('paths', { paths: ['src/auth.js'] })
+  assert.deepEqual(texts(r.relevant), ['JWTs, not opaque tokens.', 'Refresh lives in the client.'], 'posted before it joined, oldest first')
+  assert.deepEqual(texts(r.decisions), ['SF Symbols only.'], 'the last decision is in decisions, not repeated in relevant')
+  assert.deepEqual(r.relevant.map(m => [m.from.name, m.decision.owner, m.decision.seenBy.at(-1)]), [['copilot-repo', 'copilot-repo', 'paths-repo'], ['copilot-repo', 'copilot-repo', 'paths-repo']])
+  assert.deepEqual(texts((await relevantTo('issue', { issue: 12 })).relevant), ['Refresh lives in the client.'], "the participants' issues")
+  assert.deepEqual(texts((await relevantTo('comp', { components: ['auth'] })).relevant), ['JWTs, not opaque tokens.', 'Refresh lives in the client.'], 'components, case-insensitively')
+  assert.deepEqual(texts((await relevantTo('dir', { paths: ['src'] })).relevant), ['Refresh lives in the client.', 'Primary buttons are blue.'], 'at most `relevant` (here 2): the newest')
+  assert.deepEqual((await relevantTo('nofocus')).relevant, [], 'no focus, nothing overlaps')
+  assert.deepEqual((await relevantTo('elsewhere', { paths: ['src/auth.js'] }, { repo: 'owner/other' })).relevant, [], 'another repo')
+
+  // An agent that was here has the decisions in its inbox: catchUp doesn't repeat them in relevant,
+  // but shows them there later, once they're read.
+  r = ok(await early.cmd('catchUp'))
+  assert.deepEqual(texts(r.inbox.filter(m => m.kind === 'decision')), ['JWTs, not opaque tokens.', 'Refresh lives in the client.', 'Primary buttons are blue.', 'SF Symbols only.'])
+  assert.deepEqual([r.relevant, r.decisions], [[], []])
+  r = ok(await early.cmd('catchUp'))
+  assert.deepEqual(texts(r.relevant), ['JWTs, not opaque tokens.', 'Refresh lives in the client.'])
+  early.close()
+})

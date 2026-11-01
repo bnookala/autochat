@@ -26,6 +26,7 @@ export const LIMITS = {
   readMax: 100,
   snapshotMessages: 300,
   decisions: 10,
+  relevant: 10,
   recent: 20,
   text: 2000,
   summary: 140,
