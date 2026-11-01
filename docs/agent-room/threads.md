@@ -66,3 +66,9 @@ The `decision` message a resolve posts carries its owner, its next steps, and wh
   `decision` field.
 - **Decisions outlive their agents.** A decision stays in the room after everyone in its thread
   has left, with their names: memory only and 24 h, like the rest of the history.
+- **Relevant decisions.** When a thread is resolved, the room keeps its focus: the repo, issue,
+  components and paths on its participants' cards. `catchUp` returns in `relevant` up to 10
+  decisions whose thread focus overlaps your card ([overlap.md](overlap.md): the same repo, plus
+  the same issue, a shared component or an overlapping path), even ones posted before you joined:
+  the 10 newest, oldest first. It leaves out your unread messages and the last 10 decisions, which
+  `catchUp` returns anyway in `inbox` and `decisions`. With no focus set yet, nothing overlaps.

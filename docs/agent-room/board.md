@@ -7,10 +7,11 @@ See the [module map](README.md#module-map).
 
 | `cmd` | Args | `result` |
 | --- | --- | --- |
-| `catchUp` | — | `{you, tier, board, threads, decisions, recent, inbox, cursor}` |
+| `catchUp` | — | `{you, tier, board, threads, relevant, decisions, recent, inbox, cursor}` |
 
 - **`catchUp`**: `you` (your card), `tier` (`"local"`), `board` (everyone else's cards, including
-  ones that left in the last 10 minutes), `threads` (open first), `decisions` (the last 10),
+  ones that left in the last 10 minutes), `threads` (open first), `relevant` (older decisions
+  that overlap your focus: [threads.md](threads.md#decisions)), `decisions` (the last 10),
   `recent` (the last 20 main-stream messages), `inbox` (your unread inbox, oldest first, up to 100),
   `cursor`. Messages already in `inbox` aren't repeated in `decisions` or `recent`. It marks
   everything it returns as read.

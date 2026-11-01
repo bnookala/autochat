@@ -1,9 +1,10 @@
 import { sanitize, charCount } from '../text.js'
 import { fail, hex, isStr, label, opt } from './limits.js'
+import { overlapOn } from './overlap.js'
 
 // Threads: the `thread` command (open, resolve, list), thread ids and titles, and the decision a
-// resolve posts: its owner and next steps, who has seen it, and its record.
-// See docs/agent-room/threads.md.
+// resolve posts: its owner and next steps, who has seen it, its record, and the decisions that
+// catchUp shows as relevant. See docs/agent-room/threads.md.
 
 function threadSlug (title) {
   let slug = ''
@@ -55,6 +56,7 @@ export const methods = {
         t.owner = owner
         t.next = next
         t.participants.add(agent.id)
+        t.focus = this._threadFocus(t)
         this._sys(`🧵 ${agent.name} resolved “${t.title}”`)
         // The `post` hook below makes it the thread's decision.
         this._append({ kind: 'decision', from: this._from(agent), thread: t.id, text: outcome }, { author: agent.id })
@@ -87,8 +89,9 @@ export const methods = {
     let id
     do id = `${slug}-${hex(1)}`; while (this.threads.has(id))
     const now = this.now()
-    // A resolve sets resolvedAt and resolvedBy, owner and next, and the decision (its log entry).
-    const t = { id, title, opener: agent.id, participants: new Set([agent.id, ...withIds]), status: 'open', outcome: null, count: 0, openedAt: now, lastAt: now, resolvedAt: null, resolvedBy: null, owner: null, next: [], decision: null }
+    // A resolve sets resolvedAt and resolvedBy, owner and next, the participants' focus, and the
+    // decision (its log entry).
+    const t = { id, title, opener: agent.id, participants: new Set([agent.id, ...withIds]), status: 'open', outcome: null, count: 0, openedAt: now, lastAt: now, resolvedAt: null, resolvedBy: null, owner: null, next: [], focus: [], decision: null }
     this.threads.set(id, t)
     const names = withIds.map(i => this._nameOf(i))
     this._sys(`🧵 ${agent.name} opened “${title}”${names.length ? ' with ' + names.join(', ') : ''}`)
@@ -136,6 +139,34 @@ export const methods = {
       if (step) out.push(step)
     }
     return out
+  },
+
+  // A thread's focus, captured when it's resolved: its participants' repo, issue, components and
+  // paths, so its decision can find agents that overlap it after they have all left.
+  _threadFocus (t) {
+    const out = []
+    for (const id of t.participants) {
+      const a = this.agents.get(id)
+      if (a?.repo) out.push({ repo: a.repo, focus: { ...a.focus }, pathIndex: a.pathIndex })
+    }
+    return out
+  },
+
+  // Up to 10 decisions whose thread's focus overlaps your card, posted before you joined or not.
+  // It leaves out what catchUp returns anyway: your unread messages (`inbox`) and the last 10
+  // decisions (`decisions`). The newest ones, oldest first.
+  _relevant (agent) {
+    const L = this.limits
+    const last = new Set(this.log.filter(e => e.msg.kind === 'decision').slice(-L.decisions))
+    const out = []
+    const resolved = [...this.threads.values()].filter(t => t.decision).sort((a, b) => b.decision.msg.seq - a.decision.msg.seq)
+    for (const t of resolved) {
+      if (out.length === L.relevant) break
+      const e = t.decision
+      if (last.has(e) || agent.unread.has(e.msg.seq)) continue
+      if (t.focus.some(f => overlapOn(agent, f))) out.push(e)
+    }
+    return out.reverse()
   },
 
   // The record of a decision, in markdown, for the PR description or the linked issue.
@@ -189,6 +220,9 @@ export function register (r) {
   })
   r.contribute('catchUp', function () {
     return { threads: this._threadList() }
+  })
+  r.contribute('catchUp', function ({ agent }) {
+    return { relevant: this._deliver(agent, this._relevant(agent)) }
   })
   r.contribute('post', function ({ thread }) {
     return thread ? { thread: this._threadView(thread) } : null
