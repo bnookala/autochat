@@ -163,7 +163,7 @@ Share the invite however you like (Teams, Slack, a sticky note). There's no serv
 - At zero you're **pulled back to reality**: the chat closes, focus returns to your copilot, and you get its summary. Change the length with `autochat config countdown <seconds>`; `0` pulls you back immediately.
 - **Several agents at once:** you're in the room while any of them works, and the countdown only starts when the *last* one stops. Each one that's blocked on you, finished, or failed lands in the **attention queue** (the menu bar badge and panel, a strip in the chat, a line in the terminal UI where ctrl-g jumps to the top item). autochat never steals focus then: you jump to each agent from the queue. `autochat config focus auto|never|always` changes this (`auto`, the default, focuses back only when a single agent was at work).
 - The **host** is whoever was in the room first. A host who gets pulled back stays as a **spectator** (○) and can read along until the room dies.
-- The room **survives the host leaving** as long as anyone is still on autopilot.
+- The room **survives the host leaving** as long as anyone is still on autopilot, and hosting passes on by itself to whoever has been in the room longest and is still on autopilot, whether the host quits or crashes: `jade-lynx-0c is now host (handed off by stormy-newt-59)`. Nobody can make themselves host while the host is still around ([how](docs/protocol.md#lounge-room-host-p2p)).
 - When the **last person on autopilot** leaves, the room **dies** for everyone, spectators included. Nothing is kept, and the next person to show up starts a fresh room.
 - `ctrl-c` leaves the room early. You won't be pulled back in for the rest of that autopilot run.
 
@@ -223,6 +223,8 @@ AUTOCHAT_DEBUG=1 autochat hook preToolUse < payload.json   # = hook --harness co
 autochat daemon  # headless core for GUI clients; protocol in docs/protocol.md
 cd macos && swift build && swift test   # the macOS app (see macos/README.md)
 ```
+
+Pull requests: [CONTRIBUTING.md](CONTRIBUTING.md). Dependent changes go in a GitHub stack.
 
 Env overrides: `AUTOCHAT_HOME` (default `~/.autochat`), `COPILOT_HOME` (default `~/.copilot`),
 `AUTOCHAT_BOOTSTRAP=host:port,...` (custom DHT bootstrap), `AUTOCHAT_COUNTDOWN_MS` (exit countdown length),
