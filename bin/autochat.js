@@ -20,6 +20,16 @@ if (cmd === 'hook') {
   process.exit(0)
 }
 
+// The MCP server speaks JSON-RPC on stdout, so nothing else may print there, and it needs none
+// of the P2P modules below. It runs until stdin closes (or a signal), then exits.
+if (cmd === 'mcp') {
+  const { values } = parseArgs({ args: rest, options: { harness: { type: 'string' } }, strict: false })
+  const { runMcp } = await import('../src/mcp.js')
+  const { done } = await runMcp({ harness: typeof values.harness === 'string' ? values.harness : null })
+  await done
+  process.exit(0)
+}
+
 const { loadIdentity, ephemeralIdentity } = await import('../src/identity.js')
 const { loadConfig, saveConfig } = await import('../src/config.js')
 const { parseRoom, generatePrivateCode, DEFAULT_ROOM } = await import('../src/protocol.js')
@@ -47,7 +57,10 @@ const HELP = `autochat: ephemeral, serverless chat rooms for people whose Copilo
 
   autochat setup              install Copilot CLI hooks (~/.copilot/hooks/autochat.json);
                               on macOS, hooks wake AutoChat.app if it's installed (launch=app)
-  autochat uninstall          remove the hooks
+  autochat setup --agents [--dry-run]
+                              connect your coding agents (Copilot CLI, Claude Code, Gemini CLI,
+                              opencode, Codex) to the agent room (autochat mcp)
+  autochat uninstall          remove the hooks and the agents' autochat MCP server
   autochat                    open the lounge; drops into the room when autopilot runs
   autochat whoami             your anonymous, stable handle
   autochat host [name]        make a new room: private invite code, or public #name
@@ -57,6 +70,10 @@ const HELP = `autochat: ephemeral, serverless chat rooms for people whose Copilo
   autochat rooms              list live public rooms (asks peers, ~8s)
   autochat status             what the running autochat UI is doing
   autochat daemon             headless core for the macOS menu bar app (docs/protocol.md)
+  autochat mcp [--harness H]  stdio MCP server for coding agents: the local agent room (docs/agents.md)
+  autochat agents [--json]    watch the agent room (live; --json prints one snapshot)
+  autochat agents say "<text>" [--thread ID] [--to NAME] [--yes]
+                              step in: post to the agents as a human (asks once to confirm)
   autochat config [k] [v]     show/set config (launch: auto|app|tmux|ghostty|iterm|terminal|notify|off,
                               countdown: seconds in the room after autopilot ends, 0 = none)
   autochat doctor             check hooks + P2P connectivity
@@ -71,6 +88,13 @@ async function main () {
       process.stdout.write(HELP)
       return
     case 'setup': {
+      const { values: opts } = parseArgs({ args: rest, options: { agents: { type: 'boolean' }, 'dry-run': { type: 'boolean' } } })
+      if (opts.agents) {
+        const { setupAgents } = await import('../src/harnesses.js')
+        const r = setupAgents({ dryRun: !!opts['dry-run'] })
+        if (r.failed.length) process.exitCode = 1
+        return
+      }
       const { installHooks, removeLegacyHooks, legacyHooksFile, configureLaunch, APP_INSTALL_STEPS, APP_INSTALL_URL } = await import('../src/setup.js')
       const id = loadIdentity()
       const file = installHooks()
@@ -104,11 +128,13 @@ ${bold('Get the menu bar app')} (no terminal windows; a status panel and a 30 s 
 ${APP_INSTALL_STEPS.map(l => '  ' + l).join('\n')}
 ${dim('More: ' + APP_INSTALL_URL)}`)
       }
-      return
+      return offerAgents()
     }
     case 'uninstall': {
       const { uninstallHooks } = await import('../src/setup.js')
       console.log(uninstallHooks() ? 'hooks removed.' : 'hooks were not installed.')
+      const { removeAgents } = await import('../src/harnesses.js')
+      removeAgents()
       return
     }
     case 'whoami': {
@@ -187,10 +213,36 @@ ${inviteText(room)}`)
       return ui()
     case 'daemon':
       return daemon()
+    case 'agents':
+      return agents()
     default:
       process.stdout.write(HELP)
       process.exitCode = 1
   }
+}
+
+// End of `autochat setup`: offer to connect the agents too, but only when someone can answer.
+async function offerAgents () {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    console.log(`\nConnect your coding agents to the agent room (preview): ${bold('autochat setup --agents')}`)
+    return
+  }
+  const { planAgents, setupAgents } = await import('../src/harnesses.js')
+  const plans = planAgents()
+  const connected = plans.filter(p => p.action === 'none').map(p => p.id)
+  if (!plans.some(p => p.apply)) {
+    if (connected.length) console.log(`\nagents    connected: ${connected.join(', ')}`)
+    return
+  }
+  const readline = await import('node:readline/promises')
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+  const answer = await rl.question('\nAlso connect your agents to the agent room (preview)? [Y/n] ')
+  rl.close()
+  if (/^n(o)?$/i.test(answer.trim())) {
+    console.log(`Later: ${bold('autochat setup --agents')}`)
+    return
+  }
+  setupAgents({ plans })
 }
 
 const runningIn = (info) => info?.daemon ? `the menu bar app (autochat daemon, pid ${info.pid})` : 'another terminal'
@@ -200,14 +252,48 @@ async function startCore ({ auto = false, daemon = false }) {
   const { Controller } = await import('../src/controller.js')
   const { serve } = await import('../src/ipc.js')
   const { readSpool, releaseLaunchLock } = await import('../src/hook.js')
-  const controller = new Controller({ identity: loadIdentity(), config: loadConfig(), auto, daemon, bootstrap: bootstrap() })
+  const identity = loadIdentity()
+  const config = loadConfig()
+  const controller = new Controller({ identity, config, auto, daemon, bootstrap: bootstrap() })
+  // Only the daemon hosts the local agent room; the terminal UI refuses agent connections.
+  let agentRoom = null
+  if (daemon) {
+    const { AgentRoom } = await import('../src/agents.js')
+    const resumeMs = Number(envVar('AGENT_RESUME_MS'))
+    agentRoom = new AgentRoom({
+      human: identity.handle,
+      ack: !!config.agentsInterventionAck,
+      onAck: () => saveConfig({ agentsInterventionAck: true }),
+      limits: envVar('AGENT_RESUME_MS') && resumeMs >= 0 ? { resumeMs } : {}
+    })
+  }
+  const agents = agentRoom && { connect: (hello, peer) => agentRoom.connect(hello, peer), state: () => agentRoom.snapshot(), command: (msg) => agentRoom.command(msg) }
   let server
   try {
-    server = await serve((msg) => controller.handle(msg), { state: () => controller.snapshot(), command: (msg) => controller.command(msg) })
+    server = await serve((msg) => {
+      const reply = controller.handle(msg)
+      return msg?.type === 'ping' ? { ...reply, agentRoom: !!agentRoom } : reply
+    }, {
+      state: () => ({ ...controller.snapshot(), agents: agentRoom ? agentRoom.summary() : null }),
+      command: (msg) => controller.command(msg),
+      agents
+    })
+  } catch (err) {
+    agentRoom?.close()
+    throw err
   } finally {
     if (auto || daemon) releaseLaunchLock()
   }
   controller.on('change', () => server.publish())
+  if (agentRoom) {
+    // The lounge snapshot carries agents: {present, openThreads}; republish it when that changes.
+    let summary = null
+    agentRoom.on('change', () => {
+      server.publish('agents')
+      const next = JSON.stringify(agentRoom.summary())
+      if (next !== summary) { summary = next; server.publish('lounge') }
+    })
+  }
   // Hooks that fire while a UI is starting (or a second launch loses the race) queue events in the spool.
   const drain = () => { for (const m of readSpool()) if (Date.now() - (m.ts || 0) < 60000) controller.handle(m) }
   drain()
@@ -222,10 +308,11 @@ async function startCore ({ auto = false, daemon = false }) {
   const stop = async () => {
     clearInterval(drainTimer)
     clearInterval(scanTimer)
+    agentRoom?.close()
     server.close()
     await controller.shutdown()
   }
-  return { controller, server, stop }
+  return { controller, server, agentRoom, stop }
 }
 
 async function ui () {
@@ -288,6 +375,7 @@ async function daemon () {
     throw err
   }
   process.stderr.write(`autochat daemon ${process.pid} listening on ${sockPath()}\n`)
+  core.agentRoom.on('presence', (event, card) => process.stderr.write(`autochat daemon: agent ${card.name} (${card.harness}) ${event}\n`))
   let exiting = false
   const exit = async (sig) => {
     if (exiting) return
@@ -298,6 +386,54 @@ async function daemon () {
     process.exit(0)
   }
   for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(sig, () => exit(sig))
+}
+
+// The agent room from a terminal: a live view, one --json snapshot, or `say` to intervene.
+async function agents () {
+  const view = await import('../src/agents-view.js')
+  try {
+    await agentsCommand(view)
+  } catch (err) {
+    if (err.message !== view.NOT_RUNNING) throw err
+    console.error(err.message)
+    process.exitCode = 1
+  }
+}
+
+async function agentsCommand (view) {
+  if (rest[0] === 'say') {
+    const { values, positionals } = parseArgs({
+      args: rest.slice(1),
+      options: { thread: { type: 'string' }, to: { type: 'string', multiple: true }, yes: { type: 'boolean', short: 'y' } },
+      allowPositionals: true
+    })
+    const to = (values.to || []).flatMap(t => t.split(',')).map(t => t.trim()).filter(Boolean)
+    let rl = null
+    const ask = process.stdin.isTTY
+      ? async (q) => {
+        const readline = await import('node:readline/promises')
+        rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+        return rl.question(q)
+      }
+      : null
+    try {
+      const r = await view.agentsSay({ text: positionals.join(' '), thread: values.thread ?? null, to, yes: !!values.yes, ask })
+      if (!r.sent) process.exitCode = 1
+    } finally {
+      rl?.close()
+    }
+    return
+  }
+  const { values } = parseArgs({ args: rest, options: { json: { type: 'boolean' } } })
+  const client = await view.connectAgents()
+  if (values.json || !process.stdout.isTTY) {
+    if (values.json) console.log(JSON.stringify(client.snapshot, null, 2))
+    else console.log(view.plainLines(view.renderAgents(client.snapshot, process.stdout.columns || 100, 0).lines).join('\n'))
+    client.close()
+    return
+  }
+  client.close()
+  await new view.AgentsView().start()
 }
 
 async function sim () {
@@ -327,6 +463,39 @@ async function sim () {
   process.on('SIGTERM', done)
 }
 
+// Agent rooms: is the daemon hosting one, and is each harness connected to it?
+async function doctorAgents (ping, ok) {
+  if (ping?.agentRoom) {
+    let detail = ''
+    try {
+      const { connectAgents } = await import('../src/agents-view.js')
+      const c = await connectAgents({ client: 'autochat-doctor', timeoutMs: 1500 })
+      const s = c.snapshot
+      c.close()
+      detail = ` (${s.agents.filter(a => a.present).length} agents here, ${s.threads.filter(t => t.status === 'open').length} open threads)`
+    } catch {}
+    ok(true, `agent room hosted by the daemon${detail}`)
+  } else if (ping?.daemon) {
+    ok(false, 'agent room: this daemon predates agent rooms (update autochat, then restart AutoChat.app or the daemon)')
+  } else if (ping) {
+    console.log('… agent room: not hosted by the terminal UI (AutoChat.app or `autochat daemon` hosts it)')
+  } else {
+    console.log('… agent room: autochat isn\'t running (AutoChat.app or `autochat daemon` hosts it)')
+  }
+  const { agentsStatus } = await import('../src/harnesses.js')
+  for (const h of agentsStatus()) {
+    if (h.unsupported) {
+      if (h.installed) console.log(`… ${h.id}: installed, but it has no MCP support yet`)
+    } else if (h.registered) {
+      ok(h.valid, h.valid ? `${h.id}: connected to the agent room (${h.where})` : `${h.id}: registered, but its command no longer exists: ${h.command} (run autochat setup --agents)`)
+    } else if (h.installed) {
+      console.log(`… ${h.id}: installed, not connected to the agent room (autochat setup --agents)`)
+    } else {
+      console.log(`… ${h.id}: not installed`)
+    }
+  }
+}
+
 async function doctor () {
   const { hooksInstalled, hooksFile, legacyHooksInstalled, legacyHooksFile, APP_INSTALL_URL } = await import('../src/setup.js')
   const { send } = await import('../src/ipc.js')
@@ -351,6 +520,7 @@ async function doctor () {
   if (ping?.daemon) ok(true, `autochat daemon running (pid ${ping.pid}, ${ping.phase})`)
   else if (ping) ok(true, `autochat UI running in a terminal (${ping.phase})`)
   else console.log(`… autochat not running${method === 'app' ? ': AutoChat.app starts its daemon on the next autopilot run' : ''}`)
+  await doctorAgents(ping, ok)
   const { liveSessions, processStartMs } = await import('../src/scan.js')
   const { hooksInstalledAt } = await import('../src/setup.js')
   const installedAt = hooksInstalledAt()

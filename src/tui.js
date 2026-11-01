@@ -25,7 +25,7 @@ export const strWidth = (s) => { let w = 0; for (const ch of s) w += charWidth(c
 export const stripAnsi = (s) => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
 
 // Accumulates styled text up to a fixed display width.
-class Line {
+export class Line {
   constructor (width) { this.width = width; this.used = 0; this.out = '' }
   add (text, style = '') {
     let chunk = ''
@@ -45,7 +45,7 @@ class Line {
   toString () { return this.out }
 }
 
-function wrap (text, width) {
+export function wrap (text, width) {
   if (width <= 0) return ['']
   const lines = []
   let cur = ''
