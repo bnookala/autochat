@@ -73,6 +73,25 @@ const STATUS = {
   away: { sym: '○', style: GREY, label: 'spectating' }
 }
 
+const ATTENTION = {
+  blocked: { sym: '!', style: YELLOW + BOLD },
+  failed: { sym: '×', style: fg(203) + BOLD },
+  finished: { sym: '✓', style: GREEN + BOLD }
+}
+
+/**
+ * The attention queue in one line: how many items of each kind, then the first one the request
+ * modal doesn't already show. Null when there's nothing else to show.
+ */
+export function attentionLine (items = [], request = null) {
+  const rest = items.filter(a => !(request && a.kind === 'blocked' && a.sid === request.sid))
+  if (!rest.length) return null
+  const counts = Object.keys(ATTENTION).map(k => [k, items.filter(a => a.kind === k).length]).filter(([, n]) => n)
+  const top = rest[0]
+  const where = top.cwd ? ` (${path.basename(top.cwd)})` : ''
+  return { ...(ATTENTION[items[0].kind] || ATTENTION.finished), text: `${counts.map(([k, n]) => `${n} ${k}`).join(' · ')} · ${top.harness}: ${top.title}${where}` }
+}
+
 function modal (view, cols) {
   const req = view.request
   if (!req) return []
@@ -163,6 +182,8 @@ function bannerScreen (view, cols, rows) {
       'Change rooms: autochat join <code> · autochat host · autochat rooms'
     ]
     if (view.hooksInstalled === false) lines.push('', '! hooks not installed: run `autochat setup`')
+    const queue = attentionLine(view.attention)
+    if (queue) lines.push('', `${queue.sym} ${queue.text}`, 'ctrl-g jumps to it')
     lines.push('', 'ctrl-c to quit')
   } else if (b.kind === 'dead') {
     title = 'the room died'
@@ -172,7 +193,7 @@ function bannerScreen (view, cols, rows) {
     lines = ["You won't be pulled back in for the rest of this autopilot run."]
   } else {
     title = 'back to reality'
-    const why = { complete: 'Your copilot finished its autopilot run.', abort: 'You interrupted your copilot.', mode: 'Autopilot was switched off.', idle: 'Your copilot stopped and is waiting for you.', end: 'Your copilot session ended.' }
+    const why = { complete: 'Your copilot finished its autopilot run.', abort: 'You interrupted your copilot.', mode: 'Autopilot was switched off.', idle: 'Your copilot stopped and is waiting for you.', end: 'Your copilot session ended.', failed: 'Your agent stopped on an error.' }
     lines = [why[b.reason] || 'Your autopilot run is over.']
     if (b.cwd) lines.push('in ' + b.cwd)
     if (b.summary) { lines.push(''); lines.push(...wrap(b.summary, Math.min(cols - 8, 70)).slice(0, 8)) }
@@ -206,14 +227,17 @@ export function renderScreen (view, cols, rows) {
   // Fit the layout into small terminals: shrink the modal, then drop the member list.
   let box = modal(view, cols)
   let members = memberLines(view, cols)
+  const queue = attentionLine(view.attention, view.request)
   const strip = view.phase === 'room' && view.countdown ? 1 : 0
-  const fixed = () => box.length + 1 + members.length + 1 + 3 + strip + 1
+  const fixed = () => box.length + 1 + members.length + 1 + 3 + strip + (queue ? 1 : 0) + 1
   if (fixed() > rows && box.length > 3) box = [box[0], box[box.length - 3], box[box.length - 1]]
   if (fixed() > rows) members = []
   if (fixed() > rows) box = []
   const top = [...box, header(view, cols), ...members, GREY + '─'.repeat(cols) + RESET]
   const bottom = []
   bottom.push(GREY + '─'.repeat(cols) + RESET)
+  // The attention queue: one line, never in the way of the input.
+  if (queue) bottom.push(new Line(cols).add(` ${queue.sym} `, queue.style).add(queue.text).toString())
   let cursor = null
   if (view.phase === 'spectating') {
     bottom.push(new Line(cols).add(' you got pulled back to reality. watching until everyone else does too', GREY).toString())
@@ -271,6 +295,7 @@ export class TUI {
       activeCount: r ? r.activeCount() : 0,
       messages: c.messages,
       request: c.currentRequest(),
+      attention: c.attentionItems ? c.attentionItems() : [],
       countdown: c.countdown ? { ...c.countdown, remaining: c.countdownRemaining() } : null,
       input: this.input,
       scroll: this.scroll,
@@ -333,7 +358,7 @@ export class TUI {
       }
       i++
       if (ch === '\x03') { this._ctrlC(); continue }
-      if (ch === '\x07') { this.c.jumpToCopilot(); continue }
+      if (ch === '\x07') { this._jump(); continue }
       if (ch === '\x15') { this.input = ''; continue }
       if (ch === '\r' || ch === '\n') { this._enter(); continue }
       if (ch === '\x7f' || ch === '\b') { this.input = Array.from(this.input).slice(0, -1).join(''); continue }
@@ -341,6 +366,13 @@ export class TUI {
       if (this.c.phase === 'room' && this.input.length < 500) this.input += ch
     }
     this.render()
+  }
+
+  // ctrl-g: the agent at the top of the attention queue, else the one that needs you.
+  _jump () {
+    const top = this.c.attentionItems?.()[0]
+    if (top) this.c.jumpTo(top.id)
+    else this.c.jumpToCopilot()
   }
 
   _enter () {

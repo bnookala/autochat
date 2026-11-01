@@ -47,7 +47,7 @@ args)`. Tests pass their own.
 ## SessionEvent
 
 ```js
-{ harness, sid, kind, autonomy, mode, headless, cwd, repo, branch, origin, request, summary, reason, files }
+{ harness, sid, kind, autonomy, mode, headless, cwd, repo, branch, origin, request, summary, reason, stopped, files }
 ```
 
 | Field | Meaning |
@@ -60,24 +60,28 @@ args)`. Tests pass their own.
 | `cwd`, `repo`, `branch` | where it works (repo and branch are optional) |
 | `origin` | `originFrom(env)`: `{tmux, tmuxPane, termProgram, bundleId}` from the hook's environment, for focus |
 | `request` | `{title, message}` for `kind: 'request'` |
-| `summary` | what it did, for `complete` (and optionally `idle`: its last message) |
-| `reason` | why it ended, for `end` |
+| `summary` | what it did, for `complete` (and optionally `idle`: its last message); what went wrong, for `failed` |
+| `reason` | why it ended, for `end`; what kind of error, for `failed` (say `rate_limit`) |
+| `stopped` | for `failed`: true when the error ended its turn |
 | `files` | paths a tool call edits, when the payload says |
 
 | `kind` | Meaning | What the Controller does |
 | --- | --- | --- |
 | `start` | the session started; nothing to do yet | nothing (it doesn't start tracking) |
-| `activity` | it's working: a prompt went in, a tool runs | tracks it while autonomous; `running` |
-| `request` | it's blocked on you: an approval or an answer | `needed`: the request card, `!` in the room |
-| `waiting` | it finished its turn and waits at its prompt | done now (`idle`) |
-| `idle` | its turn ended; it may carry on by itself | done after `idleMs` without activity, unless `continues()` |
-| `complete` | it says it's done | done, with `summary` |
-| `end` | the session or its process ended | done |
+| `activity` | it's working: a prompt went in, a tool runs | tracks it while autonomous; `running`. Its attention item is handled |
+| `request` | it's blocked on you: an approval or an answer | `needed`: the request card, `!` in the room, a `blocked` attention item |
+| `waiting` | it finished its turn and waits at its prompt | done now (`idle`); a `finished` item |
+| `idle` | its turn ended; it may carry on by itself | done after `idleMs` without activity, unless `continues()`; then a `finished` item |
+| `complete` | it says it's done | done, with `summary`; a `finished` item |
+| `failed` | it hit an error: `stopped` when it ended its turn (Claude's `StopFailure`), otherwise it carries on (a refused tool call, `PermissionDenied`) | a `failed` item. `stopped`: done (reason `failed`). Otherwise still `running`, and its activity doesn't clear the item |
+| `end` | the session or its process ended | done; a `finished` item |
 | `notice` | a hook fired and nothing changed | refreshes `cwd` and `origin` |
 
-When a tracked session's `activity`, `request`, `idle` or `waiting` says `autonomy: 'interactive'`
-(you switched modes), it's done right away (reason `mode`). `unknown` neither starts nor stops
-anything.
+When a tracked session's `activity`, `request`, `idle`, `waiting` or `failed` says
+`autonomy: 'interactive'` (you switched modes), it's done right away (reason `mode`), and its
+attention item goes: you took over. `unknown` neither starts nor stops anything. The attention
+items are the queue in lounge snapshots ([protocol.md](protocol.md#attention-queue)); Copilot's
+abort (from its session log) is a `failed` one too.
 
 ## Autonomy and `autochat config trigger`
 

@@ -17,6 +17,7 @@ struct StatusPanelView: View {
             case .autopilot: autopilot
             case .countdown: countdown
             case .request: request
+            case .attention: attention
             }
         }
         .padding(14)
@@ -83,6 +84,11 @@ struct StatusPanelView: View {
                 }
                 Spacer(minLength: 0)
             }
+            // Several agents: autochat won't pick one to focus. The queue is where you do.
+            let queue = AttentionRules.countdownList(model.snapshot?.attention)
+            if !queue.isEmpty {
+                AttentionList(model: model, items: queue, limit: AttentionRules.countdownRows, compact: true)
+            }
             HStack(spacing: 8) {
                 Button(action: onOpenChat) {
                     Text("Open Chat").frame(maxWidth: .infinity)
@@ -144,6 +150,35 @@ struct StatusPanelView: View {
                 .buttonStyle(.action(prominent: true, tint: .orange, size: .large))
             }
         }
+    }
+}
+
+extension StatusPanelView {
+    // MARK: Your agents need you (the attention queue)
+
+    /// Comes down when an agent is blocked on you; lists the whole queue, urgent first.
+    var attention: some View {
+        let items = model.attention
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
+                Badge(symbol: "exclamationmark.bubble.fill", colors: [Color.orange, Color.yellow])
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: AttentionRules.headline(items))
+                        .font(.headline)
+                    Text(verbatim: AttentionRules.subheadline(items))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            AttentionList(model: model, items: items)
+            Button(action: onOpenChat) {
+                Text("Open Chat").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.action(size: .large))
+        }
+        .accessibilityElement(children: .contain)
     }
 }
 

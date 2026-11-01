@@ -76,6 +76,67 @@ public enum Fixtures {
         Snapshot(phase: .lounge, room: RoomInfo(display: "#lobby"), me: me)
     }
 
+    // MARK: Attention queue (issue #37)
+
+    public static let hotfixQuestion = "Which branch should the hotfix go on? [main / release-2.3]"
+
+    /// Four agents over three harnesses: two blocked on you (urgent first, oldest first), one
+    /// that failed, one that finished.
+    public static func attentionItems(now: Date) -> [AttentionItem] {
+        [
+            AttentionItem(
+                id: "7", harness: .claude, sid: "e5f6a7b8", cwd: "~/code/web", kind: .blocked, title: "Permission needed",
+                summary: "Bash: npm run migrate -- --env staging", at: now.addingTimeInterval(-95)
+            ),
+            AttentionItem(
+                id: "9", harness: .copilot, sid: "a1b2c3", cwd: "~/code/api-server", kind: .blocked, title: "Copilot has a question for you",
+                summary: hotfixQuestion, at: now.addingTimeInterval(-20)
+            ),
+            AttentionItem(
+                id: "6", harness: .claude, sid: "0c1d2e3f", cwd: "~/code/docs-site", kind: .failed, title: "Claude Code stopped on an error",
+                summary: "API Error: Rate limit reached", at: now.addingTimeInterval(-240)
+            ),
+            AttentionItem(
+                id: "4", harness: .codex, sid: "9a8b7c6d", cwd: "~/code/sdk", kind: .finished, title: "Codex finished",
+                summary: "Bumped the SDK to 4.2 and fixed the three type errors it caused.", at: now.addingTimeInterval(-420)
+            )
+        ]
+    }
+
+    /// In the room with several agents at work: Copilot's question has the request card, the
+    /// rest of the queue the strip.
+    public static func attention(now: Date) -> Snapshot {
+        var s = request(now: now)
+        s.request = CopilotRequest(sid: "a1b2c3", cwd: "~/code/api-server", title: "Copilot has a question for you", message: hotfixQuestion)
+        s.sessions = [
+            SessionInfo(sid: "a1b2c3", state: "needed", cwd: "~/code/api-server"),
+            SessionInfo(sid: "e5f6a7b8", state: "needed", cwd: "~/code/web")
+        ]
+        s.attention = attentionItems(now: now)
+        return s
+    }
+
+    /// The last of several agents stopped: the countdown, with the queue to pick from.
+    public static func attentionCountdown(now: Date, remaining: TimeInterval = 23) -> Snapshot {
+        var s = countdown(now: now, remaining: remaining)
+        s.attention = [
+            AttentionItem(id: "11", harness: .copilot, sid: "c3d4e5", cwd: "~/code/cli", kind: .failed, title: "Copilot CLI was interrupted", at: now.addingTimeInterval(-150)),
+            AttentionItem(
+                id: "12", harness: .claude, sid: "e5f6a7b8", cwd: "~/code/web", kind: .finished, title: "Claude Code is waiting for you",
+                summary: "Should I also update the e2e fixtures for the new session cookie?", at: now.addingTimeInterval(-80)
+            ),
+            AttentionItem(id: "13", harness: .copilot, sid: "a1b2c3", cwd: "~/code/api-server", kind: .finished, title: "Copilot CLI finished", summary: summary, at: now.addingTimeInterval(-7))
+        ]
+        return s
+    }
+
+    /// Back in the lounge, with what your agents left you.
+    public static func attentionLounge(now: Date) -> Snapshot {
+        var s = lounge()
+        s.attention = Array(attentionCountdown(now: now).attention ?? [])
+        return s
+    }
+
     // MARK: Local agent room (issue #21)
 
     public static let authThread = "auth-token-refresh-3f"

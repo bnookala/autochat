@@ -13,6 +13,10 @@ const RUNNING = new Set(['running', 'needed'])
 // sessions[].harness, when the hook said which harness (hooks from before adapters don't).
 const harnessOf = (s) => s.harness ? { harness: s.harness } : {}
 export const DEFAULT_COUNTDOWN_SECONDS = 30
+// The attention queue: urgent first, and bounded (finished items stay until handled).
+const ATTENTION_ORDER = ['blocked', 'failed', 'finished']
+const MAX_ATTENTION = 50
+const harnessName = (id) => adapter(id || 'copilot')?.name ?? id
 
 // AUTOCHAT_COUNTDOWN_MS (tests) beats config.countdownSeconds; 0 pulls you back immediately.
 function countdownMsFor (config, env = process.env) {
@@ -39,6 +43,9 @@ export function hexColor (n) {
  * session log and fallback observer), keyed `${harness}:${sid}`, enters the room while any of
  * them works autonomously (autopilot), and pulls the user back out (after a non-blocking exit
  * countdown, during which they can keep chatting).
+ *
+ * Presence and attention are separate: each agent that's blocked on you, finished or failed
+ * also gets an item in the attention queue, which stays until handled or dismissed.
  *
  * phase: lounge | room | spectating | reality | dead | left
  */
@@ -76,6 +83,11 @@ export class Controller extends EventEmitter {
     this.banner = null
     this.lastFinished = null
     this.bannerTimer = null
+    // At most one item per session (its latest), keyed like sessions.
+    this.attention = new Map()
+    this.attentionSeq = 0
+    // The most agents at work at once since you entered the room: one means focus can go back to it.
+    this.agentPeak = 0
   }
 
   // --- inputs ----------------------------------------------------------------
@@ -100,6 +112,8 @@ export class Controller extends EventEmitter {
     if (!ev) return false
     // Hook messages from before adapters carry only Copilot's mode.
     if (!ev.autonomy) ev.autonomy = this._autonomy(ev.harness, modesOf(ev))
+    // At work again, or you're chatting with it: its question or its last result is handled.
+    if (ev.kind === 'activity') this._resumeAttention(sessionKey(ev.harness, ev.sid))
     let s = this.sessions.get(sessionKey(ev.harness, ev.sid))
     if (!s) {
       if (!(ev.autonomy === 'autonomous' && (ev.kind === 'activity' || ev.kind === 'request'))) return false
@@ -124,11 +138,18 @@ export class Controller extends EventEmitter {
         let req = ev.request || { title: 'Copilot needs you', message: '' }
         const prev = s.request
         if (prev && Date.now() - prev.at < 5000 && (prev.message || '').startsWith(req.message || '')) req = { ...req, message: prev.message }
+        this._attend(s, 'blocked', req.title || `${harnessName(s.harness)} needs you`, req.message)
         this._run(s, 'needed', req)
         break
       }
       case 'complete':
         this._finish(s, 'complete', ev.summary)
+        break
+      case 'failed':
+        if (leftAutopilot || ev.stopped) { this._finish(s, leftAutopilot ? 'mode' : 'failed', ev.summary); break }
+        // It works past the error (a refused tool call): the item stays until you dismiss it.
+        this._attend(s, 'failed', `${harnessName(s.harness)} ran into a problem`, ev.summary, { sticky: true })
+        this._run(s, 'running', null)
         break
       case 'idle':
         if (leftAutopilot) this._finish(s, 'mode')
@@ -225,6 +246,7 @@ export class Controller extends EventEmitter {
     s.reason = reason
     s.doneAt = Date.now()
     this.lastFinished = s
+    this._attendEnd(s, reason)
     this._update()
   }
 
@@ -258,6 +280,89 @@ export class Controller extends EventEmitter {
     }
   }
 
+  // --- the attention queue -------------------------------------------------------
+
+  /** Puts a session's latest item in the queue, in place of what it had there. */
+  _attend (s, kind, title, summary, { sticky = false } = {}) {
+    if (s.manual) return
+    const prev = this.attention.get(s.key)
+    const same = prev?.kind === kind
+    if (!same) this.attention.delete(s.key)
+    this.attention.set(s.key, {
+      id: same ? prev.id : String(++this.attentionSeq),
+      key: s.key,
+      harness: s.harness || 'copilot',
+      sid: s.sid,
+      cwd: sanitize(s.cwd, 300) || null,
+      origin: s.origin,
+      kind,
+      title: sanitize(title, 120),
+      summary: sanitize(summary, 600) || null,
+      at: same ? prev.at : Date.now(),
+      sticky
+    })
+    for (const [key, a] of this.attention) {
+      if (this.attention.size <= MAX_ATTENTION) break
+      if (a.kind !== 'blocked') this.attention.delete(key)
+    }
+    this._changed()
+  }
+
+  // The run ended: what's left for you is its result or its error. Switching it out of autopilot
+  // means you took over, so there's nothing to come back to.
+  _attendEnd (s, reason) {
+    const name = harnessName(s.harness)
+    if (reason === 'mode') this._dropAttention(s.key)
+    else if (reason === 'abort') this._attend(s, 'failed', `${name} was interrupted`, s.summary)
+    else if (reason === 'failed') this._attend(s, 'failed', `${name} stopped on an error`, s.summary)
+    else this._attend(s, 'finished', reason === 'idle' ? `${name} is waiting for you` : reason === 'end' ? `${name} session ended` : `${name} finished`, s.summary)
+  }
+
+  _dropAttention (key) {
+    if (this.attention.delete(key)) this._changed()
+  }
+
+  // A failure it worked past stays until you dismiss it; everything else is handled once it's at it again.
+  _resumeAttention (key) {
+    const a = this.attention.get(key)
+    if (a && !a.sticky) this._dropAttention(key)
+  }
+
+  /** The queue, urgent first (blocked, failed, finished), oldest first within each. */
+  attentionItems () {
+    return [...this.attention.values()].sort((a, b) => ATTENTION_ORDER.indexOf(a.kind) - ATTENTION_ORDER.indexOf(b.kind) || a.at - b.at)
+  }
+
+  _attentionItem (id) {
+    for (const a of this.attention.values()) if (a.id === String(id)) return a
+    return null
+  }
+
+  // Focuses the agent behind an item. Going to look handles a result or an error; a blocked agent
+  // stays in the queue until it carries on.
+  jumpTo (id) {
+    const a = this._attentionItem(id)
+    if (!a) return false
+    this.focus(this.sessions.get(a.key)?.origin ?? a.origin, a.harness)
+    if (a.kind !== 'blocked') this._dropAttention(a.key)
+    return true
+  }
+
+  dismissAttention (id) {
+    const a = this._attentionItem(id)
+    if (a) this._dropAttention(a.key)
+    return !!a
+  }
+
+  // `autochat config focus` (read live, like the trigger): auto puts focus back on the agent at the
+  // pull-back only when one was at work at a time. With more, the attention queue takes over.
+  _focusesBack () {
+    const mode = (this.loadConfig || readConfig)().focus
+    if (mode === 'always') return true
+    if (mode === 'never') return false
+    return this.agentPeak <= 1
+  }
+
   // --- room lifecycle ----------------------------------------------------------
 
   runningSessions () {
@@ -283,7 +388,8 @@ export class Controller extends EventEmitter {
         this.sys("you're back on autopilot, staying in the room")
       }
       if (this.phase === 'room' && this.room) this.room.setStatus(status)
-      else this._enterRoom(status)
+      else { this.agentPeak = 0; this._enterRoom(status) }
+      this.agentPeak = Math.max(this.agentPeak, running.filter(s => !s.manual).length)
     } else if (this.phase === 'room' && !this.countdown) {
       if (this.countdownMs > 0) this._startCountdown()
       else this._pulledBack()
@@ -370,8 +476,15 @@ export class Controller extends EventEmitter {
   _pulledBack () {
     const room = this.room
     const s = this.lastFinished
-    if (s) this.focus(s.origin, s.harness)
-    this.notifyFn('autochat', 'Back to reality: your copilot ' + (s?.reason === 'complete' ? 'finished.' : 'needs you.'))
+    if (s && this._focusesBack()) {
+      this.focus(s.origin, s.harness)
+      // You're back with it: its result is handled.
+      if (this.attention.get(s.key)?.kind !== 'blocked') this._dropAttention(s.key)
+    }
+    const waiting = this.attention.size
+    this.notifyFn('autochat', this.agentPeak > 1 && waiting
+      ? `Back to reality: ${waiting === 1 ? 'one of your agents needs' : `${waiting} of your agents need`} you.`
+      : 'Back to reality: your copilot ' + (s?.reason === 'complete' ? 'finished.' : 'needs you.'))
     const othersActive = room ? room.activeCount() - (room.status === 'away' ? 0 : 1) : 0
     if (room && room.isHost && othersActive > 0) {
       this.phase = 'spectating'
@@ -488,6 +601,12 @@ export class Controller extends EventEmitter {
         return this.dismissRequest()
       case 'joinNow':
         return this.joinNow()
+      case 'jumpTo':
+        if (!this.jumpTo(msg.item)) throw new Error('unknown item')
+        return
+      case 'dismissAttention':
+        this.dismissAttention(msg.item)
+        return
       default:
         throw new Error('unknown command')
     }
@@ -511,6 +630,7 @@ export class Controller extends EventEmitter {
       messages: this.messages.map(m => ({ id: m.id, kind: m.kind, from: m.kind === 'chat' ? m.handle : null, text: m.text, ts: m.ts, color: hexColor(m.color), you: !!m.self })),
       request: req ? { sid: req.sid, cwd: req.cwd ?? null, title: req.title || '', message: req.message || '', resolved: !!req.resolved } : null,
       sessions: [...this.sessions.values()].map(s => ({ sid: s.sid, state: s.state, cwd: s.cwd ?? null, ...harnessOf(s) })),
+      attention: this.attentionItems().map(a => ({ id: a.id, harness: a.harness, sid: a.sid, cwd: a.cwd, kind: a.kind, title: a.title, summary: a.summary, at: a.at })),
       countdown: this.countdown ? { ...this.countdown, remaining: this.countdownRemaining() } : null,
       banner: b ? { kind: b.kind, reason: b.reason ?? null, summary: b.summary || null, cwd: b.cwd ?? null } : null
     }

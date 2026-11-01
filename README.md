@@ -99,6 +99,11 @@ a running one) and talks to it over the local socket ([protocol](docs/protocol.m
 - **The chat window** (left-click the icon) shows the room, its members, and the messages. When Copilot asks you
   something, a card at the top has **Jump to Copilot**. Right-click the icon for the menu: Join Now, Pause,
   Launch at Login, and Quit.
+- **Several agents at once? The attention queue.** Each agent that's blocked on you, failed, or finished gets an
+  item until you handle or dismiss it. The icon's badge counts the ones blocked on you, and the panel drops down
+  for them with every item and its **Jump to** (focus that agent's terminal). A one-line strip in the chat shows the
+  queue too. Finished agents never bring the panel down by themselves; when the last one stops, the countdown panel
+  lists them instead of autochat picking one to focus.
 - **The 30-second countdown doesn't block you.** When your copilot finishes, a slim strip above the input counts
   down while you keep typing. Nothing covers the chat. **Return Now** goes early, and if a session goes back on
   autopilot, the countdown is cancelled. At zero you're pulled back to reality: a banner shows Copilot's summary,
@@ -156,6 +161,7 @@ Share the invite however you like (Teams, Slack, a sticky note). There's no serv
 - While autopilot is running you're **in the room** (●). If your copilot asks for something, others see **!**.
 - When autopilot **finishes**, a **30-second countdown** starts (`back to reality in 23s` above the input). You stay in the room and can finish your sentence. Press ↵ on an empty line (or type `/back`) to go now. If any of your sessions goes back on autopilot, the countdown is cancelled.
 - At zero you're **pulled back to reality**: the chat closes, focus returns to your copilot, and you get its summary. Change the length with `autochat config countdown <seconds>`; `0` pulls you back immediately.
+- **Several agents at once:** you're in the room while any of them works, and the countdown only starts when the *last* one stops. Each one that's blocked on you, finished, or failed lands in the **attention queue** (the menu bar badge and panel, a strip in the chat, a line in the terminal UI where ctrl-g jumps to the top item). autochat never steals focus then: you jump to each agent from the queue. `autochat config focus auto|never|always` changes this (`auto`, the default, focuses back only when a single agent was at work).
 - The **host** is whoever was in the room first. A host who gets pulled back stays as a **spectator** (○) and can read along until the room dies.
 - The room **survives the host leaving** as long as anyone is still on autopilot, and hosting passes on by itself to whoever has been in the room longest and is still on autopilot, whether the host quits or crashes: `jade-lynx-0c is now host (handed off by stormy-newt-59)`. Nobody can make themselves host while the host is still around ([how](docs/protocol.md#lounge-room-host-p2p)).
 - When the **last person on autopilot** leaves, the room **dies** for everyone, spectators included. Nothing is kept, and the next person to show up starts a fresh room.

@@ -140,6 +140,7 @@ shuts down, every subscriber connection is closed (EOF).
  "messages":[{"id":12,"kind":"chat","from":"jade-lynx-0c","text":"lol same","ts":1730400000000,"color":"#5fd787","you":false}],
  "request":{"sid":"5d0c…","cwd":"/Users/me/code/x","title":"Permission needed","message":"Run tests?","resolved":false},
  "sessions":[{"sid":"5d0c…","state":"running","cwd":"/Users/me/code/x","harness":"copilot"}],
+ "attention":[{"id":"3","harness":"copilot","sid":"5d0c…","cwd":"/Users/me/code/x","kind":"blocked","title":"Permission needed","summary":"Run tests?","at":1730400004000}],
  "countdown":null,
  "banner":null,
  "agents":{"present":2,"openThreads":1}}
@@ -170,13 +171,14 @@ shuts down, every subscriber connection is closed (EOF).
 | `request` | object \| null | what your copilot is asking you. `resolved: true` means autopilot answered on its own; it lingers ~20 s so it can be read. |
 | `sessions[]` | array | tracked agent sessions: `state` is `running`, `needed`, or `idle` (finished sessions are dropped) |
 | `sessions[].harness` | string | which harness runs it: `copilot`, `claude`, … (see [harnesses.md](harnesses.md)). Missing for the `joinNow` pseudo-session, and for sessions reported only by hooks from before harness adapters (Copilot CLI's). A session is identified by `harness` and `sid` together. |
+| `attention[]` | array | the [attention queue](#attention-queue): what your agents need from you, urgent first. `[]` when there's nothing; missing from daemons that predate it |
 | `countdown` | object \| null | the exit countdown, see [below](#exit-countdown) |
 | `banner` | object \| null | `{"kind","reason","summary","cwd"}` while `phase` is `reality`, `dead`, or `left` |
 | `agents` | object \| null | the [agent room](#agent-room-local) at a glance: `{"present","openThreads"}` (agents connected now, open threads). `null` if no agent has connected since the daemon started, and always `null` in the terminal UI. |
 
 `banner.kind` is `reality`, `dead` (the room died), or `left` (you left with `leaveRoom`).
 For `reality`, `reason` is `complete`, `abort`, `mode` (autopilot switched off), `idle`
-(stopped and waiting for you), or `end` (session ended), and `summary` is the copilot's
+(stopped and waiting for you), `failed` (stopped on an error), or `end` (session ended), and `summary` is the copilot's
 task summary (or `null`). Otherwise `reason`, `summary`, and `cwd` are `null`.
 
 Colors are `#rrggbb` strings converted from the TUI's xterm-256 palette.
@@ -196,6 +198,8 @@ Client → daemon, any time after `subscribe`:
 {"type":"cmd","id":10,"cmd":"jumpToCopilot"}
 {"type":"cmd","id":11,"cmd":"dismissRequest"}
 {"type":"cmd","id":12,"cmd":"joinNow"}
+{"type":"cmd","id":13,"cmd":"jumpTo","item":"3"}
+{"type":"cmd","id":14,"cmd":"dismissAttention","item":"3"}
 ```
 
 | `cmd` | Does | Fails with |
@@ -206,6 +210,8 @@ Client → daemon, any time after `subscribe`:
 | `jumpToCopilot` | focus the terminal running the copilot that needs you | |
 | `dismissRequest` | hide the current `request` | |
 | `joinNow` | manual "I'm here": enter the room without autopilot (`autochat ui --now`); stays until `leaveRoom`. Meanwhile `sessions[]` lists a `manual-<pid>` pseudo-session, which `leaveRoom` drops | |
+| `jumpTo` | focus the terminal of the agent behind attention item `item` (its `id`). A `finished` or `failed` item is handled by that and leaves the queue; a `blocked` one stays until the agent carries on | `unknown item` |
+| `dismissAttention` | remove attention item `item` from the queue (already gone is fine). The agent itself is left alone | |
 
 Daemon → client, one per command (`id` echoed; `null` if the command had none):
 
@@ -233,7 +239,7 @@ room doesn't die under the others), and can keep chatting. `phase` stays `room`.
 | --- | --- |
 | `endsAt` | ms epoch when it hits zero. Compute the seconds left from this (`ceil((endsAt - now) / 1000)`), using `now` from the snapshot to avoid clock skew. |
 | `total` | length in seconds (`30` by default; fractional only when overridden by `AUTOCHAT_COUNTDOWN_MS`) |
-| `reason` | why autopilot ended: `complete`, `abort`, `mode`, `end`, or `idle` (stopped and waiting for you) |
+| `reason` | why autopilot ended: `complete`, `abort`, `mode`, `end`, `failed` (stopped on an error), or `idle` (stopped and waiting for you) |
 | `summary` | the copilot's task summary, or `null` |
 | `cwd` | the finished session's working directory, or `null` |
 | `remaining` | whole seconds left when the snapshot was built |
@@ -241,9 +247,14 @@ room doesn't die under the others), and can keep chatting. `phase` stays `room`.
 While it runs the daemon publishes a snapshot **once per second**, so a client that just
 re-renders on every `state` stays current.
 
-- At zero the daemon does the pull-back: it focuses your Copilot terminal, notifies, and
-  leaves the room (or stays `spectating` if you host a room others are still in), then
-  shows the `reality` banner. `countdown` goes back to `null`.
+- At zero the daemon does the pull-back: it focuses your agent's terminal (see below),
+  notifies, and leaves the room (or stays `spectating` if you host a room others are still
+  in), then shows the `reality` banner. `countdown` goes back to `null`.
+- Focus: `autochat config focus auto|never|always` (`focus` in `config.json`, read at the
+  pull-back). With `auto`, the default, focus goes back to the agent only if a single agent
+  was at work at a time since you entered the room, as it always did. With more than one,
+  autochat never steals focus: the [attention queue](#attention-queue) takes over. `always`
+  focuses the last agent to finish; `never` leaves focus alone.
 - `returnNow` skips straight to zero (in the TUI: ↵ on an empty line, or `/back`).
 - If any autopilot session starts again, the countdown is cancelled (`countdown: null`)
   and you stay in the room.
@@ -251,6 +262,44 @@ re-renders on every `state` stays current.
 - Length: `autochat config countdown <seconds>` (`countdownSeconds` in
   `~/.autochat/config.json`, default 30). `0` turns it off: you're pulled back the moment
   autopilot ends. `AUTOCHAT_COUNTDOWN_MS` overrides it in milliseconds (for tests).
+
+## Attention queue
+
+Presence and attention are separate. You're in the room while at least one of your agents
+works on its own (that's presence, above). On top of that, each agent that needs something
+from you gets an **attention item**, and keeps it until you handle it or dismiss it,
+whether or not you're in a room:
+
+```json
+"attention":[
+  {"id":"7","harness":"claude","sid":"e5f6…","cwd":"/Users/me/code/web","kind":"blocked","title":"Permission needed","summary":"Bash: npm test","at":1730400004000},
+  {"id":"5","harness":"copilot","sid":"5d0c…","cwd":"/Users/me/code/x","kind":"finished","title":"Copilot CLI finished","summary":"Shipped it.","at":1730400001000}
+]
+```
+
+| Field | Meaning |
+| --- | --- |
+| `id` | string, unique per daemon process. Pass it back as `item` in `jumpTo` and `dismissAttention`. |
+| `harness`, `sid` | the agent: its harness (`copilot` for hooks from before adapters) and session id |
+| `cwd` | where it works, or `null` |
+| `kind` | `blocked`: it waits for an approval or an answer (urgent). `failed`: it hit an error. `finished`: its run is over, so there's a result to review. Treat unknown kinds like `finished`. |
+| `title` | one line, such as `Permission needed`, `Claude Code finished` or `Copilot CLI was interrupted` |
+| `summary` | the question, the task summary or the error, or `null` (≤ 600 characters) |
+| `at` | ms epoch when it happened |
+
+- **Order:** urgent first: `blocked`, then `failed`, then `finished`, oldest first within each.
+- **One item per agent:** its latest. A new question replaces its finished item, its result
+  replaces its question, and so on (a new item gets a new `id`).
+- **Where they come from:** `blocked` from a `request` (the same one `request` shows);
+  `finished` when its run ends (`complete`, `idle`, `end`); `failed` from Copilot's abort
+  and from `failed` session events (Claude Code's `StopFailure` and `PermissionDenied`, once
+  its adapter sends them; see [harnesses.md](harnesses.md#sessionevent)). Switching an agent
+  out of autopilot means you took over: its item goes.
+- **Handled:** a `blocked` item goes when the agent carries on; a `finished` or `failed` one
+  when the agent works again or you chat with it, when you `jumpTo` it, or when the pull-back
+  focuses it. A failure the agent works past (a refused tool call) stays until you dismiss it
+  or its run ends. `dismissAttention` removes any item. At most 50 are kept: the oldest that
+  aren't `blocked` go first.
 
 ## Lounge room host (P2P)
 

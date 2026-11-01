@@ -26,6 +26,7 @@ public struct Closeout: Sendable, Equatable {
             case "mode": body = "Autopilot was switched off."
             case "idle": body = "Your copilot stopped and is waiting for you."
             case "end": body = "Your copilot session ended."
+            case "failed": body = "Your agent stopped on an error."
             default: body = "Your autopilot run is over."
             }
         }

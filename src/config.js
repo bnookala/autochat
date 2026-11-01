@@ -12,9 +12,13 @@ export const DEFAULTS = {
   announce: true,
   // seconds you stay in the room after autopilot ends; 0 = pulled back immediately
   countdownSeconds: 30,
+  // focus back on the agent at the end of the countdown: auto (only if one agent was at work) | never | always
+  focus: 'auto',
   // set by agents.ack: the human saw "Agents read your messages as input…"
   agentsInterventionAck: false
 }
+
+export const FOCUS_MODES = ['auto', 'never', 'always']
 
 export const configPath = () => path.join(home(), 'config.json')
 
