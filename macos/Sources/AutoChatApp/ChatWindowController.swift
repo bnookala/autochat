@@ -10,7 +10,8 @@ final class ChatWindow: NSWindow {
 }
 
 /// Single-instance chat window. Closing only hides it; it remembers its frame; it reports
-/// its visible/key state to the model so the descending panel can hand off to it.
+/// its visible/key state to the model so the descending panel can hand off to it. Once the
+/// daemon hosts an agent room, the window has two tabs (Lounge | Agents), each with its size.
 @MainActor
 final class ChatWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private let model: AppModel
@@ -26,9 +27,18 @@ final class ChatWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate 
     private var meItem: NSToolbarItem?
     private var leaveItem: NSToolbarItem?
     private var wasCloseout = false
+    /// The tab the window is sized for, and each tab's last size.
+    private var sizedTab: ChatTab?
+    private var tabSizes: [ChatTab: NSSize] = [:]
+    private var animateResize = true
+    /// Off for snapshot rendering, which mustn't touch the user's defaults.
+    private var persistsTabSizes = true
 
     private static let meID = NSToolbarItem.Identifier("me")
     private static let leaveID = NSToolbarItem.Identifier("leave")
+    static let loungeMinSize = NSSize(width: 420, height: 420)
+    static let agentsMinSize = NSSize(width: 800, height: 500)
+    static let agentsDefaultSize = NSSize(width: 960, height: 740)
 
     init(model: AppModel) {
         self.model = model
@@ -38,6 +48,12 @@ final class ChatWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate 
 
     func show() {
         model.dismissAutopilotNotice()
+        // Size the window for the tab before it appears, rather than animating afterwards.
+        let wasVisible = window.isVisible
+        animateResize = wasVisible
+        syncChrome()
+        animateResize = true
+        if !wasVisible { DebugLog.log("chat window shows \(model.effectiveTab)") }
         if window.isMiniaturized { window.deminiaturize(nil) }
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
@@ -65,7 +81,10 @@ final class ChatWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate 
         window.delegate = self
         window.tabbingMode = .disallowed
         window.collectionBehavior.insert(.fullScreenNone)
-        window.contentViewController = NSHostingController(rootView: ChatView(model: model))
+        let hosting = NSHostingController(rootView: ChatView(model: model, onSelectTab: { [weak self] tab in self?.select(tab) }))
+        // The controller sizes the window per tab (`syncSize`), so SwiftUI mustn't fight it.
+        hosting.sizingOptions = []
+        window.contentViewController = hosting
         let toolbar = NSToolbar(identifier: "AutoChatToolbar")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
@@ -114,17 +133,25 @@ final class ChatWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate 
         }
     }
 
-    /// Title/subtitle/toolbar follow the snapshot; start the closeout timer at zero.
+    /// Title/subtitle/toolbar follow the snapshot and the tab; start the closeout timer at zero.
     private func syncChrome() {
         let p = model.presentation
-        window.title = p.title
-        window.subtitle = p.subtitle
+        let tab = model.effectiveTab
+        syncSize(for: tab)
+        if tab == .agents {
+            window.title = "Agents"
+            window.subtitle = AgentsRules.subtitle(snapshot: model.agents.snapshot, lounge: model.snapshot?.agents)
+        } else {
+            window.title = p.title
+            window.subtitle = p.subtitle
+        }
         leaveItem?.isEnabled = p.canLeave
         if let meItem, let handle = p.myHandle {
             (meItem.view as? NSHostingView<MeChip>)?.rootView = MeChip(handle: handle, color: model.snapshot?.me?.color)
         }
         meItem?.view?.isHidden = p.myHandle == nil
-        let isCloseout = p.closeout != nil
+        // The closeout banner (and its auto-hide) belongs to the Lounge tab.
+        let isCloseout = p.closeout != nil && tab == .lounge
         if isCloseout, !wasCloseout, window.isVisible {
             model.beginCloseout()
         } else if !isCloseout, wasCloseout {
@@ -136,6 +163,78 @@ final class ChatWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         hide()
         return false
+    }
+
+    // MARK: Tabs
+
+    /// The tab strip: switch, and size the window for it right away (before SwiftUI lays the
+    /// new tab out at the old size).
+    func select(_ tab: ChatTab) {
+        model.selectTab(tab)
+        animateResize = false
+        syncChrome()
+        animateResize = true
+    }
+
+    /// Each tab keeps its own window size: the agents view needs more room than the chat.
+    private func syncSize(for tab: ChatTab) {
+        window.minSize = tab == .agents ? Self.agentsMinSize : Self.loungeMinSize
+        let frame = window.frame
+        guard tab != sizedTab else {
+            if frame.width < window.minSize.width || frame.height < window.minSize.height { resize(to: frame.size, animate: false) }
+            return
+        }
+        let previous = sizedTab
+        sizedTab = tab
+        if let previous { remember(frame.size, for: previous) }
+        var size = tabSizes[tab] ?? savedSize(for: tab) ?? frame.size
+        if tabSizes[tab] == nil, savedSize(for: tab) == nil, previous != nil, tab == .agents {
+            size = NSSize(width: max(frame.width, Self.agentsDefaultSize.width), height: max(frame.height, Self.agentsDefaultSize.height))
+        }
+        resize(to: size, animate: animateResize && window.isVisible)
+    }
+
+    func windowDidEndLiveResize(_ notification: Notification) {
+        if let sizedTab { remember(window.frame.size, for: sizedTab) }
+    }
+
+    private static func sizeKey(_ tab: ChatTab) -> String { "AutoChatWindowSize.\(tab.rawValue)" }
+
+    private func remember(_ size: NSSize, for tab: ChatTab) {
+        tabSizes[tab] = size
+        guard persistsTabSizes else { return }
+        UserDefaults.standard.set(NSStringFromSize(size), forKey: Self.sizeKey(tab))
+    }
+
+    private func savedSize(for tab: ChatTab) -> NSSize? {
+        guard persistsTabSizes, let saved = UserDefaults.standard.string(forKey: Self.sizeKey(tab)) else { return nil }
+        let size = NSSizeFromString(saved)
+        return size.width > 0 && size.height > 0 ? size : nil
+    }
+
+    /// Resizes keeping the top-left corner, within the minimum size and the screen.
+    private func resize(to wanted: NSSize, animate: Bool) {
+        let frame = window.frame
+        var size = NSSize(width: max(wanted.width, window.minSize.width), height: max(wanted.height, window.minSize.height))
+        var origin = NSPoint(x: frame.minX, y: frame.maxY - size.height)
+        if let visible = (window.screen ?? NSScreen.main)?.visibleFrame, visible.intersects(frame) {
+            size.width = min(size.width, visible.width)
+            size.height = min(size.height, visible.height)
+            origin.y = frame.maxY - size.height
+            origin.x = min(max(origin.x, visible.minX), visible.maxX - size.width)
+            origin.y = min(max(origin.y, visible.minY), visible.maxY - size.height)
+        }
+        let target = NSRect(origin: origin, size: size)
+        guard target != frame else { return }
+        if animate {
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.22
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                window.animator().setFrame(target, display: true)
+            }
+        } else {
+            window.setFrame(target, display: true)
+        }
     }
 
     // MARK: Leave room
@@ -203,6 +302,7 @@ final class ChatWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate 
     /// The real window, configured for an offscreen PNG render.
     static func makeForSnapshot(model: AppModel, size: NSSize, appearance: NSAppearance.Name) -> (ChatWindowController, ChatWindow) {
         let controller = ChatWindowController(model: model)
+        controller.persistsTabSizes = false
         let window = controller.window
         window.setFrameAutosaveName("")
         window.forceKeyAppearance = true

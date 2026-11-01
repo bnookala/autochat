@@ -39,6 +39,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         chat = ChatWindowController(model: model)
         statusItem = StatusItemController(model: model, paths: paths, actions: .init(
             openChat: { [weak self] in self?.openChat() },
+            openAgents: { [weak self] in self?.openAgents() },
             locateCLI: { [weak self] in self?.locateCLI() },
             togglePause: { [weak self] in self?.togglePause() },
             toggleLoginItem: { [weak self] in self?.toggleLoginItem() },
@@ -69,7 +70,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Actions
 
+    /// Opens the lounge when something is happening there, otherwise the last tab.
     private func openChat() {
+        model.selectTabForOpening()
+        chat.show()
+    }
+
+    private func openAgents() {
+        model.selectTab(.agents)
         chat.show()
     }
 
@@ -118,6 +126,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 public enum AutoChatMain {
     /// Entry point. Hidden dev modes:
     ///   --render-snapshots <dir>   render fixture PNGs of the panel and chat window, then exit
+    ///   --render-live <dir> [--say <text>]  render the Agents tab from the running daemon at
+    ///                              $AUTOCHAT_HOME (and intervene with <text>), then exit
     ///   --render-icon <dir.iconset> write the app icon PNGs, then exit
     @MainActor
     public static func run() {
@@ -127,6 +137,12 @@ public enum AutoChatMain {
             let dir = i + 1 < args.count ? args[i + 1] : "snapshots"
             app.setActivationPolicy(.prohibited)
             exit(SnapshotRenderer.renderAll(to: URL(fileURLWithPath: dir)) ? 0 : 1)
+        }
+        if let i = args.firstIndex(of: "--render-live") {
+            let dir = i + 1 < args.count ? args[i + 1] : "live"
+            let say = args.firstIndex(of: "--say").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
+            app.setActivationPolicy(.prohibited)
+            exit(SnapshotRenderer.renderLive(to: URL(fileURLWithPath: dir), say: say) ? 0 : 1)
         }
         if let i = args.firstIndex(of: "--render-icon") {
             let dir = i + 1 < args.count ? args[i + 1] : "AppIcon.iconset"

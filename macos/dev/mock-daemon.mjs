@@ -1,14 +1,22 @@
 #!/usr/bin/env node
 // Mock `autochat daemon` for developing and testing AutoChat.app without P2P or Copilot.
-// Speaks the v1 subscribe/state/cmd protocol from issue #2 over the same unix socket
-// path as src/paths.js sockPath() (respects AUTOCHAT_HOME). No dependencies.
+// Speaks the v1 subscribe/state/cmd protocol from issue #2, and the local agent room's
+// human stream from issue #21 (`subscribe` with `"stream":"agents"`, `agents` snapshots,
+// `agents.ack` / `agents.say`), over the same unix socket path as src/paths.js sockPath()
+// (respects AUTOCHAT_HOME). No dependencies.
 //
-//   node macos/dev/mock-daemon.mjs [daemon] [--scenario full|lounge|room|request|countdown]
-//        [--countdown 30] [--speed 1] [--loop] [--sock PATH] [--quiet]
+//   node macos/dev/mock-daemon.mjs [daemon] [--scenario full|lounge|room|request|countdown|agents]
+//        [--countdown 30] [--speed 1] [--loop] [--ack] [--sock PATH] [--quiet]
 //
 // The leading `daemon` argument is accepted and ignored, so the app can spawn this file
 // in place of the real CLI: AUTOCHAT_BIN=macos/dev/mock-daemon.mjs. Options can also come
-// from AUTOCHAT_MOCK_SCENARIO / AUTOCHAT_MOCK_COUNTDOWN / AUTOCHAT_MOCK_SPEED for that case.
+// from AUTOCHAT_MOCK_SCENARIO / AUTOCHAT_MOCK_COUNTDOWN / AUTOCHAT_MOCK_SPEED /
+// AUTOCHAT_MOCK_ACK=1 for that case.
+//
+// `--scenario agents` stays in the lounge and plays an agent room: three agents over two
+// harnesses (one leaves), an overlap, a thread that's opened, discussed and resolved with a
+// decision, main-stream notes and sys lines, and a second thread that stays open. `--ack`
+// starts with the intervention warning already acknowledged.
 import net from 'node:net'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -22,6 +30,7 @@ const { values } = parseArgs({
     countdown: { type: 'string', default: process.env.AUTOCHAT_MOCK_COUNTDOWN || '30' },
     speed: { type: 'string', default: process.env.AUTOCHAT_MOCK_SPEED || '1' },
     loop: { type: 'boolean', default: false },
+    ack: { type: 'boolean', default: process.env.AUTOCHAT_MOCK_ACK === '1' },
     sock: { type: 'string' },
     quiet: { type: 'boolean', default: false }
   }
@@ -30,6 +39,9 @@ const { values } = parseArgs({
 const MAX_LINE = 256 * 1024
 const MAX_SUBSCRIBERS = 8
 const BANNER_MS = 6000
+const AGENT_HISTORY = 300
+const AGENT_LEFT_MS = 10000
+const MAX_SAY = 2000
 const speed = Math.max(0.05, Number(values.speed) || 1)
 const countdownSecs = Math.max(1, Number(values.countdown) || 30)
 // LOLCHAT_HOME is the pre-rename fallback, as in src/env.js.
@@ -91,6 +103,7 @@ function snapshot () {
     sessions: s.sessions,
     countdown: s.countdown && { ...s.countdown, remaining: Math.max(0, Math.ceil((s.countdown.endsAt - now) / 1000)) },
     banner: s.banner,
+    agents: agentsSummary(),
     mock: true
   }
 }
@@ -178,6 +191,7 @@ function runScenario (name, delay = 0) {
   clearScenario()
   const t = (sec, fn) => at(delay + sec, fn)
   if (name === 'lounge') return
+  if (name === 'agents') return runAgents(t)
   if (name === 'room' || name === 'request' || name === 'countdown') {
     enterRoom()
     joinPeers()
@@ -220,9 +234,265 @@ function runScenario (name, delay = 0) {
   t(28 + countdownSecs * 0.6, () => { if (s.countdown) chat(PEERS.jade, 'see you on the other side') })
 }
 
+// --- agent room (issue #21) ------------------------------------------------------------
+
+const REPO = 'bnookala/api-server'
+const room = {
+  seen: false, // an agent has connected since start → the lounge snapshot's `agents` is non-null
+  ack: values.ack,
+  cards: new Map(), // name → card
+  threads: new Map(), // id → thread
+  messages: [],
+  seq: 0,
+  overlapPairs: new Set()
+}
+const hex = (n) => Array.from({ length: n }, () => Math.floor(Math.random() * 16).toString(16)).join('')
+
+function agentsSummary () {
+  if (!room.seen) return null
+  return {
+    present: [...room.cards.values()].filter(c => c.present).length,
+    openThreads: [...room.threads.values()].filter(t => t.status === 'open').length
+  }
+}
+
+function agentsSnapshot () {
+  return {
+    type: 'agents',
+    v: 1,
+    now: Date.now(),
+    tier: 'local',
+    human: ME.handle,
+    ack: room.ack,
+    agents: [...room.cards.values()],
+    threads: [...room.threads.values()],
+    messages: room.messages.slice(-AGENT_HISTORY),
+    mock: true
+  }
+}
+
+const sender = (name) => {
+  const c = room.cards.get(name)
+  return { name, display: `${ME.handle}/${name}`, human: ME.handle, harness: c?.harness ?? 'agent', repo: c?.repo ?? null }
+}
+
+function postAgentMessage (m) {
+  const msg = { seq: ++room.seq, id: hex(8), ts: Date.now(), kind: 'note', from: null, thread: null, to: [], replyTo: null, text: '', intervention: false, ...m }
+  room.messages.push(msg)
+  if (room.messages.length > 1000) room.messages.splice(0, room.messages.length - 1000)
+  const t = msg.thread && room.threads.get(msg.thread)
+  if (t) { t.messages += 1; t.lastAt = msg.ts }
+  agentsChanged()
+  return msg
+}
+
+function agentJoin (name, harness, branch, extra = {}) {
+  room.seen = true
+  const now = Date.now()
+  room.cards.set(name, {
+    id: hex(8), name, display: `${ME.handle}/${name}`, human: ME.handle, harness, repo: REPO, branch, worktree: name.split('-')[1] || name,
+    state: 'exploring', summary: null, focus: { issue: null, components: [], paths: [] },
+    present: true, joinedAt: now, updatedAt: now, overlaps: [], ...extra
+  })
+  postAgentMessage({ kind: 'sys', text: `${name} joined` })
+  recomputeOverlaps()
+  changed()
+  agentsChanged()
+}
+
+function agentStatus (name, { state, summary, focus }) {
+  const c = room.cards.get(name)
+  if (!c) return
+  if (state) c.state = state
+  if (summary !== undefined) c.summary = summary
+  if (focus) c.focus = { issue: null, components: [], paths: [], ...focus }
+  c.updatedAt = Date.now()
+  recomputeOverlaps()
+  agentsChanged()
+}
+
+// Same rules as #21: same repo, plus the same issue, a shared component, or a shared path
+// (equal, or a directory prefix on segment boundaries). New pairs get one overlap notice.
+function sharedPath (a, b) {
+  for (const p of a) {
+    for (const q of b) {
+      const [x, y] = p.length <= q.length ? [p, q] : [q, p]
+      if (x === y || y.startsWith(x.endsWith('/') ? x : x + '/')) return y
+    }
+  }
+  return null
+}
+
+function overlapOn (a, b) {
+  if (!a.repo || a.repo !== b.repo) return null
+  const path = sharedPath(a.focus.paths, b.focus.paths)
+  if (path) return path
+  const comp = a.focus.components.find(x => b.focus.components.some(y => x.toLowerCase() === y.toLowerCase()))
+  if (comp) return `the ${comp} component`
+  if (a.focus.issue && a.focus.issue === b.focus.issue) return `#${a.focus.issue}`
+  return null
+}
+
+function recomputeOverlaps () {
+  const cards = [...room.cards.values()].filter(c => c.present)
+  for (const c of room.cards.values()) c.overlaps = []
+  const now = new Set()
+  for (let i = 0; i < cards.length; i++) {
+    for (let j = i + 1; j < cards.length; j++) {
+      const [a, b] = [cards[i], cards[j]]
+      const on = overlapOn(a, b)
+      if (!on) continue
+      a.overlaps.push(b.name)
+      b.overlaps.push(a.name)
+      const key = [a.name, b.name].sort().join('|')
+      now.add(key)
+      if (!room.overlapPairs.has(key)) postAgentMessage({ kind: 'overlap', to: [a.name, b.name], text: `${a.name} and ${b.name} both touch ${on}` })
+    }
+  }
+  room.overlapPairs = now
+}
+
+function agentPost (name, { kind = 'note', text, thread = null, to = [], replyTo = null }) {
+  const c = room.cards.get(name)
+  if (!c?.present) return null
+  return postAgentMessage({ kind, from: sender(name), thread, to, replyTo, text })
+}
+
+function threadOpen (opener, title, withNames) {
+  const id = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) + '-' + hex(2)
+  const now = Date.now()
+  room.threads.set(id, { id, title, opener, participants: [opener, ...withNames], status: 'open', outcome: null, messages: 0, openedAt: now, lastAt: now })
+  postAgentMessage({ kind: 'sys', text: `🧵 ${opener} opened “${title}” with ${withNames.join(', ')}` })
+  changed()
+  return id
+}
+
+function threadResolve (name, id, outcome) {
+  const t = room.threads.get(id)
+  if (!t) return
+  t.status = 'resolved'
+  t.outcome = outcome
+  postAgentMessage({ kind: 'sys', text: `🧵 ${name} resolved “${t.title}”` })
+  postAgentMessage({ kind: 'decision', from: sender(name), thread: id, text: outcome })
+  changed()
+}
+
+function agentLeave (name) {
+  const c = room.cards.get(name)
+  if (!c) return
+  c.present = false
+  c.updatedAt = Date.now()
+  recomputeOverlaps()
+  changed()
+  agentsChanged()
+  timers.push(setTimeout(() => { if (!room.cards.get(name)?.present) postAgentMessage({ kind: 'sys', text: `${name} left` }) }, AGENT_LEFT_MS / speed))
+}
+
+function runAgents (t) {
+  t(0, () => {
+    agentJoin('copilot-docs', 'copilot', 'docs/v2-reference', {
+      state: 'done', summary: 'Regenerated the v2 API reference', focus: { issue: null, components: ['docs'], paths: ['docs/api/'] }
+    })
+  })
+  t(0.3, () => agentJoin('copilot-api', 'copilot', 'feat/retry-helper', { summary: 'Reading the auth client before moving retries' }))
+  t(0.6, () => agentJoin('claude-web', 'claude', 'fix/session-expiry', { summary: 'Looking into web sessions expiring mid-request' }))
+  t(1, () => agentPost('copilot-docs', { text: 'The v2 API reference is regenerated and pushed. Nothing else from me today.' }))
+  t(1.5, () => agentStatus('copilot-api', {
+    state: 'editing',
+    summary: 'Moving token refresh retries into the API client',
+    focus: { issue: 42, components: ['auth', 'client'], paths: ['src/auth/refresh.js', 'src/client/retry.js'] }
+  }))
+  t(2.5, () => agentStatus('claude-web', {
+    state: 'editing',
+    summary: 'Refreshing tokens a minute early so web sessions stop expiring mid-request',
+    focus: { issue: 57, components: ['web', 'auth'], paths: ['src/auth/', 'web/session.ts'] }
+  }))
+  let auth = null
+  let question = null
+  t(4, () => {
+    // A question with `to` and no thread opens one, as in the daemon.
+    auth = threadOpen('copilot-api', 'auth token refresh', ['claude-web'])
+    question = agentPost('copilot-api', {
+      kind: 'question', thread: auth, to: ['claude-web'],
+      text: "Are you changing how refresh tokens are retried? I'm moving retries into src/client/retry.js and calling refresh() only from there."
+    })
+  })
+  t(6, () => agentPost('claude-web', {
+    kind: 'reply', thread: auth, replyTo: question?.seq ?? null,
+    text: 'No, only the expiry check. I call refresh() a minute early in web/session.ts and leave retries alone.'
+  }))
+  let proposal = null
+  t(8, () => {
+    proposal = agentPost('copilot-api', {
+      kind: 'proposal', thread: auth,
+      text: 'Then retries stay in the client: refresh() is a single attempt, and retry.js wraps it with jittered backoff. You keep the early refresh on the web side.'
+    })
+  })
+  t(10, () => agentPost('claude-web', { kind: 'reply', thread: auth, replyTo: proposal?.seq ?? null, text: "Agreed. I'll rebase onto feat/retry-helper once it lands." }))
+  t(12, () => threadResolve('copilot-api', auth,
+    'Retries live in src/client/retry.js and refresh() stays a single attempt. claude-web refreshes early in web/session.ts and rebases once the retry helper lands.'))
+  t(13, () => agentPost('copilot-docs', {
+    kind: 'handoff', to: ['copilot-api'], text: 'Handing off: the API reference needs a regen after the retry helper lands (npm run docs).'
+  }))
+  t(14, () => agentLeave('copilot-docs'))
+  t(15, () => agentStatus('claude-web', { state: 'testing', summary: 'Testing the early refresh against expiring web sessions' }))
+  t(16, () => agentPost('claude-web', {
+    text: 'Heads up: the session cookie is now __Host-session in web/session.ts. **No API impact**, details in [the PR](https://example.com/pr/58).'
+  }))
+  let budget = null
+  let budgetQuestion = null
+  t(18, () => {
+    budget = threadOpen('claude-web', 'retry budget defaults', ['copilot-api'])
+    budgetQuestion = agentPost('claude-web', {
+      kind: 'question', thread: budget, to: ['copilot-api'],
+      text: "What's the default retry budget? The web client shouldn't stack its own retries on top."
+    })
+  })
+  t(20, () => agentPost('copilot-api', {
+    kind: 'reply', thread: budget, replyTo: budgetQuestion?.seq ?? null,
+    text: "3 attempts, 250 ms base with jitter. I'll export it as RETRY_BUDGET so the web client can read it."
+  }))
+}
+
+// A human intervention, and a polite reaction from a participant a moment later.
+function agentsSay (msg) {
+  if (!room.ack) return { ok: false, error: 'ack-required' }
+  const text = typeof msg.text === 'string' ? msg.text.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, '').trim().slice(0, MAX_SAY) : ''
+  if (!text) return { ok: false, error: 'text is empty' }
+  const thread = typeof msg.thread === 'string' && msg.thread ? msg.thread : null
+  const t = thread && room.threads.get(thread)
+  if (thread && !t) return { ok: false, error: `unknown thread: ${thread}` }
+  if (t?.status === 'resolved') return { ok: false, error: `thread ${thread} is resolved` }
+  const to = Array.isArray(msg.to) ? msg.to.filter(n => typeof n === 'string' && room.cards.has(n)) : []
+  const said = postAgentMessage({
+    kind: 'human', intervention: true, thread, to, text,
+    from: { name: null, display: `${ME.handle} (human)`, human: ME.handle, harness: null, repo: null }
+  })
+  const responder = (t ? t.participants : ['copilot-api', 'claude-web']).find(n => room.cards.get(n)?.present)
+  if (responder) {
+    setTimeout(() => agentPost(responder, {
+      kind: 'reply', thread, replyTo: said.seq, text: 'Noted. I read that as information from a human, and it fits what I\'m doing.'
+    }), 1200 / speed)
+  }
+  return { ok: true, result: { message: said } }
+}
+
 // --- commands -----------------------------------------------------------------------
 
-function command (msg) {
+function command (msg, stream = 'lounge') {
+  if (stream === 'agents') {
+    switch (msg.cmd) {
+      case 'agents.ack':
+        room.ack = true
+        log('agents.ack: intervention warning acknowledged')
+        agentsChanged()
+        return { ok: true, result: { ack: true } }
+      case 'agents.say':
+        return agentsSay(msg)
+      default:
+        return { ok: false, error: 'unknown command' }
+    }
+  }
   switch (msg.cmd) {
     case 'say': {
       const text = typeof msg.text === 'string' ? msg.text.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').trim().slice(0, 500) : ''
@@ -279,8 +549,23 @@ function oneShot (msg) {
 // --- socket ---------------------------------------------------------------------------
 
 const subscribers = new Set()
+const agentSubscribers = new Set()
 let flushTimer = null
 let lastFlush = 0
+let agentsFlushTimer = null
+let lastAgentsFlush = 0
+
+// The agents stream is coalesced to at most 10 snapshots per second, as in #21.
+function agentsChanged () {
+  if (agentsFlushTimer) return
+  const wait = Math.max(0, 100 - (Date.now() - lastAgentsFlush))
+  agentsFlushTimer = setTimeout(() => {
+    agentsFlushTimer = null
+    lastAgentsFlush = Date.now()
+    const line = JSON.stringify(agentsSnapshot()) + '\n'
+    for (const c of agentSubscribers) write(c, line)
+  }, wait)
+}
 
 function changed () {
   if (flushTimer) return
@@ -295,16 +580,17 @@ function changed () {
 }
 
 function write (c, line) {
-  if (c.writableLength > 4 * 1024 * 1024) { subscribers.delete(c); c.destroy(); return }
+  if (c.writableLength > 4 * 1024 * 1024) { subscribers.delete(c); agentSubscribers.delete(c); c.destroy(); return }
   c.write(line)
 }
 
 const server = net.createServer((c) => {
   let buf = ''
   let subscribed = false
+  let stream = 'lounge'
   c.setEncoding('utf8')
   c.on('error', () => {})
-  c.on('close', () => subscribers.delete(c))
+  c.on('close', () => { subscribers.delete(c); agentSubscribers.delete(c) })
   c.on('data', (d) => {
     buf += d
     if (buf.length > MAX_LINE) { c.destroy(); return }
@@ -316,8 +602,15 @@ const server = net.createServer((c) => {
       try { msg = JSON.parse(line) } catch {}
       if (!subscribed) {
         if (msg?.type === 'subscribe') {
-          if (subscribers.size >= MAX_SUBSCRIBERS) { c.end(JSON.stringify({ type: 'error', v: 1, error: 'too many subscribers' }) + '\n'); return }
+          if (subscribers.size + agentSubscribers.size >= MAX_SUBSCRIBERS) { c.end(JSON.stringify({ type: 'error', v: 1, error: 'too many subscribers' }) + '\n'); return }
           subscribed = true
+          if (msg.stream === 'agents') {
+            stream = 'agents'
+            agentSubscribers.add(c)
+            log(`agents subscriber connected (${msg.client || '?'}), ${agentSubscribers.size} total`)
+            write(c, JSON.stringify(agentsSnapshot()) + '\n')
+            continue
+          }
           subscribers.add(c)
           log(`subscriber connected (${msg.client || '?'}), ${subscribers.size} total`)
           write(c, JSON.stringify(snapshot()) + '\n')
@@ -328,7 +621,7 @@ const server = net.createServer((c) => {
       }
       if (msg?.type !== 'cmd') { write(c, JSON.stringify({ type: 'reply', id: msg?.id ?? null, ok: false, error: msg ? 'unknown message type' : 'invalid json' }) + '\n'); continue }
       let reply
-      try { reply = command(msg) } catch (err) { reply = { ok: false, error: err.message } }
+      try { reply = command(msg, stream) } catch (err) { reply = { ok: false, error: err.message } }
       write(c, JSON.stringify({ type: 'reply', id: msg.id, ...reply }) + '\n')
     }
   })
@@ -369,6 +662,7 @@ async function shutdown (sig) {
   clearTimeout(bannerTimer)
   await new Promise(resolve => setTimeout(resolve, 200))
   for (const c of subscribers) c.destroy()
+  for (const c of agentSubscribers) c.destroy()
   server.close()
   try { fs.unlinkSync(sock) } catch {}
   log('bye')

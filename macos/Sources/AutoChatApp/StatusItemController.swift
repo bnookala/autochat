@@ -6,6 +6,7 @@ import AutoChatCore
 final class StatusItemController: NSObject, NSMenuDelegate {
     struct Actions {
         var openChat: () -> Void
+        var openAgents: () -> Void
         var locateCLI: () -> Void
         var togglePause: () -> Void
         var toggleLoginItem: () -> Void
@@ -117,6 +118,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         default: roomLine = "\(roomName) · autopilot is over"
         }
         menu.addItem(info(roomLine, symbol: "number"))
+        // The local agent room: a summary that opens the Agents tab. No panel, no badge.
+        if model.connected, let agents = model.snapshot?.agents {
+            let line = entry(AgentsRules.menuLine(agents), symbol: "lock.fill") { [actions] in actions.openAgents() }
+            line.toolTip = "The local agent room on this Mac: open the Agents tab"
+            menu.addItem(line)
+        }
         menu.addItem(info(daemonLine, symbol: "server.rack"))
         if let handle = model.snapshot?.me?.handle { menu.addItem(info("You are \(handle)", symbol: "person.crop.circle")) }
 
