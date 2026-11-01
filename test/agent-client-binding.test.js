@@ -42,3 +42,66 @@ test('harness detection: package paths and binaries; remotes → owner/repo', ()
   assert.deepEqual([hinted.harness, hinted.harnessPid, hinted.hello.name], ['claude', null, 'Reviewer'])
   assert.equal(bindSession({ env: {}, cwd: none, ps: () => new Map(), pid: 100 }).harness, 'agent')
 })
+
+test('session titles: Copilot\'s session name from its workspace.yaml, in the hello; read again by status', async () => {
+  const { yamlField, sessionTitle } = await import('../src/agent-client/binding.js')
+  const yaml = (v) => yamlField(`id: x\ncwd: /w\nname: ${v}\r\nsummary: s\n`, 'name')
+  assert.equal(yaml('Lolchat macos menu bar app'), 'Lolchat macos menu bar app')
+  assert.equal(yaml('What can you do?'), 'What can you do?')
+  assert.equal(yaml('"Fix: the \\"bug\\" \\u00e9\\x41"'), 'Fix: the "bug" éA')
+  assert.equal(yaml("'It''s done # here'"), "It's done # here")
+  assert.equal(yaml('Fix it # a comment'), 'Fix it')
+  for (const v of ['', '~', 'null', '|-', '"unterminated']) assert.equal(yaml(v), null, v)
+  assert.equal(yamlField('  name: nested\n', 'name'), null, 'top-level keys only')
+
+  // COPILOT_HOME/session-state/<COPILOT_AGENT_SESSION_ID>/workspace.yaml
+  const home = path.join(tmp, 'copilot-home')
+  const sid = '0b7c9d36-5b2e-4c55-9d0e-6f1f3f0a8c11'
+  const ws = path.join(home, 'session-state', sid)
+  fs.mkdirSync(ws, { recursive: true })
+  fs.writeFileSync(path.join(ws, 'workspace.yaml'), `id: ${sid}\ncwd: /w\nsummary_count: 0\n`)
+  const env = { COPILOT_HOME: home, COPILOT_AGENT_SESSION_ID: sid }
+  const none = path.join(tmp, 'not-a-repo')
+  fs.mkdirSync(none, { recursive: true })
+  const unnamed = bindSession({ harness: 'copilot', env, cwd: none, ps: () => new Map(), pid: 100 })
+  assert.deepEqual([unnamed.sessionId, unnamed.hello.sessionId, unnamed.hello.title], [sid, sid, null], 'not named yet')
+  fs.writeFileSync(path.join(ws, 'workspace.yaml'), `id: ${sid}\ncwd: /w\nname: Lolchat macos menu bar app\nsummary_count: 0\n`)
+  assert.equal(unnamed.readTitle(), 'Lolchat macos menu bar app', 'read again later')
+  const named = bindSession({ harness: 'copilot', env, cwd: none, ps: () => new Map(), pid: 100 })
+  assert.equal(named.hello.title, 'Lolchat macos menu bar app')
+  assert.deepEqual(Object.keys(named.hello), ['type', 'v', 'harness', 'name', 'pid', 'harnessPid', 'sessionId', 'cwd', 'repo', 'branch', 'worktree', 'title', 'resume'])
+  assert.equal(bindSession({ harness: 'claude', env: { ...env, CLAUDE_CODE_SESSION_ID: sid }, cwd: none, ps: () => new Map(), pid: 100 }).hello.title, null, 'only Copilot\'s')
+  assert.equal(sessionTitle({ harness: 'copilot', sessionId: '../../etc', env }), null, 'session ids are checked')
+  fs.writeFileSync(path.join(ws, 'workspace.yaml'), `name: "${'x'.repeat(120)}"\n`)
+  assert.equal(Array.from(sessionTitle({ harness: 'copilot', sessionId: sid, env })).length, 80)
+  fs.writeFileSync(path.join(ws, 'workspace.yaml'), `name: use ${['ghp', 'a'.repeat(36)].join('_')}\n`)
+  assert.equal(sessionTitle({ harness: 'copilot', sessionId: sid, env }), null, 'never a secret')
+
+  // The status tool sends the session's title when it changed since the hello, once.
+  const { Tools } = await import('../src/agent-client.js')
+  const sent = []
+  let limited = false
+  const link = { hello: { title: null }, agent: null, request: async (cmd, args) => { sent.push(args); return limited ? { ok: false, error: 'rate limited' } : { ok: true, result: { card: {} }, inbox: {} } } }
+  let title = null
+  const tools = new Tools({ link, session: { cwd: none, top: null, readTitle: () => title } })
+  await tools.status({ summary: 'a' })
+  title = 'Readable names'
+  limited = true
+  assert.equal((await tools.call('status', { summary: 'b' })).isError, true)
+  limited = false
+  await tools.status({ summary: 'b' })
+  await tools.status({ summary: 'c' })
+  title = 'Renamed'
+  await tools.status({ title: 'My own', parent: 'lead' })
+  assert.deepEqual(sent, [{ summary: 'a' }, { summary: 'b', title: 'Readable names' }, { summary: 'b', title: 'Readable names' }, { summary: 'c' }, { title: 'My own', parent: 'lead' }], 'until a status that carries it succeeds')
+  assert.equal(link.hello.title, 'Renamed', 'a reconnect says hello with the newest title')
+
+  // pi: the session's /name.
+  const { register } = await import('../src/harness/pi-extension.js')
+  const handlers = {}
+  const pi = { on: (e, fn) => { handlers[e] = fn }, registerTool () {} }
+  const out = await register(pi, { room: true, env: {}, joinDelayMs: 60000 })
+  handlers.session_start({ reason: 'startup' }, { cwd: none, hasUI: false, sessionManager: { getSessionId: () => 'pi-1', getSessionName: () => 'Teach pi the room' } })
+  assert.deepEqual([out.room.link.hello.harness, out.room.link.hello.sessionId, out.room.link.hello.title], ['pi', 'pi-1', 'Teach pi the room'])
+  handlers.session_shutdown({ reason: 'quit' })
+})
