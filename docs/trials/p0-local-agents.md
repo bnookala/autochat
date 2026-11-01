@@ -693,8 +693,9 @@ card, nobody acted on the decision, and the final code conflicts. It now conflic
   that.
 - **Timeouts.** opencode's config schema says MCP requests time out after 5 s by default, but 1.2.6
   never uses 5 s. Connecting and listing tools default to 30 s, and tool calls to the MCP SDK's 60 s.
-  The comment next to `OPENCODE_TIMEOUT_MS` in `src/harnesses.js` repeats the 5 s. The setting itself
-  (60 s) is right: only a `timeout` under 50 s would break `wait`.
+  The comment next to `OPENCODE_TIMEOUT_MS` repeats the 5 s (in `src/harnesses.js` as tested, and
+  in `src/harness/opencode.js` since #42). The setting itself (60 s) is right: only a `timeout` under
+  50 s would break `wait`.
 - **Speed.** On the same model, opencode-B finished in 41–49 s, against Copilot-B's 48–65 s, and
   read its inbox 13–18 s after it filled, against 23–28 s. That's why it finished first.
 - **Names.** The default names differ by harness (`copilot-greeter`, `opencode-greeter`), so the
@@ -822,7 +823,7 @@ opencode shows the model nothing else, and it followed them.
     - **opencode 1.2.6** never shows server instructions. `setup --agents` could write the etiquette
       to a file and list it under `instructions` in opencode's config (untested), and `doctor`
       should say that otherwise opencode agents see only the tool descriptions. Keep the 60-s
-      `timeout`, but fix its comment in `src/harnesses.js`: 1.2.6 has no 5-s default.
+      `timeout`, but fix its comment in `src/harness/opencode.js`: 1.2.6 has no 5-s default.
     - **Gemini CLI 0.29.2** shows server instructions without a flag. But it ignores the old
       `selectedAuthType` key, so `doctor` should check the auth type, and whether a cached Gemini
       login has expired.
