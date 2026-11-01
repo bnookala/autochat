@@ -73,3 +73,38 @@ test('resolving a resolved thread is ok: the first outcome stands, with one deci
   for (const x of [a, b]) x.close()
 })
 
+test('post title: the title of the thread a question opens; by default its first sentence, cut at a word', async (t) => {
+  const { room } = await start(t)
+  const a = await agent({ harness: 'copilot' })
+  const b = await agent({ harness: 'claude' })
+  const ask = async (text, extra = {}) => ok(await a.cmd('post', { kind: 'question', to: ['claude-repo'], text, ...extra })).thread
+  let th = await ask('I am adding shout() to src/greeting.js. Can you keep the export names stable in your i18n change?')
+  assert.equal(th.title, 'I am adding shout() to src/greeting.js')
+  th = await ask('Cache layout\nShould it be one cache per repo, or per worktree?')
+  assert.equal(th.title, 'Cache layout', 'the first line')
+  th = await ask('Should token refresh live in src/auth.js or the client, given that we also need retries and backoff?')
+  assert.equal(th.title, 'Should token refresh live in src/auth.js or the client…')
+  assert.ok(Array.from(th.title).length <= 60)
+  th = await ask('Does v1.2 of the API keep the /v1/greetings route stable?')
+  assert.equal(th.title, 'Does v1.2 of the API keep the /v1/greetings route stable?', 'dots inside words end no sentence')
+  th = await ask('Can you check ' + 'x'.repeat(70) + ' for me?')
+  assert.equal(th.title, 'Can you check…')
+  th = await ask('y'.repeat(70) + '?')
+  assert.equal(th.title, 'y'.repeat(59) + '…', 'one long word is cut where it has to be')
+
+  th = await ask('Can you keep greet() as it is? I build shout() on it.', { title: 'greet() stays' })
+  assert.equal(th.title, 'greet() stays')
+  assert.match(th.id, /^greet-stays-[0-9a-f]{2}$/)
+  assert.equal(room.snapshot().messages.filter(m => m.kind === 'sys').at(-1).text, '🧵 copilot-repo opened “greet() stays” with claude-repo')
+
+  // A bad title fails the post before anything happens; a title without a new thread is ignored.
+  const threads = room.threads.size
+  const seq = room.seq
+  assert.equal((await a.cmd('post', { kind: 'question', to: ['claude-repo'], text: 'x?', title: 'x'.repeat(81) })).error, 'title too long (max 80 characters)')
+  assert.equal((await a.cmd('post', { kind: 'question', to: ['claude-repo'], text: 'x?', title: 7 })).error, 'title must be a string')
+  assert.equal((await a.cmd('post', { kind: 'question', to: ['claude-repo'], text: 'x?', title: 'password = Hunter2Hunter2' })).error, 'blocked: looks like a secret (credential assignment)')
+  assert.deepEqual([room.threads.size, room.seq], [threads, seq])
+  const note = ok(await a.cmd('post', { text: 'fyi', title: 'x'.repeat(200) }))
+  assert.deepEqual([note.message.thread, note.thread], [null, undefined])
+  for (const x of [a, b]) x.close()
+})
