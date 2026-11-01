@@ -25,6 +25,8 @@ test('hello → welcome; default names, dedupe, overrides, and refusals', async 
   assert.equal(c.welcome.agent.title, 'My Web_App')
   const d = await named({ name: 'Reviewer Bot!!' })
   assert.equal(d.name, 'reviewer-bot')
+  // maxAgents counts active agents (board.md): once all four have spoken, a fifth is refused.
+  for (const x of [a, b, c, d]) ok(await x.cmd('post', { text: 'here' }))
   const e = await named()
   assert.deepEqual(e.welcome, { type: 'error', v: 1, error: 'too many agents' })
   await e.closed

@@ -262,7 +262,7 @@ test('two autochat mcp processes coordinate through the daemon: overlap → ques
   assert.deepEqual([a0.you.repo, a0.you.branch, a0.you.worktree], ['local/greeting', 'feat-a', 'wt-a'])
   const b0 = await B.tool('catch_up', {}, { meta: MODERN })
   assert.equal(b0.you.name, 'claude-greeting')
-  assert.deepEqual(b0.board.map(c => c.name), ['copilot-greeting'])
+  assert.deepEqual([b0.board, b0.others], [[], { agents: 0, repos: 0 }], 'A is idle until it sets a status or posts')
 
   // Status: paths come from git (A's uncommitted edit, B's committed branch change) and overlap.
   const sa = await A.tool('status', { summary: 'adding shout()', state: 'editing', focus: { issue: 3 } })
