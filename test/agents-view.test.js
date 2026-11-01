@@ -12,7 +12,7 @@ const { strWidth, stripAnsi } = await import('../src/tui.js')
 const { serve } = await import('../src/ipc.js')
 const { AgentRoom } = await import('../src/agents.js')
 
-// A real AgentRoom snapshot (see the agents stream in docs/protocol.md), with a fixed clock.
+// A real AgentRoom snapshot (see docs/agent-room/human.md), with a fixed clock.
 const fixture = JSON.parse(fs.readFileSync(new URL('./fixtures/agents-snapshot.json', import.meta.url), 'utf8'))
 
 test('renders a fixture snapshot: header, board, open threads, labelled message stream', () => {

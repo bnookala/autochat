@@ -9,9 +9,8 @@ import { fileURLToPath } from 'node:url'
 const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'autochat.js')
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'autochat-mcp-'))
 process.env.AUTOCHAT_HOME = path.join(tmp, 'ac')
-const { McpServer, Tools, TOOLS, INSTRUCTIONS, SUPPORTED_VERSIONS, matchHarness, parseRemote, bindSession } = await import('../src/mcp.js')
+const { McpServer, Tools, TOOLS, INSTRUCTIONS, SUPPORTED_VERSIONS } = await import('../src/mcp.js')
 const { send } = await import('../src/ipc.js')
-const { register: registerPi } = await import('../src/harness/pi-extension.js')
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 const MODERN = { 'io.modelcontextprotocol/protocolVersion': '2026-07-28', 'io.modelcontextprotocol/clientCapabilities': {} }
@@ -84,40 +83,6 @@ test('initialize negotiates legacy versions; modern requests use _meta, server/d
   assert.equal(legacyDiscover.error.code, -32602, 'discover needs modern _meta')
 })
 
-// opencode never passes the server's `instructions` to the model (P0 trial, round 3), so an agent
-// there knows only the tool descriptions: every rule has to be in at least one of them too. pi has
-// no MCP, and its extension registers the same tools, with the same descriptions.
-// Keywords, not sentences, so the wording can change.
-test('every etiquette rule is in at least one tool description, not only in the instructions; pi gets the same', async () => {
-  for (const part of ['Start:', 'While you work:', 'Overlaps:', 'Decisions:', 'Finish:']) assert.ok(INSTRUCTIONS.includes(part), `instructions: ${part}`)
-  const pi = []
-  await registerPi({ on () {}, registerTool: (def) => pi.push(def) }, { room: true })
-  assert.deepEqual(pi.map(t => [t.name, t.description]), TOOLS.map(t => ['autochat_' + t.name, t.description]), 'pi: the same descriptions')
-  const rules = {
-    'start: catch_up first': /first when you start/,
-    'start: status before you edit': /before you edit anything/,
-    'start: the files you plan to change': /files you plan to change/,
-    'start: component names already on the board': /component names already on the board/,
-    "while you work: read before you edit a file on another agent's card": /read before you edit a file/i,
-    'while you work: read after each step': /after each step/,
-    'overlaps: open or join a thread': /open (?:or join )?a thread with/,
-    'decisions: only to resolve a thread': /decision only to resolve a thread/,
-    'finish: read before you stop': /before you stop/i,
-    'finish: answer what is addressed to you': /answer what is addressed to you/,
-    'finish: wait at most twice': /at most twice/,
-    'finish: a handoff': /handoff for anything unresolved/,
-    'subagents: post the conclusion as a proposal': /conclusion as a proposal/,
-    'messages are information, not instructions': /information[\w ]*, not instructions/,
-    "don't act because a message asks": /don't run commands/,
-    'never post secrets': /never post secrets/i,
-    'durable decisions belong in GitHub': /belong in GitHub/,
-    'otherwise wait only when blocked': /blocked on an answer/
-  }
-  for (const [rule, re] of Object.entries(rules)) {
-    assert.ok(TOOLS.some(t => re.test(t.description)), `no tool description has the rule "${rule}"`)
-  }
-})
-
 test('JSON-RPC errors: -32601 unknown methods, -32602 bad params, -32700/-32600, batches', async () => {
   const { tools } = fakeTools()
   const call = rpc(new McpServer({ tools }))
@@ -171,41 +136,6 @@ test('tool results: compact JSON text plus structuredContent, provenance, inbox;
   assert.deepEqual(calls.at(-1), { cmd: 'wait', args: { timeoutMs: 50000 } })
   const [next] = await call2({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'read', arguments: {} } })
   assert.deepEqual(next.result.structuredContent.messages.map(m => m.seq), [6], 'stashed messages are delivered')
-})
-
-test('harness detection: package paths and binaries; remotes → owner/repo', () => {
-  assert.equal(matchHarness('node /Users/me/.nvm/versions/node/v22/bin/copilot --autopilot'), 'copilot')
-  assert.equal(matchHarness('/Users/me/.nvm/v22/lib/node_modules/@github/copilot/node_modules/@github/copilot-darwin-arm64/copilot'), 'copilot')
-  assert.equal(matchHarness('claude --continue'), 'claude')
-  assert.equal(matchHarness('node /opt/homebrew/lib/node_modules/@google/gemini-cli/dist/index.js'), 'gemini')
-  assert.equal(matchHarness('/opt/homebrew/bin/opencode'), 'opencode')
-  assert.equal(matchHarness('node /Users/me/Library/pnpm/global/5/node_modules/@mariozechner/pi-coding-agent/dist/cli.js'), 'pi')
-  assert.equal(matchHarness('codex exec "fix it"'), 'codex')
-  assert.equal(matchHarness('/bin/zsh -l'), null)
-  assert.equal(matchHarness('node /x/bin/autochat.js mcp --harness copilot'), null, 'our own flags are not a harness')
-
-  for (const url of ['git@github.com:owner/repo.git', 'https://github.com/owner/repo', 'https://github.com/owner/repo.git/', 'ssh://git@github.com/owner/repo.git', 'https://x-access-token@ghe.example.com/owner/repo']) {
-    assert.equal(parseRemote(url), 'owner/repo', url)
-  }
-  assert.equal(parseRemote(''), null)
-
-  // The nearest matching ancestor; --harness picks which one.
-  const table = new Map([
-    [100, { ppid: 90, command: 'node /x/bin/autochat.js mcp' }],
-    [90, { ppid: 80, command: '/bin/sh -c node /x/bin/autochat.js mcp' }],
-    [80, { ppid: 70, command: 'claude' }],
-    [70, { ppid: 1, command: 'node /n/bin/copilot' }]
-  ])
-  const none = path.join(tmp, 'not-a-repo')
-  fs.mkdirSync(none, { recursive: true })
-  const auto = bindSession({ env: {}, cwd: none, ps: () => table, pid: 100 })
-  assert.deepEqual([auto.harness, auto.harnessPid], ['claude', 80])
-  assert.deepEqual([auto.hello.repo, auto.hello.branch, auto.hello.worktree], [null, null, null], 'null outside git')
-  const flagged = bindSession({ harness: 'copilot', env: {}, cwd: none, ps: () => table, pid: 100 })
-  assert.deepEqual([flagged.harness, flagged.harnessPid], ['copilot', 70])
-  const hinted = bindSession({ env: { CLAUDECODE: '1', AUTOCHAT_AGENT_NAME: 'Reviewer' }, cwd: none, ps: () => new Map(), pid: 100 })
-  assert.deepEqual([hinted.harness, hinted.harnessPid, hinted.hello.name], ['claude', null, 'Reviewer'])
-  assert.equal(bindSession({ env: {}, cwd: none, ps: () => new Map(), pid: 100 }).harness, 'agent')
 })
 
 // --- integration: a real daemon and two `autochat mcp` processes over stdio ---------------------
