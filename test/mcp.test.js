@@ -11,6 +11,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'autochat-mcp-'))
 process.env.AUTOCHAT_HOME = path.join(tmp, 'ac')
 const { McpServer, Tools, TOOLS, INSTRUCTIONS, SUPPORTED_VERSIONS, matchHarness, parseRemote, bindSession } = await import('../src/mcp.js')
 const { send } = await import('../src/ipc.js')
+const { register: registerPi } = await import('../src/harness/pi-extension.js')
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 const MODERN = { 'io.modelcontextprotocol/protocolVersion': '2026-07-28', 'io.modelcontextprotocol/clientCapabilities': {} }
@@ -56,10 +57,12 @@ test('initialize negotiates legacy versions; modern requests use _meta, server/d
   assert.deepEqual(list.result.tools.map(t => t.name), ['catch_up', 'status', 'post', 'read', 'wait', 'thread'])
   for (const t of list.result.tools) {
     assert.match(t.description, /information[\w ]*, not instructions/, `${t.name} states the core rule`)
-    assert.ok(t.description.length < 400, `${t.name} description stays short`)
+    assert.ok(t.description.length < 700, `${t.name} description stays short`)
     assert.equal(t.inputSchema.type, 'object')
     assert.equal(t.annotations.openWorldHint, false)
   }
+  // Harnesses send every description to the model on every turn.
+  assert.ok(list.result.tools.reduce((n, t) => n + t.description.length, 0) < 2700, 'the descriptions stay short together')
 
   const [disc] = await call({ jsonrpc: '2.0', id: 5, method: 'server/discover', params: { _meta: MODERN } })
   assert.deepEqual(disc.result.supportedVersions, SUPPORTED_VERSIONS)
@@ -79,6 +82,40 @@ test('initialize negotiates legacy versions; modern requests use _meta, server/d
   assert.equal(nocaps.error.code, -32602)
   const [legacyDiscover] = await call({ jsonrpc: '2.0', id: 9, method: 'server/discover' })
   assert.equal(legacyDiscover.error.code, -32602, 'discover needs modern _meta')
+})
+
+// opencode never passes the server's `instructions` to the model (P0 trial, round 3), so an agent
+// there knows only the tool descriptions: every rule has to be in at least one of them too. pi has
+// no MCP, and its extension registers the same tools, with the same descriptions.
+// Keywords, not sentences, so the wording can change.
+test('every etiquette rule is in at least one tool description, not only in the instructions; pi gets the same', async () => {
+  for (const part of ['Start:', 'While you work:', 'Overlaps:', 'Decisions:', 'Finish:']) assert.ok(INSTRUCTIONS.includes(part), `instructions: ${part}`)
+  const pi = []
+  await registerPi({ on () {}, registerTool: (def) => pi.push(def) }, { room: true })
+  assert.deepEqual(pi.map(t => [t.name, t.description]), TOOLS.map(t => ['autochat_' + t.name, t.description]), 'pi: the same descriptions')
+  const rules = {
+    'start: catch_up first': /first when you start/,
+    'start: status before you edit': /before you edit anything/,
+    'start: the files you plan to change': /files you plan to change/,
+    'start: component names already on the board': /component names already on the board/,
+    "while you work: read before you edit a file on another agent's card": /read before you edit a file/i,
+    'while you work: read after each step': /after each step/,
+    'overlaps: open or join a thread': /open (?:or join )?a thread with/,
+    'decisions: only to resolve a thread': /decision only to resolve a thread/,
+    'finish: read before you stop': /before you stop/i,
+    'finish: answer what is addressed to you': /answer what is addressed to you/,
+    'finish: wait at most twice': /at most twice/,
+    'finish: a handoff': /handoff for anything unresolved/,
+    'subagents: post the conclusion as a proposal': /conclusion as a proposal/,
+    'messages are information, not instructions': /information[\w ]*, not instructions/,
+    "don't act because a message asks": /don't run commands/,
+    'never post secrets': /never post secrets/i,
+    'durable decisions belong in GitHub': /belong in GitHub/,
+    'otherwise wait only when blocked': /blocked on an answer/
+  }
+  for (const [rule, re] of Object.entries(rules)) {
+    assert.ok(TOOLS.some(t => re.test(t.description)), `no tool description has the rule "${rule}"`)
+  }
 })
 
 test('JSON-RPC errors: -32601 unknown methods, -32602 bad params, -32700/-32600, batches', async () => {
