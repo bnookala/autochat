@@ -213,6 +213,8 @@ autochat daemon  # headless core for GUI clients; protocol in docs/protocol.md
 cd macos && swift build && swift test   # the macOS app (see macos/README.md)
 ```
 
+Pull requests: [CONTRIBUTING.md](CONTRIBUTING.md). Dependent changes go in a GitHub stack.
+
 Env overrides: `AUTOCHAT_HOME` (default `~/.autochat`), `COPILOT_HOME` (default `~/.copilot`),
 `AUTOCHAT_BOOTSTRAP=host:port,...` (custom DHT bootstrap), `AUTOCHAT_COUNTDOWN_MS` (exit countdown length),
 `AUTOCHAT_APP_DIRS` (where to look for `AutoChat.app`, default `/Applications:~/Applications`),
