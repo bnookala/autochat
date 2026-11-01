@@ -65,6 +65,8 @@ const HELP = `autochat: ephemeral, serverless chat rooms for people whose Copilo
 
   autochat setup              install Copilot CLI hooks (~/.copilot/hooks/autochat.json);
                               on macOS, hooks wake AutoChat.app if it's installed (launch=app)
+  autochat setup --harness H[,H…] [--dry-run]
+                              install the hooks of these harnesses (docs/harnesses.md)
   autochat setup --agents [--dry-run]
                               connect your coding agents (Copilot CLI, Claude Code, Gemini CLI,
                               opencode, Codex) to the agent room (autochat mcp)
@@ -84,6 +86,8 @@ const HELP = `autochat: ephemeral, serverless chat rooms for people whose Copilo
                               step in: post to the agents as a human (asks once to confirm)
   autochat config [k] [v]     show/set config (launch: auto|app|tmux|ghostty|iterm|terminal|notify|off,
                               countdown: seconds in the room after autopilot ends, 0 = none)
+  autochat config trigger [harness] [mode,…|never|default]
+                              which of a harness's modes put you in the lounge (copilot: autopilot)
   autochat doctor             check hooks + P2P connectivity
   autochat sim [--room C] [--seconds N] [--say T]   a throwaway bot peer, for testing
 `
@@ -96,16 +100,28 @@ async function main () {
       process.stdout.write(HELP)
       return
     case 'setup': {
-      const { values: opts } = parseArgs({ args: rest, options: { agents: { type: 'boolean' }, 'dry-run': { type: 'boolean' } } })
+      const { values: opts } = parseArgs({ args: rest, options: { agents: { type: 'boolean' }, harness: { type: 'string', multiple: true }, 'dry-run': { type: 'boolean' } } })
       if (opts.agents) {
-        const { setupAgents } = await import('../src/harnesses.js')
+        const { setupAgents } = await import('../src/harness/index.js')
         const r = setupAgents({ dryRun: !!opts['dry-run'] })
         if (r.failed.length) process.exitCode = 1
         return
       }
-      const { installHooks, removeLegacyHooks, legacyHooksFile, configureLaunch, APP_INSTALL_STEPS, APP_INSTALL_URL } = await import('../src/setup.js')
+      const harness = await import('../src/harness/index.js')
+      if (opts.harness) {
+        const r = harness.setupHooks({ ids: harness.hookIds(opts.harness), dryRun: !!opts['dry-run'] })
+        if (r.failed.length) process.exitCode = 1
+        return
+      }
+      const { removeLegacyHooks, legacyHooksFile, configureLaunch, APP_INSTALL_STEPS, APP_INSTALL_URL } = await import('../src/setup.js')
       const id = loadIdentity()
-      const file = installHooks()
+      // By default, setup installs Copilot's hooks; it offers the other harnesses' below.
+      const files = []
+      for (const p of harness.planHooks(harness.DEFAULT_HOOKS)) {
+        p.apply?.()
+        files.push(p.file)
+      }
+      const file = files.join(', ')
       const { migratedHome } = await import('../src/paths.js')
       if (migratedHome) console.log(dim(`moved ${migratedHome.from} → ${migratedHome.to} (same identity and handle)`))
       if (removeLegacyHooks()) console.log(dim(`removed the old lolchat hooks: ${legacyHooksFile()}`))
@@ -136,12 +152,12 @@ ${bold('Get the menu bar app')} (no terminal windows; a status panel and a 30 s 
 ${APP_INSTALL_STEPS.map(l => '  ' + l).join('\n')}
 ${dim('More: ' + APP_INSTALL_URL)}`)
       }
+      await offerHooks()
       return offerAgents()
     }
     case 'uninstall': {
-      const { uninstallHooks } = await import('../src/setup.js')
-      console.log(uninstallHooks() ? 'hooks removed.' : 'hooks were not installed.')
-      const { removeAgents } = await import('../src/harnesses.js')
+      const { removeHooks, removeAgents } = await import('../src/harness/index.js')
+      removeHooks()
       removeAgents()
       return
     }
@@ -196,6 +212,7 @@ ${inviteText(room)}`)
       return
     }
     case 'config': {
+      if (rest[0] === 'trigger') return configTrigger(rest.slice(1))
       const k = CONFIG_ALIASES[rest[0]] || rest[0]
       if (rest.length >= 2) {
         const v = rest[1]
@@ -229,23 +246,65 @@ ${inviteText(room)}`)
   }
 }
 
+// `autochat config trigger [harness] [mode,…|never|default]`: which modes put you in the lounge.
+async function configTrigger ([id, value]) {
+  const { ADAPTERS, adapter, parseTrigger, triggerFor, triggers, withTrigger } = await import('../src/harness/index.js')
+  const cfg = loadConfig()
+  if (id === undefined) return console.log(JSON.stringify(triggers(cfg), null, 2))
+  if (!adapter(id)) throw new Error(`usage: autochat config trigger [${ADAPTERS.map(a => a.id).join('|')}] [mode,…|never|default]`)
+  if (value === undefined) return console.log(JSON.stringify(triggerFor(cfg, id)))
+  const next = saveConfig({ trigger: withTrigger(cfg, id, parseTrigger(id, value)) })
+  console.log(JSON.stringify(triggers(next), null, 2))
+}
+
+const ask = async (question) => {
+  const readline = await import('node:readline/promises')
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+  try { return await rl.question(question) } finally { rl.close() }
+}
+
+// End of `autochat setup`: offer the hooks of the other harnesses found here, one at a time,
+// but only when someone can answer.
+async function offerHooks () {
+  const { harnessContext, offeredHooks, planHooks, describeHookPlan } = await import('../src/harness/index.js')
+  const ctx = harnessContext()
+  const plans = planHooks(offeredHooks(ctx), ctx).filter(p => p.apply)
+  if (!plans.length) return
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    console.log(`\nAlso found ${plans.map(p => p.name).join(', ')}. To go to the lounge from ${plans.length > 1 ? 'them' : 'it'} too: ${bold('autochat setup --harness ' + plans.map(p => p.id).join(','))}`)
+    return
+  }
+  for (const p of plans) {
+    console.log()
+    for (const l of describeHookPlan(p, ctx)) console.log('  ' + l)
+    const answer = await ask(`Also install autochat's hooks for ${p.name}? [Y/n] `)
+    if (/^n(o)?$/i.test(answer.trim())) {
+      console.log(`Later: ${bold('autochat setup --harness ' + p.id)}`)
+      continue
+    }
+    try {
+      p.apply()
+      console.log(`✔ ${p.id} hooks installed: new ${p.name} sessions pick them up`)
+    } catch (err) {
+      console.log(`✘ ${p.id}: ${err.message}`)
+    }
+  }
+}
+
 // End of `autochat setup`: offer to connect the agents too, but only when someone can answer.
 async function offerAgents () {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     console.log(`\nConnect your coding agents to the agent room (preview): ${bold('autochat setup --agents')}`)
     return
   }
-  const { planAgents, setupAgents } = await import('../src/harnesses.js')
+  const { planAgents, setupAgents } = await import('../src/harness/index.js')
   const plans = planAgents()
   const connected = plans.filter(p => p.action === 'none').map(p => p.id)
   if (!plans.some(p => p.apply)) {
     if (connected.length) console.log(`\nagents    connected: ${connected.join(', ')}`)
     return
   }
-  const readline = await import('node:readline/promises')
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-  const answer = await rl.question('\nAlso connect your agents to the agent room (preview)? [Y/n] ')
-  rl.close()
+  const answer = await ask('\nAlso connect your agents to the agent room (preview)? [Y/n] ')
   if (/^n(o)?$/i.test(answer.trim())) {
     console.log(`Later: ${bold('autochat setup --agents')}`)
     return
@@ -491,7 +550,7 @@ async function doctorAgents (ping, ok) {
   } else {
     console.log('… agent room: autochat isn\'t running (AutoChat.app or `autochat daemon` hosts it)')
   }
-  const { agentsStatus } = await import('../src/harnesses.js')
+  const { agentsStatus } = await import('../src/harness/index.js')
   for (const h of agentsStatus()) {
     if (h.unsupported) {
       if (h.installed) console.log(`… ${h.id}: installed, but it has no MCP support yet`)
@@ -505,18 +564,40 @@ async function doctorAgents (ping, ok) {
   }
 }
 
+// Each harness's hooks, and which of its modes put you in the lounge.
+async function doctorHooks (ok, cfg) {
+  const { harnessContext, hooksStatus, triggerFor, tilde } = await import('../src/harness/index.js')
+  const ctx = harnessContext()
+  const triggers = []
+  for (const h of hooksStatus(ctx)) {
+    const t = triggerFor(cfg, h.id)
+    if (h.id === 'copilot') {
+      ok(h.hooks.installed, `hooks ${h.hooks.installed ? 'installed' : 'missing (run autochat setup)'}: ${h.hooks.file}`)
+      if (h.hooks.legacy) ok(false, `old lolchat hooks still installed: ${h.hooks.legacy} (run autochat setup to remove them)`)
+    } else if (h.hooks.installed) {
+      ok(h.hooks.valid !== false, h.hooks.valid === false ? `${h.id}: hooks run an autochat that no longer exists (rerun autochat setup --harness ${h.id})` : `${h.id}: hooks installed (${tilde(h.hooks.file, ctx)})`)
+    } else if (h.installed) {
+      console.log(`… ${h.id}: installed, no autochat hooks (autochat setup --harness ${h.id})`)
+      continue
+    } else {
+      continue
+    }
+    triggers.push(`${h.id} ${t === 'never' || !t.length ? 'never' : t.join('/')}`)
+  }
+  if (triggers.length) console.log(`… the lounge opens for: ${triggers.join(', ')} (autochat config trigger)`)
+}
+
 async function doctor () {
-  const { hooksInstalled, hooksFile, legacyHooksInstalled, legacyHooksFile, APP_INSTALL_URL } = await import('../src/setup.js')
+  const { APP_INSTALL_URL } = await import('../src/setup.js')
   const { send } = await import('../src/ipc.js')
   const Hyperswarm = (await import('hyperswarm')).default
   const crypto = await import('node:crypto')
   const ok = (b, s) => console.log(`${b ? '✔' : '✘'} ${s}`)
   const [major] = process.versions.node.split('.').map(Number)
   ok(major >= 18, `node ${process.versions.node}`)
-  ok(hooksInstalled(), `hooks ${hooksInstalled() ? 'installed' : 'missing (run autochat setup)'}: ${hooksFile()}`)
-  if (legacyHooksInstalled()) ok(false, `old lolchat hooks still installed: ${legacyHooksFile()} (run autochat setup to remove them)`)
-  ok(true, `identity ${loadIdentity().handle}`)
   const cfg = loadConfig()
+  await doctorHooks(ok, cfg)
+  ok(true, `identity ${loadIdentity().handle}`)
   const { pickMethod, appInstalled } = await import('../src/launcher.js')
   const method = pickMethod(cfg, process.env)
   ok(true, `room ${parseRoom(cfg.room).display}, launch=${cfg.launch}${cfg.launch === 'auto' ? ` (→ ${method})` : ''}`)

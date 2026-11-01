@@ -3,8 +3,11 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import createTestnet from 'hyperdht/testnet.js'
 
+const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'autochat.js')
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'autochat-harness-'))
 process.env.AUTOCHAT_HOME = path.join(tmp, 'ac')
 process.env.COPILOT_HOME = path.join(tmp, 'copilot')
@@ -26,6 +29,13 @@ const env = {
   AUTOCHAT_APP_DIRS: path.join(tmp, 'no-apps'),
   AUTOCHAT_HARNESS_PATH: path.join(tmp, 'no-harnesses'),
   AUTOCHAT_DEBUG: '1'
+}
+const cli = (args, input, extra = {}) => {
+  const r = spawnSync(process.execPath, [BIN, ...args], { input, env: { ...env, ...extra }, encoding: 'utf8' })
+  const last = r.stderr.trim().split('\n').pop()
+  let result = null
+  try { result = JSON.parse(last) } catch {}
+  return { code: r.status, stdout: r.stdout, stderr: r.stderr, result }
 }
 const copilotSession = (sid, mode) => {
   const dir = path.join(process.env.COPILOT_HOME, 'session-state', sid)
@@ -134,6 +144,72 @@ test('Copilot adapter: hook payloads map to SessionEvents, with the mode from it
   const log = a.follow('cp-auto')
   assert.equal(typeof log.start, 'function')
   assert.deepEqual(Object.keys(a.detect(H.harnessContext({ env }))).sort(), ['binary', 'installed', 'paths'])
+})
+
+test('autochat hook --harness: the old form is copilot; unknown harnesses are ignored quietly; the trigger config applies', () => {
+  copilotSession('h-plan', 'plan')
+  const payload = JSON.stringify({ sessionId: 'h-plan', toolName: 'bash', cwd: '/x' })
+  assert.equal(cli(['hook', 'preToolUse'], payload).result.action, 'ignored', 'plan mode does not count by default')
+  assert.equal(cli(['hook', '--harness', 'copilot', 'preToolUse'], payload).result.action, 'ignored')
+  assert.equal(cli(['hook', '--harness=copilot', 'preToolUse'], payload).result.action, 'ignored')
+
+  const quiet = spawnSync(process.execPath, [BIN, 'hook', '--harness', 'nope', 'Stop'], { input: payload, env: { ...env, AUTOCHAT_DEBUG: '' }, encoding: 'utf8' })
+  assert.deepEqual([quiet.status, quiet.stdout, quiet.stderr], [0, '', ''])
+  assert.equal(cli(['hook', '--harness', 'nope', 'Stop'], payload).result.action, 'unknown-harness')
+  assert.equal(cli(['hook', '--harness'], payload).result.action, 'unknown-harness')
+  assert.equal(cli(['hook', '--harness', 'claude', 'Stop'], payload).result.action, 'no-session', 'no claude session id in it')
+
+  // `autochat config trigger copilot autopilot,plan`: now plan mode opens autochat.
+  const set = cli(['config', 'trigger', 'copilot', 'autopilot,plan'])
+  assert.equal(set.code, 0, set.stderr)
+  assert.deepEqual(JSON.parse(set.stdout).copilot, ['autopilot', 'plan'])
+  assert.deepEqual(JSON.parse(cli(['config', 'trigger', 'copilot']).stdout), ['autopilot', 'plan'])
+  const r = cli(['hook', 'preToolUse'], payload, { TMUX: '/x/tmux,1,0', TMUX_PANE: '%1' })
+  assert.equal(r.result.action, 'launched')
+  assert.equal(r.stdout, '')
+  const spooled = fs.readdirSync(path.join(env.AUTOCHAT_HOME, 'run')).filter(f => f.startsWith('spool-'))
+  const msg = JSON.parse(fs.readFileSync(path.join(env.AUTOCHAT_HOME, 'run', spooled[0]), 'utf8'))
+  assert.deepEqual([msg.type, msg.harness, msg.sessionId, msg.kind, msg.mode, msg.autonomy], ['hook', 'copilot', 'h-plan', 'activity', 'plan', 'autonomous'])
+
+  assert.equal(cli(['config', 'trigger', 'copilot', 'never']).code, 0)
+  fs.rmSync(path.join(env.AUTOCHAT_HOME, 'run'), { recursive: true, force: true })
+  copilotSession('h-auto', 'autopilot')
+  assert.equal(cli(['hook', 'preToolUse'], JSON.stringify({ sessionId: 'h-auto' })).result.action, 'ignored', 'never: not even autopilot')
+  assert.equal(cli(['config', 'trigger', 'copilot', 'default']).code, 0)
+  assert.deepEqual(JSON.parse(cli(['config', 'trigger']).stdout).copilot, ['autopilot'])
+  const bad = cli(['config', 'trigger', 'copilot', 'yolo'])
+  assert.equal(bad.code, 1)
+  assert.match(bad.stderr, /copilot modes: interactive, plan, autopilot/)
+  assert.equal(cli(['config', 'trigger', 'nope']).code, 1)
+})
+
+test('setup and uninstall go through the adapters; doctor-facing status per harness', () => {
+  const home = path.join(tmp, 'u-setup')
+  const copilotHome = path.join(home, '.copilot')
+  const ctx = H.harnessContext({ env: { HOME: home, COPILOT_HOME: copilotHome, PATH: '' }, node: '/n/node', bin: '/a/bin/autochat.js' })
+  const [plan] = H.planHooks(['copilot'], ctx)
+  assert.deepEqual([plan.id, plan.action, plan.file], ['copilot', 'add', path.join(copilotHome, 'hooks', 'autochat.json')])
+  plan.apply()
+  const hooks = JSON.parse(fs.readFileSync(plan.file, 'utf8'))
+  assert.equal(hooks.hooks.preToolUse[0].bash, "'/n/node' '/a/bin/autochat.js' hook preToolUse || true", 'Copilot keeps `hook <event>`: no --harness means copilot')
+  assert.equal(H.planHooks(['copilot'], ctx)[0].action, 'none', 'idempotent')
+  assert.deepEqual(H.hooksStatus(ctx).find(h => h.id === 'copilot').hooks, { installed: true, file: plan.file, legacy: null })
+
+  assert.deepEqual(H.hookIds(['copilot,claude', ' gemini ', 'copilot']), ['copilot', 'claude', 'gemini'])
+  assert.deepEqual(H.hookIds(['all']), H.ADAPTERS.filter(a => a.planHooks).map(a => a.id))
+  const lines = []
+  const r = H.setupHooks({ ids: ['copilot', 'nope'], ctx, out: (l) => lines.push(l) })
+  assert.deepEqual([r.applied, r.failed], [[], ['nope']])
+  assert.match(lines.join('\n'), /copilot {2}hooks already installed \(~\/\.copilot\/hooks\/autochat\.json\)\n {2}nope {5}unknown harness/)
+
+  fs.writeFileSync(path.join(copilotHome, 'hooks', 'lolchat.json'), '{}')
+  const out = []
+  assert.deepEqual(H.removeHooks({ ctx, out: (l) => out.push(l) }), ['copilot'])
+  assert.deepEqual(out, ['hooks removed.'])
+  assert.deepEqual(fs.readdirSync(path.join(copilotHome, 'hooks')), [])
+  out.length = 0
+  H.removeHooks({ ctx, out: (l) => out.push(l) })
+  assert.deepEqual(out, ['hooks were not installed.'])
 })
 
 test('observers: each adapter fallback watcher feeds adopt(live, harness)', async () => {
