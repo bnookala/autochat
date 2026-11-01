@@ -528,10 +528,8 @@ export class Tools {
   constructor ({ link, session }) {
     this.link = link
     this.session = session
-    this.myNames = new Set()
     this.stash = []
     this.declaredPaths = []
-    link.on('connected', (w) => { if (w.agent?.name) this.myNames.add(w.agent.name) })
   }
 
   async call (name, args, cancelled = () => false) {
@@ -554,10 +552,12 @@ export class Tools {
     return reply
   }
 
-  // Every message from someone else is untrusted; human interventions say so too.
+  // Every message from someone else is untrusted; human interventions say so too. Authorship is
+  // by agent id (names get reused), against the id of our current connection.
   _mark (m) {
     if (!m || typeof m !== 'object' || m.seq === undefined) return m
-    const own = m.kind !== 'human' && m.from?.name && this.myNames.has(m.from.name)
+    const me = this.link.agent?.id
+    const own = m.kind !== 'human' && !!me && m.from?.id === me
     const out = { ...m, untrusted: !own }
     if (m.kind === 'human') out.intervention = true
     return out
@@ -572,7 +572,6 @@ export class Tools {
   async catch_up () {
     const reply = await this._cmd('catchUp')
     const r = reply.result
-    if (r.you?.name) this.myNames.add(r.you.name)
     return {
       you: r.you,
       tier: r.tier,
@@ -606,7 +605,6 @@ export class Tools {
       msg.focus = focus
     }
     const reply = await this._cmd('status', msg)
-    if (reply.result.card?.name) this.myNames.add(reply.result.card.name)
     return { ...reply.result, inbox: reply.inbox }
   }
 
