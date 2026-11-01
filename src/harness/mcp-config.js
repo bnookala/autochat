@@ -12,7 +12,7 @@ import { readJson, writeJson, planned, tilde, exists, isObj, same } from './util
 //   gemini    ~/.gemini/settings.json          mcpServers.autochat = {command, args}
 //   opencode  ~/.config/opencode/opencode.json mcp.autochat = {type:"local", command:[…], enabled:true, timeout}
 //   codex     $CODEX_HOME/config.toml          [mcp_servers.autochat] command, args
-//   pi        no MCP support (yet)
+//   pi        no MCP: autochat's pi extension registers the tools itself (src/harness/pi.js)
 
 export const SERVER = 'autochat'
 export const argsFor = (id, ctx) => [ctx.bin, 'mcp', '--harness', id]

@@ -183,4 +183,53 @@ message (`hookMessage()`), in the shape every daemon has read, plus the new fiel
 | Gemini CLI | not yet | | | `~/.gemini/settings.json` |
 | opencode | not yet | | | `opencode.json` |
 | Codex | not yet | | | `config.toml` |
-| pi | not yet | | | none |
+| pi | `$PI_CODING_AGENT_DIR/extensions/autochat.ts`, an extension of our own ([below](#pi)) | `headless`: print and json mode (`ctx.hasUI` is false) | none: pi reports nothing without the extension | the same extension |
+
+## pi
+
+`src/harness/pi.js`, verified against pi 0.74.0 (`@earendil-works/pi-coding-agent`). pi has no hooks
+and no MCP: it has TypeScript extensions, which it loads with jiti from
+`$PI_CODING_AGENT_DIR/extensions/` (`~/.pi/agent/extensions/`), and `pi -e <file>` for one run. So
+autochat ships one, `src/harness/pi-extension.js`, and setup writes a small stub that loads it,
+`extensions/autochat.ts`, a file of autochat's own:
+
+```ts
+const AUTOCHAT = {"node":"/…/node","bin":"/…/bin/autochat.js","module":"/…/src/harness/pi-extension.js","lounge":true,"room":true}
+export default async function autochat (pi: any) { … await import(AUTOCHAT.module) … register(pi, AUTOCHAT) }
+```
+
+The stub has two switches. `lounge` (`autochat setup --harness pi`, which doctor and uninstall
+treat as pi's hooks) forwards pi's lifecycle events; `room` (`autochat setup --agents`) registers the
+agent-room tools ([agents.md](agents.md#pi)). Each install turns its switch on and points the stub at
+this install; uninstall turns its switch off, and the file goes when both are off. Setup never
+touches any other extension, pi's `settings.json`, or an `autochat.ts` that isn't autochat's (it
+prints the stub instead). pi loads extensions when a session starts: running sessions pick it up on
+`/reload`. Runs started with `--no-extensions` don't load it.
+
+**Events.** The extension sends each of these to `autochat hook --harness pi <event>`, with a JSON
+payload on stdin: `hook_event_name`, `session_id` (pi's, a UUID), `cwd`, `mode`, `has_ui`, and per
+event `reason`, `tool_name`, `files` or `last_assistant_message`. One hook runs at a time, in order;
+activity events queued behind a running hook collapse into the newest. pi never waits for a hook,
+except when it shuts a session down: then it waits up to 3 s for the rest.
+
+| pi event | Kind | Notes |
+| --- | --- | --- |
+| `session_start` | `start` | `reason`: `startup`, `new`, `resume`, `fork`, `reload` |
+| `agent_start` | `activity` | once per prompt |
+| `tool_call` | `activity` | before each tool runs; `files` for `edit` and `write` |
+| `agent_end` | `waiting` in the TUI, `idle` otherwise | the last assistant text becomes the summary |
+| `session_shutdown` | `end`; `notice` for `reload` | `reason`: `quit`, `new`, `resume`, `fork`, `reload` |
+
+pi has no permission prompts and no tool that asks the user, so it never reports a `request`.
+
+**Autonomy.** Extensions only see `ctx.hasUI`: false in print mode (`pi -p`, or a prompt on piped
+stdin) and json mode (`--mode json`), true in the TUI and in rpc mode (`--mode rpc`). The extension
+reports pi's own name for the mode, `print`, `json`, `interactive` or `rpc` (`--mode` tells print
+from json and rpc from the TUI), and print and json runs are `headless`. By default only `headless`
+counts. An rpc client may or may not have someone at it: `autochat config trigger pi rpc,headless`
+counts those too.
+
+**Verified** with `pi -e <stub>` in a throwaway `HOME` and `PI_CODING_AGENT_DIR`, against a local
+stand-in for an OpenAI-compatible API (a custom provider in the throwaway `models.json`) and an
+`autochat daemon` with its own `AUTOCHAT_HOME`: print, json and rpc runs, the TUI driven through a
+pseudo-terminal, `/new` and `/reload`. The payloads are in `test/fixtures/pi/`.

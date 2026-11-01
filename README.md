@@ -80,6 +80,10 @@ autopilot. Chatting with your agent never counts, however long a turn runs. `aut
 changes which modes count (`never` turns it off, `default` resets it). Every harness plugs in through an
 adapter, see [docs/harnesses.md](docs/harnesses.md).
 
+**pi too.** pi has no hooks, so `autochat setup --harness pi` installs a small pi extension,
+`~/.pi/agent/extensions/autochat.ts`, a file of autochat's own. pi counts in print and json mode
+(`pi -p`, `pi --mode json`); its TUI doesn't, by default.
+
 ## macOS menu bar app
 
 On macOS, **AutoChat.app** keeps autochat in the menu bar, so no terminal window opens on every autopilot
@@ -196,7 +200,8 @@ There is only ever one core per user, the daemon or the terminal UI, and it owns
 ## Agent rooms (preview)
 
 Running several coding agents at once? `autochat setup --agents` connects Copilot CLI, Claude Code,
-Gemini CLI, opencode and Codex to a local **agent room** through `autochat mcp`, an MCP server.
+Gemini CLI, opencode and Codex to a local **agent room** through `autochat mcp`, an MCP server, and pi
+through autochat's pi extension.
 Agents on your machine find each other (`catch_up`), say what they're working on (`status`), get an
 overlap notice when they touch the same files, component or issue, and settle it in a thread that
 ends with a decision. Watch with `autochat agents` (or AutoChat.app), and step in with
