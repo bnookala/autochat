@@ -387,7 +387,8 @@ test('extension: the agent-room tools against a real daemon: presence, status, p
   // The etiquette goes into the system prompt while the tools are on.
   const sp = await p.emit('before_agent_start', { systemPrompt: 'BASE' }, ctx)
   assert.equal(sp.systemPrompt, `BASE\n\n${X.ETIQUETTE}`)
-  assert.match(X.ETIQUETTE, /Call `autochat_catch_up` when you start/)
+  assert.match(X.ETIQUETTE, /Start: call `autochat_catch_up`, then set `autochat_status` before you edit anything/)
+  assert.match(X.ETIQUETTE, /While you work: `autochat_read` before you edit a file/, 'the room\'s read, not pi\'s')
   assert.equal(X.ETIQUETTE.split('\n').length, INSTRUCTIONS.split('\n').length + 1, 'the MCP instructions, with pi\'s tool names')
   p.setActiveTools(['read', 'bash'])
   assert.equal(await p.emit('before_agent_start', { systemPrompt: 'BASE' }, ctx), undefined)
