@@ -1,15 +1,19 @@
 # P0 trial: two real agents in a local agent room
 
-Trial for #26 (epic #20), in two rounds on 2026-10-31:
+Trial for #26 (epic #20), in three rounds on 2026-10-31 and 2026-11-01:
 
 - **Round 1** (runs 1–2, plus a smoke run) tested `agents/p0-core` at `59c9fb1` (#21–#24).
 - **Round 2** (runs 3, 4 and 4b) tested `main` at `a9ad1d3`, after #27 and #28 were merged. Outside
   `macos/` the code is identical to round 1.
+- **Round 3** (runs 5 and 5b) tested `a9ad1d3` with the run-4 revision, and opencode as agent B.
+  `main` had reached `83d929d` by then, but #39–#41 change only the lounge rooms (host succession
+  and reloads). The agent-room code (`src/mcp.js`, `src/agents.js`) is the same.
 
 The question: do two real coding agents coordinate usefully through the local agent room, with
 nothing but the MCP `instructions` and tool descriptions telling them how?
 
-**Short answer: with revised instructions, yes, up to a recorded decision.**
+**Short answer: with revised instructions, yes, up to a recorded decision, and with two harnesses.
+But an agent that finishes first still loses what comes after.**
 
 - **With the P0 instructions (runs 1–3),** agents found each other, announced their work, got the
   overlap notice and exchanged useful contracts. But they never used a thread, never reached a shared
@@ -19,28 +23,43 @@ nothing but the MCP `instructions` and tool descriptions telling them how?
   thread on the overlap and resolved it into a decision with a concrete integration plan. Both agents
   waited for replies before stopping, and no message was lost. No code changed: the revision is in
   the [appendix](#appendix-the-run-4-revision).
-- **Two things text didn't fix:**
-  - An agent that is busy editing still reads its messages 20–30 s late, because nothing reaches it
-    before its next autochat call.
-  - The code still conflicts: both agents agreed how to integrate, then deferred the work to
+- **With opencode as agent B (runs 5 and 5b),** on the same model as B in runs 4 and 4b, the threads
+  held: both runs opened a thread on the overlap and resolved it into a decision. opencode never
+  shows MCP `instructions` to the model, so B worked from the tool descriptions alone, which the
+  revision had given the same rules.
+- **What text didn't fix:**
+  - **Finishing first.** opencode-B finished before A both times, and messages for it arrived after
+    its last autochat call: 2 in run 5, where it didn't `wait`, and 1 in run 5b, where it waited once
+    and stopped 4 s before A's handoff. Runs 4 and 4b lost nothing because both agents finished
+    together.
+  - **Late reads.** An agent that is busy editing still reads its messages 13–28 s late, because
+    nothing reaches it before its next autochat call.
+  - **The code still conflicts,** in `src/greeting.js` in every revised run (and in `README.md` in
+    runs 4 and 4b). Each time the agents agreed how to integrate, then deferred the work to
     whichever branch merges second.
-- **Still untested: a second harness.** Gemini CLI's cached login has expired, and Claude Code isn't
-  logged in, so every run paired two Copilot CLI agents.
 
 ## Deviations from #26
 
-- **No second harness.** Every run paired two Copilot CLI agents:
-  - **Agent A:** Copilot CLI with its default model (`gpt-6.1-sol`).
-  - **Agent B:** Copilot CLI with `--model claude-opus-5.5`.
+- **opencode replaces Claude Code as the second harness, from round 3.** Rounds 1 and 2 paired two
+  Copilot CLI agents:
+  - **Agent A:** Copilot CLI with its default model (`gpt-6.1-sol`), in every round.
+  - **Agent B:** Copilot CLI with `--model claude-opus-5.5` in rounds 1 and 2, then opencode 1.2.6
+    with `github-copilot/claude-opus-5.5` in round 3. That's the same model, through opencode's
+    `github-copilot` provider, so round 3 changes only the harness.
 
-  The other harnesses couldn't run:
-  - **Claude Code:** not logged in for either round. `claude auth status` (isolated) still said
-    `loggedIn: false` just before run 4, so the optional Claude run (run 5) was skipped.
+  The harnesses planned for B couldn't run:
+  - **Claude Code:** not logged in for rounds 1 and 2. `claude auth status` (isolated) still said
+    `loggedIn: false` just before run 4, so the optional Claude run was skipped.
   - **Gemini CLI 0.29.2:** its cached login is no longer valid. Google rejects the cached refresh
     token (`invalid_grant`), and a new login needs the user in a browser. The Gemini invocation and
     its isolation were prepared and checked as far as the login allows (see
-    [Gemini CLI](#gemini-cli-prepared-blocked-at-login)), so `AGENT_B=gemini ./run-trial.sh` works
-    once someone logs in.
+    [Gemini CLI](#gemini-cli-prepared-blocked-at-login)). The owner dropped Gemini after round 2.
+- **opencode needed a routing fix to reach the model.** opencode 1.2.6 sent `claude-opus-5.5` to
+  `https://api.githubcopilot.com/v1/chat/completions` and got a 404: current models.dev metadata
+  gives Claude models an Anthropic-style base URL that 1.2.6's bundled Copilot SDK doesn't expect.
+  One entry in the project config points the model back at `https://api.githubcopilot.com` (see
+  [opencode](#opencode-round-3)). It changes only where requests go; the exports confirm
+  `github-copilot` / `claude-opus-5.5` for every turn.
 - **No `/tmp`.** The environment that ran the trial doesn't allow writes to `/tmp`, so the short
   paths came from a session scratch directory (`$SCRATCH` below). The socket path is 82 bytes.
 - **Runs:**
@@ -49,6 +68,7 @@ nothing but the MCP `instructions` and tool descriptions telling them how?
   - **Round 2:** run 3 repeats the baseline on `main`. Run 4 is the one revision #26 allows, to the
     instructions and tool descriptions only, in the trial's snapshot and not pushed. Run 4b repeats
     run 4 unchanged, to check that the result holds.
+  - **Round 3:** run 5 is run 4 with opencode as agent B, and run 5b repeats it unchanged.
 
 ## Setup
 
@@ -102,7 +122,7 @@ The MCP config for Copilot is `mcp-copilot.json`. Claude's is the same with `"ty
 ```
 
 Copilot CLI 1.0.105 runs in its worktree, with a fresh `COPILOT_HOME=$TRIAL/copilot-home`. The
-invocation was the same in both rounds:
+invocation was the same in all three rounds:
 
 ```sh
 copilot -p "$PROMPT" [--model claude-opus-5.5] \
@@ -152,10 +172,13 @@ The environment variables each do one job:
 4. It waits for the room's "left" messages, takes the final snapshot and stops the daemon.
 5. It saves each side's diff, and runs a merge check in a scratch clone: once on the committed
    branches, and once with each side's final working tree committed on top.
+6. With `AGENT_B=opencode`, it also exports B's session with `opencode export`, and checks that no
+   opencode or autochat process is left.
 
 ### Gemini CLI (prepared, blocked at login)
 
-Gemini CLI 0.29.2 would run as agent B in worktree B, under its macOS seatbelt sandbox:
+The owner dropped Gemini after round 2; this is kept for reference. Gemini CLI 0.29.2 would run as
+agent B in worktree B, under its macOS seatbelt sandbox:
 
 ```sh
 HOME=<real home> GEMINI_CLI_HOME=$TRIAL/gemini-home GOOGLE_GENAI_USE_GCA=true NO_BROWSER=true \
@@ -215,6 +238,69 @@ live:
 - **Tool names:** the model sees bare names (`catch_up`, `status`, `post`, `read`, `wait`, `thread`),
   prefixed `autochat__` only when a name clashes. Policy rules always use `autochat__<tool>`.
 
+### opencode (round 3)
+
+opencode 1.2.6 runs as agent B in worktree B. It's logged in through its `github-copilot` provider,
+and it runs under a seatbelt profile. Its environment is the same scrubbed one, with its own `HOME`
+and XDG directories in place of `$TRIAL/home`, and no `GH_TOKEN`:
+
+```sh
+HOME=$TRIAL/oc-home XDG_CONFIG_HOME=$TRIAL/oc-xdg/config XDG_DATA_HOME=$TRIAL/oc-xdg/data \
+XDG_STATE_HOME=$TRIAL/oc-xdg/state XDG_CACHE_HOME=$TRIAL/oc-xdg/cache \
+OPENCODE_DISABLE_AUTOUPDATE=true OPENCODE_DISABLE_SHARE=true OPENCODE_DISABLE_LSP_DOWNLOAD=true \
+OPENCODE_DISABLE_CLAUDE_CODE=true OPENCODE_DISABLE_EXTERNAL_SKILLS=true \
+sandbox-exec -f oc-sandbox.sb opencode run "$PROMPT" -m github-copilot/claude-opus-5.5 \
+  --title $RUN-b --format json --print-logs --log-level INFO < /dev/null > opencode-$RUN-b.jsonl
+opencode export <session id> > opencode-$RUN-b.export.json   # afterwards, same environment
+```
+
+- **Config and credentials.** The temp `XDG_CONFIG_HOME` keeps the user's `~/.config/opencode`
+  (plugins, MCP servers, agents) from loading. The temp `XDG_DATA_HOME` holds a copy of only
+  `auth.json` (mode 600), so sessions never land in the user's data directory and a token refresh
+  can't rewrite the user's file. `OPENCODE_DISABLE_CLAUDE_CODE` and
+  `OPENCODE_DISABLE_EXTERNAL_SKILLS` keep opencode from loading Claude Code's prompts and skills, or
+  any other external skills.
+- **MCP config.** The autochat server is in the project config, `<worktree B>/opencode.json`, which
+  is listed in the repo's `.git/info/exclude` (with `.opencode/`):
+
+  ```json
+  { "mcp": { "autochat": {
+      "type": "local", "command": ["<node 22>", "$SNAP/bin/autochat.js", "mcp", "--harness", "opencode"],
+      "environment": { "AUTOCHAT_HOME": "$SCRATCH/ah", "AUTOCHAT_BOOTSTRAP": "127.0.0.1:9", "COPILOT_HOME": "$TRIAL/daemon-copilot-home" },
+      "enabled": true, "timeout": 60000 } },
+    "provider": { "github-copilot": { "models": { "claude-opus-5.5": {
+      "provider": { "api": "https://api.githubcopilot.com" } } } } } }
+  ```
+
+  The `provider` entry is the routing fix from [Deviations](#deviations-from-26). `timeout` is what
+  `autochat setup --agents` writes for opencode too. opencode documents a 5-s default for MCP
+  requests, but in 1.2.6 a tool call without `timeout` falls back to the MCP SDK's 60 s, so `wait`
+  works either way. Only a `timeout` under 50 s would cut it short.
+- **Permissions** (same file):
+  - `edit` is allowed and `external_directory` is denied, so edits stay in the worktree.
+  - `bash` denies `*` and allows only `node`, `npm test`, and `git status`, `diff`, `add`,
+    `commit`, `log` and `show`. `git push`, `fetch`, `pull`, `clone`, `remote`, `ls-remote` and
+    `submodule` are denied explicitly.
+  - `webfetch`, `websearch`, `codesearch` and `skill` are denied, and `autochat_*` is allowed.
+  - `opencode run` rejects anything that would need a prompt, so a denial never blocks the run.
+- **Sandbox.** Permissions only see opencode's own tools, so `node -e` could still write anywhere.
+  The seatbelt profile allows everything except writes, which it confines to worktree B, the repo's
+  `.git`, opencode's temp directories and fake `HOME`, and the scratch `TMPDIR`.
+
+Two dry runs, a permission probe and a question about instructions, showed:
+
+- **Allowed:** `node --version`, `npm test`, `git status`, writing a file in worktree B, and a 45-s
+  `wait`, which returned `timedOut` after 45 s.
+- **Denied by permissions:** `git push`, `git fetch`, `curl`, `ls`, `npm test | head -5` (the
+  allowlist is strict), and a write into the other worktree. `webfetch` wasn't in the model's
+  toolset at all.
+- **Denied by the sandbox:** `node -e` writing into the other worktree (`EPERM`). A `node -e` write
+  to `~` landed in the fake `HOME`.
+- **Instructions:** asked to quote any server-level instructions from autochat, the model answered
+  "NONE … I only have its tool descriptions". The tools were `autochat_catch_up`, `autochat_status`,
+  `autochat_post`, `autochat_read`, `autochat_wait` and `autochat_thread`.
+- **Afterwards:** no opencode or autochat process was left, after the dry runs and after each run.
+
 ### Isolation
 
 - **Daemon:** `lsof -i` shows no network sockets, only the unix socket. Its environment is
@@ -242,9 +328,15 @@ live:
   In the trial copy it created `projects.json`, plus `history/<project>/.project_root` and
   `tmp/<project>/.project_root` for two projects (the trial directory and worktree B). The copy was
   deleted afterwards.
-- **After both rounds:** no trace of the trial in `~/.copilot`, `~/.claude`, `~/.claude.json` (same
-  hash), `~/.autochat` (still absent), `~/.gemini`, `~/Library/Caches/copilot`, `~/.npm` or
-  `~/.lolchat`.
+- **opencode:** the user's `~/.config/opencode`, `~/.local/share/opencode`, `~/.local/state/opencode`
+  and `~/.cache/opencode` kept the same listings and mtimes throughout round 3, and `auth.json` kept
+  its hash and mtime. The copy's hash never changed either, so opencode didn't refresh the token.
+  Everything opencode wrote went to the temp XDG directories and fake `HOME`: its database, session
+  snapshots and logs, the provider SDK and plugin installs, `models.json` and an npm log. They were
+  deleted afterwards, along with the credential copy.
+- **After all three rounds:** no trace of the trial in `~/.copilot`, `~/.claude`, `~/.claude.json`
+  (same hash), `~/.autochat` (still absent), `~/.gemini`, the user's opencode directories,
+  `~/Library/Caches/copilot`, `~/.npm` or `~/.lolchat`.
 
 ## Round 1: runs 1–2 and the smoke run (P0 instructions)
 
@@ -384,6 +476,71 @@ and adding `formal` to B's table would have meant B implementing A's feature, wh
 change scope because a message asks you to") discourages. What changed is that the resolution is
 agreed, written down, and handed off, instead of lost when an agent exits.
 
+## Round 3: runs 5 and 5b (opencode as agent B)
+
+These are the same tasks, prompts and revised text as runs 4 and 4b, with opencode in place of
+Copilot CLI for agent B. Different harnesses get different default names, so the agents were
+`copilot-greeter` (A) and `opencode-greeter` (B). B joined first both times.
+
+### Run 5
+
+| t | room |
+| --- | --- |
+| +4, +9 | `opencode-greeter joined`, `copilot-greeter joined` |
+| +13 | `🧵 copilot-greeter opened “Coordinate formal option with i18n refactor” with opencode-greeter`. A had seen B's card at `catch_up`. Its first `status` then raised the **overlap**: "copilot-greeter and opencode-greeter both touch component greeting, src/greeting.js, test/greeting.test.js" |
+| +20, +28 | 🧵 two **proposals** A → B: "please share your locale table shape so changes can align without introducing merge conflicts", then "I propose opts.formal => 'Good day, Ada.'; with timeOfDay => 'Good morning/afternoon/evening, Ada.' …" |
+| +31 | 🧵 **reply** B → A: "Done on refactor/i18n (uncommitted, tests pass). Shape: new src/locales.js … Suggest formal adds keys to BOTH en and es (e.g. helloFormal) — a test asserts every locale has identical keys. Easiest merge: rebase your formal work onto this branch." |
+| +36 | 🧵 **handoff** B → A: "Your formal contract is fine by me. … I'm not adding formal on my branch — I'll leave that to you when you rebase onto refactor/i18n." B stopped here, without a `wait`. |
+| +47 | 🧵 **reply** A → B: "Keeping task scoped to current branch (no rebasing onto uncommitted i18n work). … greeting.js edits will need reconciliation." **Never read:** B's session had ended 5 s earlier, and its card showed away. |
+| +50 | `🧵 copilot-greeter resolved …` and 🧵 **decision**: "Agreed formal contract: 'Good day, Ada.'; timeOfDay preserves wording with period. Implementations stay on separate branches. Future i18n integration must reconcile greeting.js and add matching formal templates to both locales." **Never read** by B. |
+| +52 | `opencode-greeter left` |
+| +57 | **handoff** from A to the room: "… When combining with refactor/i18n, reconcile greeting.js and supply formal templates for both locales (agreed in resolved thread)." |
+| +70 | `copilot-greeter left` |
+
+B's reasoning before its handoff shows why it didn't wait: "Since their proposal arrived before my
+reply, I'll just briefly acknowledge it and hand off, suggesting key names … rather than resolving
+the thread myself." But A's unread reply turned down B's suggestion to rebase, so the decision
+records a plan B never saw.
+
+### Run 5b (replicate)
+
+1. The overlap came at +9 s. A opened "Coordinate formal option with greeting i18n refactor" at +15,
+   and proposed `'Greetings, Ada!'` at +20, asking B to "confirm integration contract".
+2. B was already done. It replied in the thread at +32 with the contract: "When merging, add the key
+   `formal` with en 'Greetings, {name}!' and es '¡Saludos, {name}!', and write the branch as
+   `if (opts.formal) return format(strings.formal, who)`. A test checks that every locale has the
+   same keys, so add both. I'm not changing greeting.js any further."
+3. B then `wait`ed on the thread (50 s). A resolved it at +44, with a decision that quotes B's
+   contract, and B's wait returned it after 11 s.
+4. B stopped there. A's handoff to B at +48 ("If branches are integrated, greeting.js overlap needs
+   the agreed formal locale keys and format(strings.formal, who) branch") came 4 s after B's last
+   call, and was never read. It was meant for whoever merges, so B missing it cost little.
+
+### What B did, call by call
+
+Both runs had the same shape. Times are seconds since B started:
+
+1. `autochat_catch_up` at 3 s, alongside reading `src/greeting.js`. Nobody else was on the board.
+2. `autochat_status` at 5 s, before any edit: state `editing`, component `greeting`, and all three
+   files it planned to change. A hadn't set its status yet, so there was no overlap.
+3. About 20 s of reads, writes and `npm test`, with no autochat call: `src/locales.js` at 13–14 s,
+   then a full rewrite of `src/greeting.js` at 18–19 s. By then A's card listed `src/greeting.js`.
+4. `autochat_read` at 26–27 s: the overlap notice and A's proposals, 13–18 s after the first of
+   them arrived.
+5. A reply in A's thread, `status` done, then a handoff (run 5) or a `wait` on the thread (run 5b).
+   Both times B set `done` before its last post, although the `status` description puts the reply,
+   wait and handoff first.
+
+Against the revised rules: B declared its files up front and kept everything in A's thread, but
+never opened a thread or posted a decision itself. It didn't `read` before editing a file on A's
+card, and it waited before stopping in one run of two.
+
+### Did they act on the agreement? (round 3)
+
+No, again. A hard-coded the formal string in `greet()` (`'Good day'` in run 5, `'Greetings'` in run
+5b), and B's table has no `formal` key. Both decisions defer the integration to the merge. B left the
+README alone this time, so the final trees conflict only in `src/greeting.js`.
+
 ## Metrics
 
 **Round 1** (P0 instructions):
@@ -412,37 +569,55 @@ agreed, written down, and handed off, instead of lost when an agent exits.
 | autochat errors | — | — | resolve: already resolved | — | — | — |
 | time to finish | 44 s | 58 s | 48 s | 48 s | 65 s | 65 s |
 
+**Round 3** (revised instructions; B is opencode):
+
+| | run 5 A | run 5 B | run 5b A | run 5b B |
+| --- | --- | --- | --- | --- |
+| called `catch_up` (first call at) | yes (4 s) | yes (3 s) | yes (4 s) | yes (3 s) |
+| set `status` (successful calls) | yes (4) | yes (2) | yes (4) | yes (2) |
+| messages sent | 5: proposal ×2, reply, decision (resolve) in the thread; handoff (room) | 2 in the thread: reply, handoff | 3: proposal, decision (resolve) in the thread; handoff to B (room) | 1 in the thread: reply |
+| `read` / `wait` / `thread` calls | 3 / 0 / 2 | 2 / 0 / 0 | 4 / 0 / 2 | 1 / 1 / 0 |
+| delay before each inbox item was read (s) | 11, 12, 6 | 13, 7, 4 | 6, 7 | 18, 7, 0 |
+| messages missed | 0 | 2 (A's reply and the decision, after B's session ended) | 0 | 1 (A's handoff, 4 s after B's last call) |
+| autochat errors | — | — | — | — |
+| time to finish | 54 s | 41 s | 51 s | 49 s |
+
 **The room, all runs:**
 
-| | run 1 | run 2 | smoke | run 3 | run 4 | run 4b |
-| --- | --- | --- | --- | --- | --- | --- |
-| instructions | P0 | P0 | P0 | P0 | revised | revised |
-| overlap detected | +28 s | +21 s | +30 s | +26 s | +8 s | +19 s |
-| threads opened / resolved | 0 / 0 | 0 / 0 | 1 / 0 | 0 / 0 | 1 / 1 | 1 / 1 |
-| decisions | 1, no thread | 1, no thread | 0 | 1, no thread | 1, resolves the thread | 1, resolves the thread |
-| main-stream posts | 4 | 3 (+1 bounced) | 0 | 4 | 0 | 1 (handoff) |
-| messages missed or bounced | 1 missed | 1 bounced | 0 | 1 missed | 0 | 0 |
-| main-stream budget (10 per 10 min) tripped | no | no | no | no | no | no |
-| final code conflicts | `README.md`, `src/greeting.js` | same | — | same | same | same |
+| | run 1 | run 2 | smoke | run 3 | run 4 | run 4b | run 5 | run 5b |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| instructions | P0 | P0 | P0 | P0 | revised | revised | revised | revised |
+| agent B | Copilot | Copilot | Copilot | Copilot | Copilot | Copilot | opencode | opencode |
+| overlap detected | +28 s | +21 s | +30 s | +26 s | +8 s | +19 s | +13 s | +9 s |
+| threads opened / resolved | 0 / 0 | 0 / 0 | 1 / 0 | 0 / 0 | 1 / 1 | 1 / 1 | 1 / 1 | 1 / 1 |
+| decisions | 1, no thread | 1, no thread | 0 | 1, no thread | 1, resolves the thread | 1, resolves the thread | 1, resolves the thread | 1, resolves the thread |
+| main-stream posts | 4 | 3 (+1 bounced) | 0 | 4 | 0 | 1 (handoff) | 1 (handoff) | 1 (handoff) |
+| messages missed or bounced | 1 missed | 1 bounced | 0 | 1 missed | 0 | 0 | 2 missed | 1 missed |
+| main-stream budget (10 per 10 min) tripped | no | no | no | no | no | no | no | no |
+| final code conflicts | `README.md`, `src/greeting.js` | same | — | same | same | same | `src/greeting.js` | `src/greeting.js` |
 
 The core agent asked three questions:
 
-- **Do agents miss messages without push?** Yes, with the P0 instructions.
+- **Do agents miss messages without push?** Yes, with the P0 instructions, and with the revised ones
+  when one agent finishes first.
   - **Runs 1–3:** agents only see the inbox count on their next autochat call, and they make none
     while they edit. Messages waited 3–38 s, and one per run was either never read or never
     delivered, because the other agent had already exited.
   - **Runs 4 and 4b:** both agents waited before stopping, so nothing was lost. But the agent that
     was editing still read 22–28 s late.
-  - **The doorbell itself works:** in 10 of the 13 times a result showed `unread > 0`, the agent's
-    next autochat call was `read` or `wait`. In the other three, it opened or posted in the thread
-    first.
+  - **Runs 5 and 5b:** opencode-B finished first, and messages for it arrived after its last
+    autochat call: 2 in run 5 and 1 in run 5b. While editing, it read 13–18 s late.
+  - **The doorbell itself works, mostly:** in 13 of the 19 times a result showed `unread > 0` (10 of
+    13 in rounds 1 and 2, 3 of 6 in round 3), the agent's next autochat call was `read` or `wait`.
+    In the others, it first posted, opened a thread, or set its status.
 - **Does the 10-posts-per-10-minutes budget trip?** No, in no run: no agent made more than 3
-  main-stream posts, and runs 4 and 4b had 0 and 1. The 5-s `status` gap tripped once, in a dry run,
-  when `testing` and `done` came 2.6 s apart. The agent didn't retry, so its card stayed at
+  main-stream posts, and the revised runs had 0 or 1. The 5-s `status` gap tripped once, in a dry
+  run, when `testing` and `done` came 2.6 s apart. The agent didn't retry, so its card stayed at
   `testing`.
-- **Does a harness share one MCP process across conversations?** Not Copilot CLI in `-p` mode. Each
-  Copilot process got its own `autochat mcp` (two processes, two parents). Each one joined at the
-  agent's first tool call, and left 10 s after its Copilot exited.
+- **Does a harness share one MCP process across conversations?** Not Copilot CLI in `-p` mode, and
+  not `opencode run`. Each agent process got its own `autochat mcp` (two processes, two parents).
+  Each one joined at the agent's first tool call; opencode starts its MCP servers with the session,
+  3 s before B's first call. Each left 10 s after its agent's session ended.
 
 ## What the revision changed
 
@@ -454,7 +629,8 @@ The core agent asked three questions:
   integration plan. Main-stream chatter dropped to zero, apart from one handoff.
 - **Finishing.** Every agent `wait`ed on the thread before stopping (4 waits; each returned the
   awaited message within 0–11 s). The unresolved part went into the decision, and in 4b also into a
-  handoff. Nothing was missed or bounced, where runs 1–3 lost one message each.
+  handoff. Nothing was missed or bounced, where runs 1–3 lost one message each. (Runs 5 and 5b show
+  the limit of this: [below](#what-the-second-harness-changed).)
 - **Earlier overlap, sometimes.** In run 4 both agents declared the component `greeting` in their
   first status, so the notice came at +8 s, against +21–30 s before.
 
@@ -470,6 +646,63 @@ The core agent asked three questions:
   code still conflicts.
 - **A resolve race.** In run 4 both agents tried to resolve the thread, and the second got an
   error.
+
+## What the second harness changed
+
+**Held with opencode as B (runs 5 and 5b, against runs 4 and 4b):**
+
+- **Threads and decisions.** Both runs opened a thread on the overlap (at +13 and +15 s) and
+  resolved it into a decision with an integration plan. A opened and resolved the thread both times.
+  B replied in it, but never opened a thread or posted a decision itself, as Copilot-B did in run 4.
+- **Declaring files up front.** This time both agents did it. B's first status came 5 s in, before
+  any edit, and listed all three files it went on to change. A's first status listed
+  `src/greeting.js` and `test/greeting.test.js` and reused B's component `greeting`; in runs 4 and 4b
+  it had listed no files. So the overlap fired at A's first status, +13 and +9 s.
+- **A quiet main stream.** Each run had one main-stream post, A's handoff. Everything else stayed
+  in the thread.
+- **The tool descriptions carried the rules alone.** opencode never shows MCP `instructions` to the
+  model, so everything B did came from the tool descriptions. That worked because the revision put
+  every new rule in the descriptions too (see the [appendix](#appendix-the-run-4-revision)). Had
+  the new rules gone into `instructions` only, an opencode agent would never have seen them.
+
+**Didn't hold:**
+
+- **Waiting before stopping.** B waited in run 5b but not in run 5, where it chose to "briefly
+  acknowledge it and hand off". A didn't wait in either run, but it had nothing open: it resolved the
+  thread itself.
+- **Losing nothing.** B finished first both times, and messages for it arrived after its last call:
+  A's reply and the decision in run 5, A's handoff in run 5b. In runs 4 and 4b the two agents
+  finished within a second of each other, so nothing arrived late. Waiting protects an agent from
+  replies that come while it waits, not from what comes after it stops.
+- **Order of finishing.** B set its status to `done` before its last reply or handoff both times,
+  although the `status` description lists those steps first.
+
+**Unchanged in every revised run (4, 4b, 5 and 5b):** B never read before editing a file on A's
+card, nobody acted on the decision, and the final code conflicts. It now conflicts only in
+`src/greeting.js`, because opencode-B left the README alone.
+
+**Harness differences that matter to autochat:**
+
+- **Instructions.** opencode 1.2.6 never passes the MCP `instructions` to the model, and no option
+  turns them on: it never calls the MCP SDK's `getInstructions()`. Copilot CLI needs
+  `--allow-all-mcp-server-instructions`, and Gemini CLI 0.29.2 appends them by default (from its
+  source). opencode does load the files listed under `instructions` in its config, which
+  `setup --agents` could use.
+- **Tool names.** opencode names the tools `<server>_<tool>`: `autochat_catch_up`,
+  `autochat_status` and so on. The text names tools bare (`catch_up`), and B had no trouble with
+  that.
+- **Timeouts.** opencode's config schema says MCP requests time out after 5 s by default, but 1.2.6
+  never uses 5 s. Connecting and listing tools default to 30 s, and tool calls to the MCP SDK's 60 s.
+  The comment next to `OPENCODE_TIMEOUT_MS` repeats the 5 s (in `src/harnesses.js` as tested, and
+  in `src/harness/opencode.js` since #42). The setting itself (60 s) is right: only a `timeout` under
+  50 s would break `wait`.
+- **Speed.** On the same model, opencode-B finished in 41–49 s, against Copilot-B's 48–65 s, and
+  read its inbox 13–18 s after it filled, against 23–28 s. That's why it finished first.
+- **Names.** The default names differ by harness (`copilot-greeter`, `opencode-greeter`), so the
+  join-order `-2` from rounds 1 and 2 didn't come up.
+- **Transcripts.** `opencode run --format json` streams only finished tool calls. Denied calls and
+  the model's reasoning appear only in `opencode export <session>`, which the trial saved for each
+  run.
 
 ## Round 1: what worked
 
@@ -510,73 +743,99 @@ The core agent asked three questions:
 
 - **Auto thread titles (the question's first ~80 characters):** this happened only in the smoke
   run: "I am adding opts.formal in src/greeting.js with tests/docs. Your branch is refa…". It reads
-  badly on the board, but it didn't hurt. In runs 4 and 4b the agents opened their threads with
+  badly on the board, but it didn't hurt. In runs 4 to 5b the agents opened their threads with
   `thread open` and wrote their own titles.
-- **`present:false` can't tell reconnecting from left:** this hurt in runs 1–3.
+- **`present:false` can't tell reconnecting from left:** this hurt in runs 1–3, and again in run 5.
   - In runs 1 and 3, a message went to an agent whose process had exited. The room said "away", so
     it accepted the post, which was never read.
   - In run 2, B composed a reply to an agent that had left, found out only from the error, and
     dropped the message.
+  - In run 5, A's reply and the decision went to B 5 and 8 s after B's session ended. B's card said
+    away, so the room accepted both, and B never read them.
 
   Neither agent could tell from the card. It didn't come up in runs 4 and 4b, because both agents
-  waited for each other and left together.
+  waited for each other and left together. In run 5b, B was still present but done when A's handoff
+  arrived: a card that says `done` doesn't say whether the agent will read again.
 
 ## Changes before P1, by priority
 
-**Ship the run-4 text now.** It's in the [appendix](#appendix-the-run-4-revision). It needs no
-protocol change, and it delivered threads, decisions, waiting before stopping and handoffs in both
-runs.
+**Ship the run-4 text now, with the rules in the tool descriptions.** It's in the
+[appendix](#appendix-the-run-4-revision). It needs no protocol change, and with two harnesses it
+delivered threads and decisions in all four revised runs, and a wait before stopping and a handoff
+in three of them. Keep every rule in the tool descriptions too, not only in `instructions`:
+opencode shows the model nothing else, and it followed them.
 
 **These still need protocol or harness changes:**
 
 1. **Ring the doorbell during work.** In P0, the inbox count only arrives with the agent's own
    autochat calls. An agent that is editing didn't read before editing even when told to, so text
-   isn't enough. For P1, deliver "N unread from X (overlap on src/greeting.js), use autochat read"
-   through harness hooks after tool calls (#17; Copilot and Claude can both do this). Limit the
-   rate, and ring only for mentions, replies, overlaps and decisions.
-2. **Give presence three states, and say what happened to a post.** Runs 1–3 each lost a message to
-   this.
+   isn't enough. In round 3, B's last autochat call before its rewrite of `src/greeting.js` came
+   before A's card listed that file. For P1, deliver "N unread from X (overlap on
+   src/greeting.js), use autochat read" through harness hooks after tool calls (#17; Copilot and
+   Claude can both do this, and opencode would need a plugin, which is untested). Limit the rate,
+   and ring only for mentions, replies, overlaps and decisions.
+2. **Close out in the protocol when an agent finishes.** Finishing is the rule that text delivered
+   least reliably: opencode-B waited in one run of two, and the agent that finished first lost
+   messages in both round-3 runs.
+   - `status` with state `done` returns what's still open for the agent: unread messages, its
+     threads that aren't resolved, and its proposals without a reply. If anything is open, the
+     result says to answer or `wait` before stopping. In run 5 that would have flagged B's open
+     thread, which A resolved 8 s after B stopped.
+   - A `post` to an agent whose card says `done` says so in its result, so the sender can post a
+     handoff to the room instead.
+3. **Give presence three states, and say what happened to a post.** Runs 1–3 each lost a message to
+   this, and run 5 lost two.
    - Put `presence: here | away | left` and `leftAt` on cards, and use them in `to` checks.
    - Treat stdin EOF and SIGTERM as a clean exit and post "left" at once. Keep the 10-s resume window
      for dropped connections only.
    - A `post` to an away agent returns `delivered: false, queued: true`.
    - A `post` to an agent that has left goes to the main stream as a handoff, or returns the text
      with a hint to do that, instead of failing and losing the message.
-3. **Make decisions outlive the agents.** Both run-4 decisions deferred the integration to "whichever
-   branch merges second", and nothing carries that to the merge.
+4. **Make decisions outlive the agents.** All four revised decisions deferred the integration to the
+   merge ("whichever branch merges second", "Future i18n integration must …"), and nothing carries
+   that to the merge.
    - Let `thread resolve` take an `owner` and next actions.
+   - Record which participants have seen the outcome. In run 5 the decision overrode B's suggestion
+     to rebase, and B never saw it.
    - Keep decisions in the room after both agents have left, and show them to whoever joins with an
      overlapping focus.
    - Promote them where the merge happens (the PR description, or `promote: "github"` from #19)
-     instead of relying on rule 7, which agents without network access can't follow.
-4. **Detect overlap from intent, not only from edits.**
+     instead of relying on the rule that durable decisions belong in GitHub, which agents without
+     network access can't follow.
+5. **Detect overlap from intent, not only from edits.**
    - The MCP server refreshes the git paths on every tool call (or every 15 s while connected), so
      the overlap doesn't wait for the agent's next `status`.
    - Normalize component names (case, plural `greetings`/`greeting`), or suggest existing ones in the
-     `status` result, because agents don't reliably list files or reuse names in their first status.
-5. **Make `thread resolve` idempotent.** Return the existing outcome instead of an error when two
+     `status` result. Agents don't reliably list files or reuse names in their first status: A did
+     in runs 5 and 5b, but not in runs 4 and 4b.
+6. **Make `thread resolve` idempotent.** Return the existing outcome instead of an error when two
    agents resolve the same thread.
-6. **Coalesce `status` instead of rejecting it.** Apply the latest card when the 5-s gap ends, so a
+7. **Coalesce `status` instead of rejecting it.** Apply the latest card when the 5-s gap ends, so a
    quick `testing` → `done` doesn't leave a stale card.
-7. **Names for agents of the same harness.** Two Copilot agents became `copilot-greeter` and
+8. **Names for agents of the same harness.** Two Copilot agents became `copilot-greeter` and
    `copilot-greeter-2`, and join order decided which was which. On a collision, use the branch or
    worktree instead (`copilot-formal-greetings`).
-8. **Thread titles for auto-opened threads.** Let `post` take a `title` for questions. Otherwise use
+9. **Thread titles for auto-opened threads.** Let `post` take a `title` for questions. Otherwise use
    the first sentence, cut at a word boundary under ~60 characters.
-9. **Check each harness in `setup --agents` and `doctor`:**
-   - **Copilot CLI** needs `--allow-all-mcp-server-instructions`, or an allowlist entry, before the
-     etiquette reaches the model.
-   - **Gemini CLI 0.29.2** shows server instructions without a flag. But it ignores the old
-     `selectedAuthType` key, so `doctor` should check the auth type, and whether a cached Gemini
-     login has expired.
-10. **Rerun with a second harness** once Gemini (`gemini`, then "Login with Google") or Claude Code
-    (`claude auth login`) is logged in: `AGENT_B=gemini` or `AGENT_B=claude`.
+10. **Check each harness in `setup --agents` and `doctor`:**
+    - **Copilot CLI** needs `--allow-all-mcp-server-instructions`, or an allowlist entry, before the
+      etiquette reaches the model.
+    - **opencode 1.2.6** never shows server instructions. `setup --agents` could write the etiquette
+      to a file and list it under `instructions` in opencode's config (untested), and `doctor`
+      should say that otherwise opencode agents see only the tool descriptions. Keep the 60-s
+      `timeout`, but fix its comment in `src/harness/opencode.js`: 1.2.6 has no 5-s default.
+    - **Gemini CLI 0.29.2** shows server instructions without a flag. But it ignores the old
+      `selectedAuthType` key, so `doctor` should check the auth type, and whether a cached Gemini
+      login has expired.
+11. **Run Claude Code once it's logged in** (`claude auth login`, then `AGENT_B=claude`). It's the
+    only planned harness still untested; the owner dropped Gemini.
 
 ## Appendix: the run-4 revision
 
 These are the served texts: the MCP `instructions`, each tool description, and the changed property
-descriptions. The old rules 4–7 only moved down (they're now 6–9). The old rule 8, about `wait`, is
-now rule 10 and starts with "Otherwise". The source change is text only, in `src/mcp.js`.
+descriptions. Runs 4, 4b, 5 and 5b all used them; in runs 5 and 5b, opencode-B saw only the tool and
+property descriptions. The old rules 4–7 only moved down (they're now 6–9). The old rule 8, about
+`wait`, is now rule 10 and starts with "Otherwise". The source change is text only, in `src/mcp.js`.
 
 ```diff
 --- a9ad1d3 (runs 1-3)
@@ -694,12 +953,17 @@ now rule 10 and starts with "Otherwise". The source change is text only, in `src
 
 These are kept with the trial and not committed:
 
-- **Room transcripts:** for every run (1, 2, smoke, 3, 4, 4b), each 15-s `agents --json` snapshot
-  plus the final one, scrubbed.
-- **Agent transcripts:** both agents' `--share` markdown and JSONL events.
+- **Room transcripts:** for every run (1, 2, smoke, 3, 4, 4b, 5, 5b), each 15-s `agents --json`
+  snapshot plus the final one, scrubbed.
+- **Agent transcripts:** both Copilot agents' `--share` markdown and JSONL events. For opencode, the
+  `--format json` stream, the `opencode export` of the session and its `--print-logs` log.
 - **Per run:** diffs, merge checks and `metrics.json`.
 - **Gemini:** the dry-run evidence (sandbox checks, the login failure).
-- **Scripts:** the run scripts, with `AGENT_B=gemini` and `AGENT_B=claude` ready.
+- **opencode:** the dry-run evidence (permission probe, instructions check), its `opencode.json`,
+  the seatbelt profile, and the isolation check after the runs. The credential copy was deleted, and
+  isn't among them.
+- **Scripts:** the run scripts, with `AGENT_B=opencode` and `AGENT_B=claude` ready. Gemini's
+  project settings and sandbox profile are kept with its dry-run evidence.
 - **Fixtures for #25:**
   - `agents-snapshot.json`: the final state of run 1.
   - `agents-snapshot-live.json`: run 1 at +32 s, with both agents present and overlapping.
