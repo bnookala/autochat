@@ -1,0 +1,186 @@
+# Harness adapters
+
+autochat follows coding agents ("harnesses": Copilot CLI, Claude Code, Codex, opencode, pi, Gemini
+CLI, …) through one **adapter** per harness, in `src/harness/<id>.js`. An adapter owns everything
+autochat knows about its harness: where it's installed, its hooks, how its hook payloads read, which
+of its modes count as working on its own, an optional fallback watcher, terminal focus, and
+registering `autochat mcp` for the [agent room](agents.md). The rest of autochat only ever sees
+`SessionEvent`s.
+
+```
+harness ──hook──▶ autochat hook --harness <id> <event> ──▶ adapter.normalize() + autonomy()
+                                                              │ SessionEvent, sent as a hook message
+                                                              ▼
+                     unix socket (or the spool while the core starts) ──▶ Controller
+adapter.observe() ── fallback: sessions without hooks ─────────────────▶ controller.adopt(live, id)
+adapter.follow(sid) ── the harness's own session log, for what no hook reports ─▲
+```
+
+The Controller keys sessions by `${harness}:${sid}` and puts you in the lounge while at least one of
+them works **autonomously**: without you taking turns. See [the autonomy rule](#autonomy-and-autochat-config-trigger).
+
+## The adapter
+
+`src/harness/index.js` lists the adapters (`ADAPTERS`, in the order setup shows them). Each module
+exports one object:
+
+| Member | Required | What it does |
+| --- | --- | --- |
+| `id`, `name` | yes | `claude`, `Claude Code`. The id is the `--harness` value and the session key prefix. |
+| `modes` | yes | Every mode name `autochat config trigger <id>` accepts, including `headless` if the harness has non-interactive runs. |
+| `trigger` | yes | The modes that count as autonomous by default. |
+| `detect(ctx)` | yes | `{installed, binary, paths}`: is it installed (binary on the path, or its config dir exists), and the config files the adapter touches. Never spawns: [`versionOf(ctx, binary)`](../src/harness/util.js) is there when a version is needed. |
+| `normalize(event, payload, env)` | yes | One hook call → a [`SessionEvent`](#sessionevent), or `null` when it names no session. Fills in `mode` and `headless`; leaves `autonomy` to `autonomy()`. Must never throw on odd input. |
+| `autonomy(payload, session)` | yes | `'autonomous' \| 'interactive' \| 'unknown'`. `session` is the SessionEvent so far plus `env` and `trigger` (this harness's trigger list, or `'never'`). Most adapters use `defaultAutonomy`: `byTrigger(modesOf(session), session.trigger)`. |
+| `planHooks(ctx)`, `unplanHooks(ctx)`, `hookStatus(ctx)` | for hooks | Install, remove, check the hooks. See [Hooks](#hooks). |
+| `observe(ctx, emit)` | no | Fallback watcher for sessions that never call the hooks (started before setup, or no hooks at all). Calls `emit(live)` with **every** live session it sees, each time (`[{sid, running, mode, cwd, lastStart, scannedAt}]`), so the Controller can release the ones that are gone. Returns a stop function. `ctx` is `{idleMs, trigger(id), intervalMs}`. |
+| `follow(sid)` | no | The harness's own session log, for what no hook reports. An EventEmitter like Copilot's `SessionLog`: `start({since})`, `poll()`, `stop()`, and events `mode`, `task-complete`, `abort`, `shutdown`, `activity`. |
+| `continues(session)` | no | After `idle`, true keeps the session in the room a while longer (Copilot: an active autopilot objective). |
+| `focus(origin)` | no | Put focus back on the agent's terminal. Default: `focusOrigin` (tmux pane, else the terminal app). |
+| `mcp` | yes | `where`, `status`, `plan`, `unplan`: registering `autochat mcp` (`autochat setup --agents`). `jsonServer()` in `mcp-config.js` covers harnesses with a JSON config file. |
+
+`ctx` is `harnessContext()` from `src/harness/util.js`: `env`, `home`, `node`, `bin` (the absolute
+paths hooks run), `copilotHome`, `claudeHome` (`$CLAUDE_CONFIG_DIR`), `configHome`
+(`$XDG_CONFIG_HOME`), `codexHome`, `which(name)` (honours `AUTOCHAT_HARNESS_PATH`), and `run(cmd,
+args)`. Tests pass their own.
+
+## SessionEvent
+
+```js
+{ harness, sid, kind, autonomy, mode, headless, cwd, repo, branch, origin, request, summary, reason, files }
+```
+
+| Field | Meaning |
+| --- | --- |
+| `harness`, `sid` | adapter id and the harness's session id (`[A-Za-z0-9_-]{1,128}`) |
+| `kind` | see below |
+| `autonomy` | `autonomous`, `interactive` or `unknown` |
+| `mode` | the harness's own name for its current mode (`autopilot`, `auto`, `acceptEdits`, …), or null |
+| `headless` | true for a non-interactive run (`claude -p`, `codex exec`, …) |
+| `cwd`, `repo`, `branch` | where it works (repo and branch are optional) |
+| `origin` | `originFrom(env)`: `{tmux, tmuxPane, termProgram, bundleId}` from the hook's environment, for focus |
+| `request` | `{title, message}` for `kind: 'request'` |
+| `summary` | what it did, for `complete` (and optionally `idle`: its last message) |
+| `reason` | why it ended, for `end` |
+| `files` | paths a tool call edits, when the payload says |
+
+| `kind` | Meaning | What the Controller does |
+| --- | --- | --- |
+| `start` | the session started; nothing to do yet | nothing (it doesn't start tracking) |
+| `activity` | it's working: a prompt went in, a tool runs | tracks it while autonomous; `running` |
+| `request` | it's blocked on you: an approval or an answer | `needed`: the request card, `!` in the room |
+| `waiting` | it finished its turn and waits at its prompt | done now (`idle`) |
+| `idle` | its turn ended; it may carry on by itself | done after `idleMs` without activity, unless `continues()` |
+| `complete` | it says it's done | done, with `summary` |
+| `end` | the session or its process ended | done |
+| `notice` | a hook fired and nothing changed | refreshes `cwd` and `origin` |
+
+When a tracked session's `activity`, `request`, `idle` or `waiting` says `autonomy: 'interactive'`
+(you switched modes), it's done right away (reason `mode`). `unknown` neither starts nor stops
+anything.
+
+## Autonomy and `autochat config trigger`
+
+You're in the lounge only while an agent works **without you taking turns**. Chatting with an agent
+never counts, however long a turn runs. Approval-bypass modes (`yolo`, `bypassPermissions`,
+`acceptEdits`) are about permissions, not about you being away, so they don't count by default.
+**Join now** (the menu bar, or `autochat ui --now`) is the manual switch.
+
+The rule (`byTrigger` in `src/harness/event.js`): a session counts as autonomous when one of its
+modes, `mode` plus `headless` for non-interactive runs, is in its harness's trigger list. It's
+interactive when its mode is known and isn't, and unknown when nothing says.
+
+| Harness | Counts by default |
+| --- | --- |
+| Copilot CLI | `autopilot` |
+| Claude Code | `auto`, `headless` (`claude -p`) |
+| Gemini CLI, Codex, opencode, pi | `headless` (`gemini -p`, `codex exec`, `opencode run`, `pi -p`) |
+
+```sh
+autochat config trigger                         # every harness's list
+autochat config trigger copilot                 # ["autopilot"]
+autochat config trigger copilot autopilot,plan  # plan mode counts too
+autochat config trigger claude never            # Claude Code never puts you in the lounge
+autochat config trigger claude default          # back to the default
+```
+
+Overrides live in `config.json` as `trigger: {<id>: [modes] | "never"}`. Hooks read the config on
+every call, and so does the core when it decides from a mode alone (session logs, the fallback
+observers, hook messages from older versions).
+
+## Hooks
+
+**The hook command** is `'<node>' '<autochat.js>' hook --harness <id> <Event> || true`, with the
+absolute paths of node and `bin/autochat.js`, so nvm and `PATH` don't matter. It always exits 0
+and prints nothing: some harnesses block a tool call on a failing hook, or read a hook's stdout
+as instructions. `autochat hook <event>` without `--harness` means Copilot: that's what every
+install from before adapters runs, and what Copilot's hooks still say.
+
+**Installing** (`planHooks(ctx)`) returns a plan, `{id, action, file, entries, apply}` with action
+`add`, `update`, `none` or `manual`. Build it with `planned(compute, ctx)` from `util.js`, so
+`apply()` recomputes it from the file as it is when applied (setup may show a plan, then wait on
+a prompt). Rules:
+
+- **Merge, never replace.** Users have their own hooks on the same events. Append ours, keep every
+  other entry and the file's formatting (`readJson`/`writeJson` keep the indentation and the final
+  newline), and write with `writeFileSafely` (atomic, a one-time `<file>.autochat.bak`, symlinks
+  written through).
+- **Reruns are no-ops**, and a moved install updates our entries in place.
+- **Uninstall removes only ours**, recognised by the command (`autochat.js' hook --harness <id>`),
+  and leaves the file byte-for-byte as it was before we added them.
+- A file autochat can't parse (JSON with comments) gets `action: 'manual'` and the snippet to add.
+- Test it: an existing config with other hooks must stay byte-for-byte unchanged apart from our
+  entries, through install, rerun and uninstall.
+
+**Commands:**
+
+- `autochat setup` installs the hooks in `DEFAULT_HOOKS` (Copilot), then offers every other
+  installed harness that has hooks, one prompt each (in a terminal; otherwise it prints the command).
+- `autochat setup --harness claude,codex [--dry-run]` installs exactly those (`all`: every adapter
+  with hooks), showing each change first.
+- `autochat uninstall` runs every adapter's `unplanHooks()`, then removes the MCP registrations.
+- `autochat doctor` shows `hookStatus()` per installed harness, and the trigger lists in effect.
+
+## The hook message
+
+On the socket (and in the spool while a core starts) a SessionEvent travels as a one-shot `hook`
+message (`hookMessage()`), in the shape every daemon has read, plus the new fields:
+
+```json
+{"type":"hook","event":"PreToolUse","sessionId":"5d0c…","harness":"claude","autonomy":"autonomous",
+ "mode":"auto","cwd":"/Users/me/code/x","origin":{"tmuxPane":"%3"},"kind":"activity","ts":1730400000000}
+```
+
+`sessionId` is the session id, and `idle` travels as `stop`. Messages without `harness` (or
+`autonomy`) are from before adapters: they're Copilot's, and the core decides autonomy from their
+`mode`. Lounge snapshots list each session's `harness` (see [protocol.md](protocol.md#state)).
+
+## Adding an adapter
+
+1. **Verify the harness first.** Hook names, payload fields and mode names change between
+   versions: check them against the installed version (load hooks from a temp settings file;
+   never touch the user's real config), and record payloads as fixtures under
+   `test/fixtures/<id>/`, with paths scrubbed.
+2. Write `src/harness/<id>.js` and add it to `ADAPTERS` in `src/harness/index.js`.
+3. `normalize()`: map each hook event to a kind (table above). Requests (permission prompts,
+   questions to the user) are `request`; tool calls are `activity`; the end of a turn is `idle`.
+4. Autonomy: set `mode` from the payload and `headless` from whatever reliably marks a
+   non-interactive run (an env var the harness sets for its hooks, a payload field). If nothing
+   does, leave it unknown. Fill in `modes` and `trigger`.
+5. Hooks: `planHooks`, `unplanHooks`, `hookStatus`, following the rules above.
+6. Optional: `observe()` for sessions without hooks, `follow()`, `continues()`, `focus()`.
+7. Tests in temp homes only (`HOME`, `AUTOCHAT_HOME`, `COPILOT_HOME`, `CLAUDE_CONFIG_DIR`, …): the
+   fixtures through `normalize()`, the autonomy rule, and install/rerun/uninstall around a config
+   that already has other hooks.
+8. Document it here and in the README.
+
+## Harnesses
+
+| Harness | Hooks | Autonomy signal | Fallback observer | MCP |
+| --- | --- | --- | --- | --- |
+| Copilot CLI | `$COPILOT_HOME/hooks/autochat.json` (a file of our own) | `autopilot`, from `session-state/<id>/events.jsonl` | the session-state scan | `mcp-config.json` |
+| Claude Code | not yet | | | `claude mcp add` |
+| Gemini CLI | not yet | | | `~/.gemini/settings.json` |
+| opencode | not yet | | | `opencode.json` |
+| Codex | not yet | | | `config.toml` |
+| pi | not yet | | | none |
