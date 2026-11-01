@@ -356,15 +356,18 @@ test('CLI: setup offers Codex, setup --harness codex installs it and says to tru
     server.close()
     process.env.AUTOCHAT_HOME = path.join(tmp, 'ac')
   }
-  assert.deepEqual(got.map(m => [m.type, m.harness, m.event, m.kind, m.mode, m.headless, m.autonomy]), [
+  const hooks = got.filter(m => m.type === 'hook')
+  assert.deepEqual(hooks.map(m => [m.type, m.harness, m.event, m.kind, m.mode, m.headless, m.autonomy]), [
     ['hook', 'codex', 'UserPromptSubmit', 'activity', 'bypassPermissions', true, 'autonomous'],
     ['hook', 'codex', 'PreToolUse', 'activity', 'bypassPermissions', true, 'autonomous'],
     ['hook', 'codex', 'PostToolUse', 'activity', 'bypassPermissions', true, 'autonomous'],
     ['hook', 'codex', 'PreToolUse', 'activity', 'bypassPermissions', true, 'autonomous']
   ])
-  assert.equal(got[0].sessionId, '019a3f2e-6b1c-7d40-a3e2-1c9b7f4d2e10')
-  assert.deepEqual(got[0].origin, { tmux: '/t,1,0', tmuxPane: '%7' })
-  assert.deepEqual(got[3].files, ['src/greeting.js', 'test/greeting.test.js'])
+  assert.equal(hooks[0].sessionId, '019a3f2e-6b1c-7d40-a3e2-1c9b7f4d2e10')
+  assert.deepEqual(hooks[0].origin, { tmux: '/t,1,0', tmuxPane: '%7' })
+  assert.deepEqual(hooks[3].files, ['src/greeting.js', 'test/greeting.test.js'])
+  // PostToolUse also rings the agent room's doorbell; this core has nothing to say, so nothing prints.
+  assert.deepEqual(got.filter(m => m.type === 'doorbell'), [{ type: 'doorbell', harness: 'codex', sessionId: '019a3f2e-6b1c-7d40-a3e2-1c9b7f4d2e10', pid: process.pid }])
 
   const un = cli('uninstall')
   assert.equal(un.status, 0, un.stderr)
