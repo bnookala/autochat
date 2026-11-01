@@ -330,6 +330,29 @@ public enum Fixtures {
 
     static let namesOutcome = "Authors show from.title. Handles stay for → recipients and @mentions, and cards show both."
 
+    /// The coordinator in `agentsNames`, whose child sessions can be folded.
+    public static let leadAgent = "1f2e3d4c"
+
+    /// Idle sessions (issue #67): the names board plus three sessions that never set a status
+    /// or posted (a chat titled "What can you do?", a scratch folder, and a Gemini CLI session
+    /// named after its harness).
+    public static func agentsIdle(now: Date) -> AgentsSnapshot {
+        func ago(_ minutes: Double) -> Date { now.addingTimeInterval(-minutes * 60) }
+        var s = agentsNames(now: now)
+        func idle(_ id: String, _ name: String, _ title: String, _ harness: AgentHarness, worktree: String?, joined: Double) -> AgentCard {
+            AgentCard(
+                id: id, name: name, display: title, title: title, human: me.handle, harness: harness, worktree: worktree, state: .idle,
+                presence: .here, active: false, joinedAt: ago(joined), updatedAt: ago(joined)
+            )
+        }
+        s.agents += [
+            idle("7a8b9c0d", "what-can-you-do", "What can you do?", .copilot, worktree: nil, joined: 28),
+            idle("2c3d4e5f", "scratch", "scratch", .copilot, worktree: "scratch-5dedd1b6", joined: 19),
+            idle("6e7f8091", "gemini", "gemini", .gemini, worktree: nil, joined: 12)
+        ]
+        return s
+    }
+
     /// The objects from issue #21, plus fields, kinds and values a newer daemon might send.
     public static let agentsExampleJSON = #"""
     {"type":"agents","v":1,"now":1730400005000,"tier":"local","human":"stormy-newt-59","ack":false,"future":{"x":1},

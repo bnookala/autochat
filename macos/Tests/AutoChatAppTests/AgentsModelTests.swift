@@ -273,6 +273,28 @@ struct AgentsNamesModelTests {
         #expect(AgentsSidebarLayout.indent(1) > 0)
         #expect(AgentsSidebarLayout.indent(9) == AgentsSidebarLayout.indent(3))
     }
+
+    @Test func theIdleRowOpensOnClick() {
+        let model = AgentsModel(send: { _ in Reply(id: 1, ok: true) })
+        model.apply(Fixtures.agentsIdle(now: Date()))
+        func names() -> [String] {
+            model.boardRows.compactMap { if case let .card(c, _) = $0 { c.name } else { nil } }
+        }
+        #expect(model.boardRows.last == .idle(count: 3, expanded: false))
+        #expect(!names().contains("what-can-you-do"))
+        model.toggleIdle()
+        #expect(model.idleExpanded)
+        #expect(names().suffix(3) == ["what-can-you-do", "scratch", "gemini"])
+        // An idle session that starts working moves up with the active agents.
+        var next = Fixtures.agentsIdle(now: Date())
+        next.agents[next.agents.firstIndex { $0.name == "scratch" }!].active = true
+        model.apply(next)
+        #expect(model.boardRows.contains(.idle(count: 2, expanded: true)))
+        #expect(names().firstIndex(of: "scratch")! < names().firstIndex(of: "docs-site")!)
+        model.toggleIdle()
+        #expect(names().count == 6)
+        #expect(AgentsModel(fixture: Fixtures.agentsIdle(now: Date()), idleExpanded: true).boardRows.contains(.idle(count: 3, expanded: true)))
+    }
 }
 
 @Suite("Agents: plain-text rendering")

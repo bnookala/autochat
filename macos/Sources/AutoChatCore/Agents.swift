@@ -146,6 +146,9 @@ public struct AgentCard: Sendable, Equatable, Decodable, Identifiable {
     public var presence: AgentPresence
     /// When it left, once `presence` is `left` (if the daemon says).
     public var leftAt: Date?
+    /// It has set a status or posted (issue #67). Idle sessions collapse on the board. A
+    /// daemon without `active` means every card is.
+    public var active: Bool
     public var joinedAt: Date?
     public var updatedAt: Date?
     /// Names of the agents it overlaps with.
@@ -158,7 +161,7 @@ public struct AgentCard: Sendable, Equatable, Decodable, Identifiable {
         id: String, name: String, display: String? = nil, title: String? = nil, parent: String? = nil, human: String? = nil,
         harness: AgentHarness = .generic(nil), repo: String? = nil, branch: String? = nil, worktree: String? = nil,
         state: AgentState? = nil, summary: String? = nil, focus: AgentFocus? = nil, present: Bool = true,
-        presence: AgentPresence? = nil, leftAt: Date? = nil, joinedAt: Date? = nil, updatedAt: Date? = nil, overlaps: [String] = []
+        presence: AgentPresence? = nil, leftAt: Date? = nil, active: Bool = true, joinedAt: Date? = nil, updatedAt: Date? = nil, overlaps: [String] = []
     ) {
         self.id = id
         self.name = name
@@ -175,13 +178,14 @@ public struct AgentCard: Sendable, Equatable, Decodable, Identifiable {
         self.focus = focus
         self.presence = presence ?? (present ? .here : .left)
         self.leftAt = leftAt
+        self.active = active
         self.joinedAt = joinedAt
         self.updatedAt = updatedAt
         self.overlaps = overlaps
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, display, title, parent, human, harness, repo, branch, worktree, state, summary, focus, present, presence, leftAt, joinedAt, updatedAt, overlaps
+        case id, name, display, title, parent, human, harness, repo, branch, worktree, state, summary, focus, present, presence, leftAt, active, joinedAt, updatedAt, overlaps
     }
 
     public init(from decoder: Decoder) throws {
@@ -206,6 +210,7 @@ public struct AgentCard: Sendable, Equatable, Decodable, Identifiable {
         focus = c.lenient(AgentFocus.self, .focus)
         presence = AgentPresence(raw: c.lenient(String.self, .presence)) ?? ((c.lenient(Bool.self, .present) ?? true) ? .here : .left)
         leftAt = c.lenientDate(.leftAt)
+        active = c.lenient(Bool.self, .active) ?? true
         joinedAt = c.lenientDate(.joinedAt)
         updatedAt = c.lenientDate(.updatedAt)
         overlaps = c.lenient(LossyList<String>.self, .overlaps)?.items.filter { !$0.isEmpty } ?? []

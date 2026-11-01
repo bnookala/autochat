@@ -115,6 +115,8 @@ private struct AgentsSidebar: View {
                                     agents.toggleChildren(of: parent)
                                 }
                                 .padding(.leading, AgentsSidebarLayout.indent(depth))
+                            case let .idle(count, expanded):
+                                IdleSessionsRow(count: count, expanded: expanded) { agents.toggleIdle() }
                             }
                         }
                     }
@@ -195,6 +197,43 @@ private struct SidebarHeader: View {
 }
 
 // MARK: Agent card
+
+/// "▸ 3 idle sessions" (issue #67): the sessions that haven't set a status or posted, folded
+/// into one row under the active agents. Clicking it shows them.
+struct IdleSessionsRow: View {
+    let count: Int
+    let expanded: Bool
+    let action: () -> Void
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: Theme.cardCorner, style: .continuous)
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .bold))
+                    .rotationEffect(.degrees(expanded ? 90 : 0))
+                    .frame(width: 10)
+                Image(systemName: "moon.zzz")
+                    .font(.callout)
+                Text(verbatim: AgentsRules.idleLabel(count))
+                    .font(.callout.weight(.medium))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(shape.fill(Theme.cardFill.opacity(0.55)))
+            .overlay(shape.strokeBorder(Color.primary.opacity(0.16), style: StrokeStyle(lineWidth: 0.75, dash: [3, 2.5])))
+            .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .animation(.smooth(duration: 0.15), value: expanded)
+        .help(expanded ? "Hide the idle sessions" : "Sessions that haven't set a status or posted yet. Other agents don't see them.")
+        .accessibilityLabel(AgentsRules.idleLabel(count))
+        .accessibilityValue(expanded ? "expanded" : "collapsed")
+    }
+}
 
 /// A one-line disclosure on the board: "▸ 2 child sessions". Clicking it shows or hides them.
 struct BoardDisclosure: View {

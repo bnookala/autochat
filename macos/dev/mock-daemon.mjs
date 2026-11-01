@@ -24,7 +24,8 @@
 // (`bye`: left at once), one drops and comes back within the 10 s resume window, and one drops
 // for good (left once the window ends). Names (#66): cards carry `title` (a session title,
 // `repo@branch`, or the folder) and `display` is the title with no human/ prefix; a coordinator
-// has two child sessions (`parent`); messages carry `from.title`.
+// has two child sessions (`parent`); messages carry `from.title`. Idle sessions (#67): cards carry
+// `active`, false until the agent sets a status or posts, and three sessions never do.
 //
 // `--scenario attention` (issue #37) runs four agents over three harnesses at once: one finishes,
 // two get blocked on you (one with Copilot's question), one fails. Jump to a blocked one and it
@@ -400,7 +401,8 @@ function agentJoin (name, harness, branch, extra = {}) {
   room.seen = true
   const now = Date.now()
   // P1's local tier (#66): `display` is the title, with no human/ prefix; `parent` names a coordinator.
-  const p1 = room.p1 ? { presence: 'here', leftAt: null, title: extra.title ?? name, display: extra.title ?? name, parent: null } : {}
+  // `active` (#67) stays false until the agent sets a status or posts.
+  const p1 = room.p1 ? { presence: 'here', leftAt: null, title: extra.title ?? name, display: extra.title ?? name, parent: null, active: false } : {}
   room.cards.set(name, {
     id: hex(8), name, display: `${ME.handle}/${name}`, human: ME.handle, harness, repo: REPO, branch, worktree: name.split('-')[1] || name,
     state: 'exploring', summary: null, focus: { issue: null, components: [], paths: [] },
@@ -418,6 +420,7 @@ function agentStatus (name, { state, summary, focus }) {
   if (state) c.state = state
   if (summary !== undefined) c.summary = summary
   if (focus) c.focus = { issue: null, components: [], paths: [], ...focus }
+  if (room.p1) c.active = true
   c.updatedAt = Date.now()
   recomputeOverlaps()
   agentsChanged()
@@ -468,6 +471,7 @@ function recomputeOverlaps () {
 function agentPost (name, { kind = 'note', text, thread = null, to = [], replyTo = null }) {
   const c = room.cards.get(name)
   if (!c?.present) return null
+  if (room.p1) c.active = true
   return postAgentMessage({ kind, from: sender(name), thread, to, replyTo, text })
 }
 
@@ -628,13 +632,17 @@ function runAgentsP1 (t) {
   const { lead, app, daemon, web, docs } = P1
   t(0, () => agentJoin(lead, 'copilot', 'main', {
     title: 'AutoChat P1 agent rooms', repo: P1_REPO, worktree: 'autochat', state: 'editing', summary: 'Coordinating the P1 agent room layers',
-    focus: { issue: 50, components: ['agent room'], paths: [] }
+    focus: { issue: 50, components: ['agent room'], paths: [] }, active: true
   }))
   t(0.3, () => agentJoin(app, 'copilot', 'app/p1-presence', { title: 'Mac app: presence and names', parent: lead, repo: P1_REPO, worktree: 'p1-app' }))
   t(0.6, () => agentJoin(daemon, 'copilot', 'core/p1-presence', { title: 'Daemon: presence and bye', parent: lead, repo: P1_REPO, worktree: 'p1-core' }))
   // No session title: `repo@branch`, and the cwd basename outside a repo.
-  t(0.9, () => agentJoin(web, 'claude', 'fix/session-expiry', { title: 'api-server@fix/session-expiry', worktree: 'api-server-web', summary: 'Looking into web sessions expiring mid-request' }))
-  t(1.2, () => agentJoin(docs, 'codex', null, { title: 'docs-site', repo: null, worktree: 'docs-site', state: 'done', summary: 'Proofread the agent room docs' }))
+  t(0.9, () => agentJoin(web, 'claude', 'fix/session-expiry', { title: 'api-server@fix/session-expiry', worktree: 'api-server-web', summary: 'Looking into web sessions expiring mid-request', active: true }))
+  t(1.2, () => agentJoin(docs, 'codex', null, { title: 'docs-site', repo: null, worktree: 'docs-site', state: 'done', summary: 'Proofread the agent room docs', active: true }))
+  // Idle sessions (#67): they never set a status or post, so they stay `active: false`.
+  t(1.5, () => agentJoin('what-can-you-do', 'copilot', null, { title: 'What can you do?', repo: null, worktree: null, state: 'idle' }))
+  t(1.8, () => agentJoin('scratch', 'copilot', null, { title: 'scratch', repo: null, worktree: 'scratch-5dedd1b6', state: 'idle' }))
+  t(2.1, () => agentJoin('gemini', 'gemini', null, { title: 'gemini', repo: null, worktree: null, state: 'idle' }))
   t(2, () => agentStatus(app, {
     state: 'editing', summary: 'Showing here, reconnecting and left on the Agents board',
     focus: { issue: 54, components: ['presence'], paths: ['macos/Sources/AutoChatApp/AgentsView.swift'] }

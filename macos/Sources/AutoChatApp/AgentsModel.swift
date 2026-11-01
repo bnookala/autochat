@@ -14,6 +14,8 @@ public final class AgentsModel {
     public private(set) var gate = InterventionGate()
     /// Cards (by id) whose child sessions are folded away on the board.
     public private(set) var collapsedChildren: Set<String> = []
+    /// The "N idle sessions" row is open.
+    public private(set) var idleExpanded = false
     public var draft: String = "" {
         didSet { if draft.count > AgentsRules.maxSayLength { draft = String(draft.prefix(AgentsRules.maxSayLength)) } }
     }
@@ -56,7 +58,10 @@ public final class AgentsModel {
     }
 
     /// Static model for snapshot rendering: nothing connects, actions are no-ops.
-    public init(fixture: AgentsSnapshot?, selection: AgentStream = .main, intervening: Bool = false, draft: String = "") {
+    public init(
+        fixture: AgentsSnapshot?, selection: AgentStream = .main, intervening: Bool = false, draft: String = "",
+        collapsedChildren: Set<String> = [], idleExpanded: Bool = false
+    ) {
         self.socketPath = nil
         self.sendOverride = nil
         self.frozen = true
@@ -64,6 +69,8 @@ public final class AgentsModel {
         self.connection = fixture == nil ? .connecting : .connected
         self.selection = selection
         self.draft = draft
+        self.collapsedChildren = collapsedChildren
+        self.idleExpanded = idleExpanded
         gate.update(daemonAck: fixture?.ack ?? false)
         if intervening { gate.requestIntervene() }
     }
@@ -77,8 +84,11 @@ public final class AgentsModel {
     /// The selected stream is a resolved thread, which takes no more messages.
     public var streamIsClosed: Bool { !AgentsRules.acceptsInterventions(stream, in: snapshot) }
     public var isFixture: Bool { frozen }
-    /// The board: cards with their child sessions nested under them.
-    public var boardRows: [AgentBoardRow] { AgentsRules.boardRows(snapshot?.agents ?? [], collapsed: collapsedChildren) }
+    /// The board: active agents first, with their child sessions nested under them, then the
+    /// idle sessions in one row.
+    public var boardRows: [AgentBoardRow] {
+        AgentsRules.boardRows(snapshot?.agents ?? [], collapsed: collapsedChildren, idleExpanded: idleExpanded)
+    }
 
     /// The daemon's clock at local time `date`, for "left 4 min ago": the snapshot's `now`
     /// moved on by the time since it arrived (the local clock if it has none). A fixture's
@@ -159,6 +169,11 @@ public final class AgentsModel {
     /// The disclosure under a parent card: show or hide its child sessions.
     public func toggleChildren(of cardID: String) {
         if collapsedChildren.remove(cardID) == nil { collapsedChildren.insert(cardID) }
+    }
+
+    /// The "N idle sessions" row: show or hide them.
+    public func toggleIdle() {
+        idleExpanded.toggle()
     }
 
     /// Intervene…: the one-time warning sheet, or straight to the input once acknowledged.
