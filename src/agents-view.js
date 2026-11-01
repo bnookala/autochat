@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 import { sockPath } from './paths.js'
 import { sanitize } from './text.js'
 import { Line, wrap, strWidth, stripAnsi } from './tui.js'
+import { slug } from './agents/names.js'
 
 // `autochat agents`: a terminal client of the daemon's `agents` stream (docs/agent-room/human.md).
 // A live read-only view, `--json` for one snapshot, and `say` to intervene.
@@ -125,6 +126,8 @@ function boardLines (snap, cols) {
     state: 9
   }
   const warning = (c) => (c.overlaps || []).length ? '⚠ ' + c.overlaps.map(o => clean(o, 32)).join(', ') : ''
+  // The card's title, the label people read, unless the name already spells it.
+  const title = (c) => c.title && slug(c.title) !== c.name ? clean(c.title, 80) : ''
   const warnW = Math.min(Math.floor(cols / 3), Math.max(0, ...cards.map(c => strWidth(warning(c)))))
   return cards.map((c) => {
     const l = new Line(cols).add(' ')
@@ -136,6 +139,12 @@ function boardLines (snap, cols) {
     }
     l.add(fit(clean(c.state, 12), w.state), c.state === 'blocked' ? YELLOW : DIM).add('  ')
     const warn = warning(c)
+    const t = title(c)
+    if (t) {
+      const rest = Math.max(0, cols - l.used - (warnW ? warnW + 2 : 0))
+      const w = Math.min(strWidth(t), c.summary ? Math.ceil(rest / 2) - 3 : rest)
+      if (w >= 8) l.add(fit(t, w), BOLD).add(c.summary ? ' · ' : '', GREY)
+    }
     l.add(fit(clean(c.summary ?? '', 140), Math.max(0, cols - l.used - (warnW ? warnW + 2 : 0))))
     if (warn) l.add('  ').add(warn, YELLOW)
     return l.toString()

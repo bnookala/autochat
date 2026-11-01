@@ -70,6 +70,18 @@ test('peer text is plain: escape sequences, control chars and bidi overrides nev
   assert.match(empty, /0 agents · 0 open threads/)
 })
 
+test('the board shows a card\'s title when its name doesn\'t already spell it (#66)', () => {
+  const snap = structuredClone(fixture)
+  snap.agents[0].title = 'Shout support for the greeter'
+  snap.agents[1].title = 'claude greeting'
+  snap.agents[2].title = 'Docs pass'
+  snap.agents[2].summary = null
+  const lines = plainLines(renderAgents(snap, 140, 40).lines)
+  assert.match(lines[1], /^ ● copilot-greeting .* editing {4}Shout support[^·]* · Adding shout\(\)/, 'up to half the room a summary has')
+  assert.match(lines[2], /^ ● claude-greeting .* editing {4}Moving greeting/, 'the slug of its title is its name')
+  assert.match(lines[3], /^ ○ gemini-docs .* exploring {2}Docs pass$/)
+})
+
 async function host (t, opts = {}) {
   const acks = []
   const room = new AgentRoom({ human: 'stormy-newt-59', onAck: () => acks.push(Date.now()), ...opts })
