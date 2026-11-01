@@ -242,8 +242,9 @@ test('two autochat mcp processes coordinate through the daemon: overlap → ques
   }
   assert.equal(pong?.agentRoom, true)
 
-  const A = mcpProcess(wtA, 'copilot', env)
-  const B = mcpProcess(wtB, 'claude', env)
+  // Named as before #66 (names now come from titles: greeting-feat-a, greeting-feat-b).
+  const A = mcpProcess(wtA, 'copilot', { ...env, AUTOCHAT_AGENT_NAME: 'copilot-greeting' })
+  const B = mcpProcess(wtB, 'claude', { ...env, AUTOCHAT_AGENT_NAME: 'claude-greeting' })
   t.after(() => { A.child.kill('SIGKILL'); B.child.kill('SIGKILL') })
 
   // A is a legacy client, B a modern one.
@@ -257,6 +258,7 @@ test('two autochat mcp processes coordinate through the daemon: overlap → ques
   const a0 = await A.tool('catch_up')
   assert.equal(a0.tier, 'local')
   assert.equal(a0.you.name, 'copilot-greeting', 'repo without a remote: local/<repository directory>')
+  assert.equal(a0.you.title, 'greeting@feat-a', 'no session title: <repo name>@<branch>')
   assert.deepEqual([a0.you.repo, a0.you.branch, a0.you.worktree], ['local/greeting', 'feat-a', 'wt-a'])
   const b0 = await B.tool('catch_up', {}, { meta: MODERN })
   assert.equal(b0.you.name, 'claude-greeting')
