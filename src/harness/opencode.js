@@ -3,14 +3,17 @@ import path from 'node:path'
 import { isValidSessionId } from '../paths.js'
 import { sanitize } from '../protocol.js'
 import { focusOrigin } from '../launcher.js'
-import { readText, planned, tilde, exists, isDir, isObj, shq } from './util.js'
-import { jsonServer, detectBy, child, argsFor } from './mcp-config.js'
+import { instructions } from '../agent-client.js'
+import { readText, readJson, writeFileSafely, planned, tilde, exists, isDir, isObj, same, shq } from './util.js'
+import { SERVER, detectBy, argsFor, commandValid } from './mcp-config.js'
+import { jsonSet, jsonDelete, jsonPush, jsonPull, parseJsonc } from './json-edit.js'
 import { byTrigger, modesOf, originFrom } from './event.js'
 
 // opencode. Hooks: a plugin of our own, $XDG_CONFIG_HOME/opencode/plugin/autochat.js
 // (~/.config/opencode/plugin/), made from opencode-plugin.js: it forwards events to
 // `autochat hook --harness opencode <event>`, so normalize() and the trigger rule stay here. MCP
-// servers go in ~/.config/opencode/opencode.json(c).
+// servers go in ~/.config/opencode/opencode.json(c), with the room's etiquette in a file of our own
+// next to it, ~/.config/opencode/autochat.md, listed under `instructions` (see below).
 //
 // Verified against opencode 1.2.6 (test/fixtures/opencode/, recorded from the real binary):
 // - It loads every {plugin,plugins}/*.{js,ts} in its config dirs at startup and calls each export
@@ -234,30 +237,197 @@ function autonomy (payload, session) {
   return a === 'interactive' && session.headless === null && headlessCounts ? 'unknown' : a
 }
 
-// --- the adapter ------------------------------------------------------------------------------------
+// --- MCP registration and the etiquette ---------------------------------------------------------------
 
-// opencode times MCP requests out after 5 s by default; `wait` blocks for up to 50 s.
+// opencode's config schema says MCP requests time out after 5 s by default, but 1.2.6 never uses
+// that: without `timeout`, connecting and listing tools time out after 30 s, and tool calls after
+// the MCP SDK's 60 s. `timeout` sets all of them. `wait` blocks for up to 50 s, so anything under
+// that would cut it short; 60 s is the SDK's default, written out.
 const OPENCODE_TIMEOUT_MS = 60000
+const SCHEMA = 'https://opencode.ai/config.json'
 
-// Servers keyed by name under `mcp`: what opencode 1.x reads, and newer versions still accept.
-const mcp = jsonServer({
-  id: 'opencode',
-  file: (ctx) => {
-    const dir = configDir(ctx)
-    const jsonc = path.join(dir, 'opencode.jsonc')
-    return !exists(path.join(dir, 'opencode.json')) && exists(jsonc) ? jsonc : path.join(dir, 'opencode.json')
+// opencode 1.2.6 never passes MCP server instructions on to the model: it never asks the server
+// for them. It does put the files its config lists under `instructions` into the system prompt
+// ("Instructions from: <path>"), the global config's and the project's alike. So setup --agents
+// writes the room's etiquette, with opencode's names for the tools (autochat_catch_up, …), to a
+// file of its own next to opencode.json, and lists it there by its absolute path: opencode globs an
+// absolute entry's file name in its directory, and resolves a relative one from the project.
+export const ETIQUETTE = 'autochat.md'
+const ETIQUETTE_HEAD = "<!-- autochat's etiquette for opencode"
+export const etiquetteFile = (ctx) => path.join(configDir(ctx), ETIQUETTE)
+const isEtiquette = (text) => typeof text === 'string' && text.startsWith(ETIQUETTE_HEAD)
+
+/** The etiquette file: the instructions `autochat mcp` serves, with opencode's tool names. */
+export function etiquetteSource () {
+  return `${ETIQUETTE_HEAD}: \`autochat setup --agents\` writes this file, and \`autochat uninstall\` removes it. -->
+## autochat agent room
+${instructions((tool) => `${SERVER}_${tool}`)}
+`
+}
+
+// An `instructions` entry that names our file (opencode expands a leading `~/`).
+function lists (entry, file, ctx) {
+  if (typeof entry !== 'string') return false
+  const p = entry.startsWith('~/') ? path.join(ctx.home, entry.slice(2)) : entry
+  return path.isAbsolute(p) && path.resolve(p) === path.resolve(file)
+}
+
+// MCP servers go in ~/.config/opencode/opencode.json(c), keyed by name under `mcp`: what opencode
+// 1.x reads, and newer versions still accept.
+function configFile (ctx) {
+  const dir = configDir(ctx)
+  const jsonc = path.join(dir, 'opencode.jsonc')
+  return !exists(path.join(dir, 'opencode.json')) && exists(jsonc) ? jsonc : path.join(dir, 'opencode.json')
+}
+const serverEntry = (ctx) => ({ type: 'local', command: [ctx.node, ...argsFor('opencode', ctx)], enabled: true, timeout: OPENCODE_TIMEOUT_MS })
+
+// readJson(), plus `config`: what opencode reads in the file, which may have comments and trailing
+// commas that autochat won't rewrite (undefined when it isn't even that).
+function readConfig (file) {
+  const r = readJson(file)
+  if (r.root !== undefined) return { ...r, config: r.root }
+  try {
+    const config = parseJsonc(r.text)
+    return { ...r, config: isObj(config) ? config : undefined }
+  } catch {
+    return { ...r, config: undefined }
+  }
+}
+
+// An entry that's autochat's alone: our server under `mcp`, our file in `instructions`, or the
+// $schema autochat writes into a config it makes. A config of nothing else is one autochat made.
+function autochats (key, value, notes, ctx) {
+  if (key === '$schema') return value === SCHEMA
+  if (key === 'mcp') return isObj(value) && Object.keys(value).length > 0 && Object.keys(value).every(k => k === SERVER)
+  if (key === 'instructions') return Array.isArray(value) && value.length > 0 && value.every(e => lists(e, notes, ctx))
+  return false
+}
+const autochatMade = (root, notes, ctx) => isObj(root) && (isObj(root.mcp) || Array.isArray(root.instructions)) && Object.entries(root).every(([k, v]) => autochats(k, v, notes, ctx))
+
+// opencode.json is edited as text (json-edit.js), so everything but our two entries stays
+// byte-for-byte: the server under `mcp`, and the etiquette file at the end of `instructions`.
+function computeMcp (ctx) {
+  const file = configFile(ctx)
+  const notes = etiquetteFile(ctx)
+  const { text, root, config } = readConfig(file)
+  const want = serverEntry(ctx)
+  const etiquette = etiquetteSource()
+  const had = readText(notes)
+  const manual = (reason, after) => ({ id: 'opencode', action: 'manual', file, reason, snippet: { mcp: { [SERVER]: want }, instructions: [notes] }, ...(after && { after }) })
+  if (had !== null && !isEtiquette(had)) return manual(`${tilde(notes, ctx)} isn't autochat's, so autochat won't overwrite it (move it aside and rerun)`)
+  if (config?.mcp !== undefined && !isObj(config.mcp)) return manual(`"mcp" in ${tilde(file, ctx)} isn't an object`)
+  if (config?.instructions !== undefined && !Array.isArray(config.instructions)) return manual(`"instructions" in ${tilde(file, ctx)} isn't a list`)
+  const have = config?.mcp?.[SERVER]
+  // Settings the user added to our entry stay.
+  const merged = isObj(have) ? { ...have, ...want } : want
+  const registered = isObj(have) && same(merged, have)
+  const listed = !!config?.instructions?.some(e => lists(e, notes, ctx))
+  const current = had === etiquette
+  if (registered && listed && current) return { id: 'opencode', action: 'none', file }
+  // A config with comments isn't rewritten. Once the user has added both entries to it, the
+  // etiquette file is all that's left to write.
+  if (root === undefined && !(registered && listed)) return manual(`${tilde(file, ctx)} isn't plain JSON (comments?), so autochat won't rewrite it`, `Then rerun autochat setup --agents, which writes ${tilde(notes, ctx)}.`)
+  let next = text
+  if (root === null) {
+    next = JSON.stringify({ $schema: SCHEMA, mcp: { [SERVER]: want }, instructions: [notes] }, null, 2) + '\n'
+  } else if (root) {
+    if (!registered) next = jsonSet(next, ['mcp', SERVER], merged)
+    if (!listed) next = jsonPush(next, ['instructions'], notes)
+  }
+  const entry = [
+    !registered && `"${SERVER}": ${JSON.stringify(want)}`,
+    !listed && `"instructions": [${config?.instructions?.length ? '…, ' : ''}${JSON.stringify(tilde(notes, ctx))}]`,
+    !current && `${tilde(notes, ctx)}: the agent-room etiquette (opencode doesn't show MCP server instructions to the model)`
+  ].filter(Boolean).join('\n')
+  return {
+    id: 'opencode',
+    action: have !== undefined || listed || had !== null ? 'update' : 'add',
+    file,
+    entry,
+    write: () => {
+      // The file first: opencode may read the config at any moment.
+      if (!current) writeOwn(notes, etiquette)
+      // The backup keeps the user's config: one autochat made has nothing of theirs.
+      if (next !== text) writeFileSafely(file, next, { backup: !autochatMade(root, notes, ctx) })
+    }
+  }
+}
+
+// Our two entries go, and the etiquette file if it's ours. So does an `mcp` or `instructions` they
+// leave empty, unless the file had it before autochat first wrote to it (its .autochat.bak), and so
+// does opencode.json itself when autochat made it and nothing else is left.
+function uncomputeMcp (ctx) {
+  const file = configFile(ctx)
+  const notes = etiquetteFile(ctx)
+  const { text, root, config } = readConfig(file)
+  const ours = isEtiquette(readText(notes))
+  const backup = readJson(file + '.autochat.bak')
+  // A backup holding nothing but autochat's entries was taken after autochat made the file.
+  const userHad = (key) => isObj(backup.root) && Object.hasOwn(backup.root, key) && !autochats(key, backup.root[key], notes, ctx)
+  const prune = (keys) => !userHad(keys[0])
+  let next = text
+  if (root) {
+    if (isObj(root.mcp) && Object.hasOwn(root.mcp, SERVER)) next = jsonDelete(next, ['mcp', SERVER], { prune })
+    const entries = Array.isArray(root.instructions) ? root.instructions : []
+    for (let i = entries.length - 1; i >= 0; i--) if (lists(entries[i], notes, ctx)) next = jsonPull(next, ['instructions'], i, { prune })
+  }
+  const edited = next !== text
+  // Our entries in a config with comments: the user added them, and takes them out.
+  const byHand = root === undefined && (config?.mcp?.[SERVER] !== undefined || !!config?.instructions?.some?.(e => lists(e, notes, ctx)))
+  const note = byHand ? `${tilde(file, ctx)} isn't plain JSON, so take autochat's entries out of it yourself` : undefined
+  if (!edited && !ours) return note ? { id: 'opencode', action: 'manual', file, reason: note } : { id: 'opencode', action: 'none', file }
+  const made = backup.text === null || autochatMade(backup.root, notes, ctx)
+  const leftover = edited && made && Object.entries(JSON.parse(next)).every(([k, v]) => k === '$schema' && v === SCHEMA)
+  return {
+    id: 'opencode',
+    action: 'remove',
+    file: edited ? file : notes,
+    what: edited && ours ? "the autochat MCP server and autochat's etiquette" : ours ? "autochat's etiquette" : undefined,
+    also: edited && ours ? [notes] : [],
+    ...(note && { note }),
+    write: () => {
+      if (leftover) fs.rmSync(file, { force: true })
+      // No backup now: one taken here would hold our entries, not what the file had before them.
+      else if (edited) writeFileSafely(file, next, { backup: false })
+      if (ours) fs.rmSync(notes, { force: true })
+    }
+  }
+}
+
+// How the etiquette reaches the model, for doctor.
+function etiquetteStatus (ctx, config) {
+  const notes = etiquetteFile(ctx)
+  const text = readText(notes)
+  const where = tilde(notes, ctx)
+  if (!config.instructions?.some?.(e => lists(e, notes, ctx))) {
+    return { shown: false, note: 'opencode doesn\'t show MCP server instructions to the model, and autochat\'s etiquette isn\'t listed under "instructions", so opencode agents get the tool descriptions alone (run autochat setup --agents)' }
+  }
+  if (text === null) return { shown: false, file: notes, note: `${where} is listed under "instructions", but missing (run autochat setup --agents)` }
+  if (!isEtiquette(text)) return { shown: false, file: notes, note: `${where} is listed under "instructions", but isn't autochat's etiquette (move it aside, then run autochat setup --agents)` }
+  if (text !== etiquetteSource()) return { shown: false, file: notes, note: `${where} holds an older etiquette (run autochat setup --agents)` }
+  return { shown: true, file: notes, note: `the etiquette reaches the model from ${where}, listed under "instructions" (opencode doesn't show MCP server instructions)` }
+}
+
+const mcp = {
+  file: configFile,
+  where: (ctx) => tilde(configFile(ctx), ctx),
+  status (ctx) {
+    const { config } = readConfig(configFile(ctx))
+    const have = isObj(config?.mcp) ? config.mcp[SERVER] : null
+    if (!isObj(have)) return { registered: false }
+    const [command, ...args] = Array.isArray(have.command) ? have.command : [have.command]
+    return { registered: true, valid: commandValid(command, args), command: [command, ...args].join(' '), etiquette: etiquetteStatus(ctx, config) }
   },
-  servers: (root, create) => child(root, 'mcp', create),
-  entry: (ctx) => ({ type: 'local', command: [ctx.node, ...argsFor('opencode', ctx)], enabled: true, timeout: OPENCODE_TIMEOUT_MS }),
-  initial: () => ({ $schema: 'https://opencode.ai/config.json' })
-})
+  plan: (ctx) => planned(computeMcp, ctx),
+  unplan: (ctx) => planned(uncomputeMcp, ctx)
+}
 
 export default {
   id: 'opencode',
   name: 'opencode',
   modes: ['build', 'plan', 'headless'],
   trigger: ['headless'],
-  detect: (ctx) => ({ ...detectBy('opencode', mcp.file)(ctx), paths: { config: mcp.file(ctx), plugin: pluginFile(ctx) } }),
+  detect: (ctx) => ({ ...detectBy('opencode', mcp.file)(ctx), paths: { config: mcp.file(ctx), plugin: pluginFile(ctx), etiquette: etiquetteFile(ctx) } }),
   hooksNote: "New opencode processes load the plugin; ones already running (a TUI, opencode serve) don't until they restart.",
   planHooks: (ctx) => planned(computeHooks, ctx),
   unplanHooks: (ctx) => planned(uncomputeHooks, ctx),

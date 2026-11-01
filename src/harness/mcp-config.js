@@ -10,7 +10,9 @@ import { readJson, writeJson, planned, tilde, exists, isObj, same } from './util
 //   copilot   $COPILOT_HOME/mcp-config.json   mcpServers.autochat = {type:"local", command, args, tools:["*"]}
 //   claude    claude mcp add --scope user autochat -- <node> <bin> mcp --harness claude
 //   gemini    ~/.gemini/settings.json          mcpServers.autochat = {command, args}
-//   opencode  ~/.config/opencode/opencode.json mcp.autochat = {type:"local", command:[…], enabled:true, timeout}
+//   opencode  ~/.config/opencode/opencode.json mcp.autochat = {type:"local", command:[…], enabled:true, timeout},
+//             and the etiquette file ~/.config/opencode/autochat.md at the end of `instructions`
+//             (edited as text, src/harness/opencode.js)
 //   codex     $CODEX_HOME/config.toml          [mcp_servers.autochat] command, args
 //   pi        no MCP: autochat's pi extension registers the tools itself (src/harness/pi.js)
 

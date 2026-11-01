@@ -365,12 +365,29 @@ export function liveSessions ({ idleMs = 45000, windowMs = 30 * 60 * 1000, now =
 
 // --- the adapter ------------------------------------------------------------------------------------
 
-const mcp = jsonServer({
+const server = jsonServer({
   id: 'copilot',
   file: (ctx) => path.join(ctx.copilotHome, 'mcp-config.json'),
   servers: (root, create) => child(root, 'mcpServers', create),
   entry: (ctx) => ({ type: 'local', command: ctx.node, args: argsFor('copilot', ctx), tools: ['*'] })
 })
+
+// Copilot CLI puts a server's instructions in the system prompt only for the servers on its
+// allowlist, or with --allow-all-mcp-server-instructions. In 1.0.102 the allowlist is built in
+// (github-mcp-server, bluebird, computer-use), and nothing persistent adds to it: no config key,
+// environment variable or `mcp add` option. So setup can't, and doctor says how instead.
+const ETIQUETTE_STATUS = {
+  shown: null,
+  note: "autochat's instructions reach the model only when Copilot CLI runs with --allow-all-mcp-server-instructions (its allowlist is built in, and no setting adds to it); without it, Copilot agents get the tool descriptions alone. To always pass it: alias copilot='copilot --allow-all-mcp-server-instructions'"
+}
+
+const mcp = {
+  ...server,
+  status (ctx) {
+    const st = server.status(ctx)
+    return st.registered ? { ...st, etiquette: ETIQUETTE_STATUS } : st
+  }
+}
 
 const adapter = {
   id: 'copilot',
