@@ -44,31 +44,33 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private func render() {
         guard let button = item.button else { return }
         let state = model.iconState
-        let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
+        let badge = model.badgeCount
         var title = ""
-        var image: NSImage?
+        var description = "AutoChat"
         var tooltip = "AutoChat"
         switch state {
         case .disconnected:
-            image = Symbols.image("bubble.left.and.bubble.right", description: "AutoChat (not connected)")
+            description = "AutoChat (not connected)"
             tooltip = "AutoChat: not connected to autochat"
         case .lounge:
-            image = Symbols.image("bubble.left.and.bubble.right", description: "AutoChat")
             tooltip = "AutoChat: waiting for autopilot"
         case .autopilot:
-            image = Symbols.image("bubble.left.and.bubble.right.fill", description: "AutoChat: autopilot is on")
+            description = "AutoChat: autopilot is on"
             tooltip = "Autopilot is on. Click to chat"
         case .needsYou:
-            image = Symbols.image("bubble.left.and.exclamationmark.bubble.right.fill", "exclamationmark.bubble.fill", description: "AutoChat: Copilot needs you")
+            description = "AutoChat: Copilot needs you"
             tooltip = "Copilot needs you"
         case let .countdown(seconds):
-            image = Symbols.image("bubble.left.and.bubble.right.fill", description: "AutoChat: back to reality soon")
+            description = "AutoChat: back to reality soon"
             title = " \(seconds)"
             tooltip = CountdownClock.title(remaining: seconds)
         }
-        let symbol = image?.withSymbolConfiguration(config)
-        symbol?.isTemplate = true
-        button.image = symbol
+        // The badge: agents blocked on you (the attention queue's urgent items).
+        if badge > 0 {
+            description += ", \(AttentionRules.badgeTooltip(badge).lowercased())"
+            tooltip = "\(AttentionRules.badgeTooltip(badge)) · \(tooltip)"
+        }
+        button.image = StatusIcon.image(for: state, badge: badge, description: description)
         button.appearsDisabled = state == .disconnected
         button.toolTip = tooltip
         if title.isEmpty {
@@ -126,6 +128,19 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         }
         menu.addItem(info(daemonLine, symbol: "server.rack"))
         if let handle = model.snapshot?.me?.handle { menu.addItem(info("You are \(handle)", symbol: "person.crop.circle")) }
+
+        // The attention queue: jump to an agent from here too.
+        let queue = model.attention
+        if !queue.isEmpty {
+            menu.addItem(.separator())
+            menu.addItem(info("Your agents: \(AttentionRules.counts(queue))", symbol: "tray.full"))
+            for item in queue.prefix(AttentionRules.panelRows + 2) {
+                let place = AttentionRules.place(item).map { " · \($0)" } ?? ""
+                let line = entry("\(AttentionRules.title(item))\(place)", symbol: AttentionStyle.symbol(item.kind)) { [model] in model.jump(to: item) }
+                line.toolTip = "Jump to it: \(AttentionRules.accessibilityLabel(item))"
+                menu.addItem(line)
+            }
+        }
 
         if model.connected, model.snapshot?.countdown != nil {
             menu.addItem(entry("Return to Reality Now", symbol: "sunrise") { [model] in model.perform(.returnNow) })

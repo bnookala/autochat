@@ -4,16 +4,28 @@ A native macOS menu bar app for autochat. No terminal window opens on every auto
 and you get a clean closeout when it ends.
 
 - The **status item** (💬 in the menu bar) shows autochat's state: outline in the lounge,
-  filled while you're on autopilot, a `!` bubble when Copilot needs you, and the seconds
-  left during the exit countdown. **Left-click** opens the chat. **Right-click** (or
-  ⌥-click) opens the menu: Open Chat, the current room, Join Now, Pause autochat,
-  Launch at Login, Set autochat Location…, and Quit.
+  filled while you're on autopilot, and the seconds left during the exit countdown. A
+  **badge** counts the agents blocked on you (from an older CLI without the attention
+  queue, a `!` bubble when Copilot needs you). **Left-click** opens the chat.
+  **Right-click** (or ⌥-click) opens the menu: Open Chat, the current room, your agents'
+  attention items (choose one to jump to it), Join Now, Pause autochat, Launch at Login,
+  Set autochat Location…, and Quit.
 - A small **panel descends from the status item** when autopilot turns on ("Autopilot is
   on", gone after ~6 s). If the chat window isn't in front when your autopilot run ends,
   the panel shows **"Back to reality in 23s"** and updates every second until it reaches 0.
   It has Return Now and Open Chat buttons. The panel never takes focus.
+- The **attention queue** (issue #37): presence is separate from attention. Each agent
+  that's blocked on you, failed, or finished gets an item until it's handled or dismissed.
+  When an agent is blocked on you, the panel comes down with the whole queue, blocked
+  first, each with **Jump to** (focus that agent's terminal) and **×** (dismiss). Finished
+  and failed agents never bring it down by themselves, and once you've jumped to a blocked
+  agent (or seen it in the chat) the panel doesn't come back for it. When the last of
+  several agents stops, the countdown panel lists the queue: autochat doesn't pick one to
+  focus, you do.
 - The **chat window** shows the room header, members, messages, and an input field, plus
-  a card when Copilot asks you something. During the 30 s exit countdown it shows a slim,
+  a card when Copilot asks you something. A one-line **attention strip** under the members
+  (and at the top of the lounge) shows the next item with Jump to and ×; **+N** expands it
+  to the whole queue. It never covers the chat. During the 30 s exit countdown the window shows a slim,
   **non-blocking** strip above the input, so you can keep typing. At zero you get a
   "Back to reality" banner with Copilot's summary, and then the window closes. Closing
   the window only hides it.
@@ -91,7 +103,14 @@ fall back to their old `LOLCHAT_*` names.
 on the same socket path, so you can work on the app without P2P or Copilot. It plays a
 scripted scenario: lounge → room with members and messages → a Copilot request → a 30 s
 countdown → the reality banner → lounge. It answers `say` (say "ping" and a bot replies
-"pong"), `returnNow`, `leaveRoom`, `jumpToCopilot`, `dismissRequest`, and `joinNow`.
+"pong"), `returnNow`, `leaveRoom`, `jumpToCopilot`, `dismissRequest`, `joinNow`, `jumpTo`,
+and `dismissAttention`, and its snapshots carry the attention queue like the daemon's.
+
+`--scenario attention` runs four agents over three harnesses at once: Codex finishes,
+Claude Code and Copilot get blocked on you (Copilot's with the request card), and another
+Claude Code session fails. **Jump to** a blocked one and it carries on two seconds later,
+then finishes. When the last one stops, the countdown panel lists the queue, and at zero
+nothing takes focus.
 
 `--scenario agents` plays the local agent room instead (and stays in the lounge): three
 agents over two harnesses, one of which leaves; an overlap; a thread that's opened,
@@ -109,7 +128,7 @@ node macos/dev/mock-daemon.mjs --scenario full --loop
 AUTOCHAT_HOME=$PWD/.dev-home macos/.build/debug/AutoChat
 ```
 
-Options: `--scenario full|lounge|room|request|countdown|agents`, `--countdown <s>`,
+Options: `--scenario full|lounge|room|request|countdown|agents|attention`, `--countdown <s>`,
 `--speed <x>`, `--loop`, `--ack`, `--sock <path>`, `--quiet`. The mock also accepts a
 leading `daemon` argument and reads `AUTOCHAT_MOCK_SCENARIO`, `AUTOCHAT_MOCK_COUNTDOWN`,
 `AUTOCHAT_MOCK_SPEED`, and `AUTOCHAT_MOCK_ACK`. That means the app can spawn it like the real CLI, which is a good
@@ -144,9 +163,12 @@ cd macos && AUTOCHAT_E2E_HOME=$E2E swift test --filter RealDaemon
 ```
 
 This renders the descending panel (autopilot, countdown, request), the chat window
-(countdown, Copilot request, closeout, and the Lounge tab with the Agents switch), and the
+(countdown, Copilot request, closeout, and the Lounge tab with the Agents switch), the
 Agents tab (`agents-board`, `agents-thread`, `agents-intervene`, and the acknowledgement
-sheet `agents-ack`) from fixture snapshots to PNGs, in light and dark (`-dark`) variants.
+sheet `agents-ack`), and the attention queue (`status-item-badge`, `status-panel-attention`,
+`status-panel-countdown-queue`, `chat-window-attention`, `chat-window-attention-expanded`,
+`chat-window-lounge-attention`) from fixture snapshots to PNGs, in light and dark (`-dark`)
+variants.
 It draws offscreen windows with AppKit's bitmap caching, so it doesn't need Screen
 Recording permission.
 

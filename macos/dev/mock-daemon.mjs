@@ -5,7 +5,7 @@
 // `agents.ack` / `agents.say`), over the same unix socket path as src/paths.js sockPath()
 // (respects AUTOCHAT_HOME). No dependencies.
 //
-//   node macos/dev/mock-daemon.mjs [daemon] [--scenario full|lounge|room|request|countdown|agents]
+//   node macos/dev/mock-daemon.mjs [daemon] [--scenario full|lounge|room|request|countdown|agents|attention]
 //        [--countdown 30] [--speed 1] [--loop] [--ack] [--sock PATH] [--quiet]
 //
 // The leading `daemon` argument is accepted and ignored, so the app can spawn this file
@@ -17,6 +17,11 @@
 // harnesses (one leaves), an overlap, a thread that's opened, discussed and resolved with a
 // decision, main-stream notes and sys lines, and a second thread that stays open. `--ack`
 // starts with the intervention warning already acknowledged.
+//
+// `--scenario attention` (issue #37) runs four agents over three harnesses at once: one finishes,
+// two get blocked on you (one with Copilot's question), one fails. Jump to a blocked one and it
+// carries on a moment later, then finishes; when the last one stops, the countdown lists the
+// queue, and nothing takes focus. Every snapshot carries `attention` like the real daemon's.
 import net from 'node:net'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -68,6 +73,15 @@ const CWD = '~/code/api-server'
 const SUMMARY = 'Refactored the API client onto the new retry helper and updated 14 tests. All tests pass.'
 const REQUEST = { sid: 'mock-session-1', cwd: CWD, title: 'Copilot needs you', message: 'Run the database migrations against staging before continuing? (yes / no / skip)', resolved: false }
 
+// The agents the attention queue is about. `main` is the Copilot session every scenario uses.
+const AGENTS = {
+  main: { harness: 'copilot', sid: 'mock-session-1', cwd: CWD, name: 'Copilot CLI' },
+  web: { harness: 'claude', sid: 'e5f6a7b8', cwd: '~/code/web', name: 'Claude Code' },
+  sdk: { harness: 'codex', sid: '9a8b7c6d', cwd: '~/code/sdk', name: 'Codex' },
+  docs: { harness: 'claude', sid: '0c1d2e3f', cwd: '~/code/docs-site', name: 'Claude Code' }
+}
+const HOTFIX = 'Which branch should the hotfix go on? [main / release-2.3]'
+
 const s = {
   phase: 'lounge',
   room: null,
@@ -104,6 +118,7 @@ function snapshot () {
     countdown: s.countdown && { ...s.countdown, remaining: Math.max(0, Math.ceil((s.countdown.endsAt - now) / 1000)) },
     banner: s.banner,
     agents: agentsSummary(),
+    attention: attentionList(),
     mock: true
   }
 }
@@ -151,9 +166,11 @@ function joinPeers () {
   sys(`joined a live room hosted by ${PEERS.jade.handle}`)
 }
 
-function startCountdown (reason = 'complete') {
+function startCountdown (reason = 'complete', { summary = SUMMARY, cwd = CWD } = {}) {
   s.sessions = []
-  s.countdown = { endsAt: Date.now() + countdownSecs * 1000, total: countdownSecs, reason, summary: SUMMARY, cwd: CWD }
+  // Like the core: the run that just ended is in the queue (and, with one agent, handled at zero).
+  if (!several) attend('main', 'finished', 'Copilot CLI finished', summary)
+  s.countdown = { endsAt: Date.now() + countdownSecs * 1000, total: countdownSecs, reason, summary, cwd }
   sys(`your copilot finished. back to reality in ${countdownSecs}s (keep chatting)`)
   clearTimeout(countdownTimer)
   countdownTimer = setTimeout(expire, countdownSecs * 1000)
@@ -172,6 +189,9 @@ function expire () {
   s.room = null
   s.members = []
   s.request = null
+  // One agent: focus goes back to it, which handles its item. Several: the queue takes over.
+  if (several) log('back to reality: several agents, so nothing takes focus')
+  else unattend('main')
   log('back to reality')
   afterBanner()
 }
@@ -192,6 +212,7 @@ function runScenario (name, delay = 0) {
   const t = (sec, fn) => at(delay + sec, fn)
   if (name === 'lounge') return
   if (name === 'agents') return runAgents(t)
+  if (name === 'attention') return runAttention(t)
   if (name === 'room' || name === 'request' || name === 'countdown') {
     enterRoom()
     joinPeers()
@@ -200,6 +221,7 @@ function runScenario (name, delay = 0) {
     push({ kind: 'chat', from: ME.handle, text: 'lol same. it keeps renaming things back and forth', color: ME.color, you: true })
     if (name === 'request') {
       s.request = { ...REQUEST }
+      attend('main', 'blocked', REQUEST.title, REQUEST.message)
       setMembers()
     }
     if (name === 'countdown') startCountdown()
@@ -215,6 +237,7 @@ function runScenario (name, delay = 0) {
     if (s.phase !== 'room') return
     log('copilot request')
     s.request = { ...REQUEST }
+    attend('main', 'blocked', REQUEST.title, REQUEST.message)
     s.sessions = [{ sid: 'mock-session-1', state: 'needed', cwd: CWD }]
     setMembers()
     changed()
@@ -223,6 +246,7 @@ function runScenario (name, delay = 0) {
   t(18, () => {
     if (!s.request) return
     s.request = { ...s.request, resolved: true }
+    unattend('main')
     s.sessions = [{ sid: 'mock-session-1', state: 'running', cwd: CWD }]
     setMembers()
     changed()
@@ -232,6 +256,81 @@ function runScenario (name, delay = 0) {
   t(28, () => { if (s.phase === 'room') { log('copilot finished: countdown'); startCountdown() } })
   t(28 + countdownSecs * 0.3, () => { if (s.countdown) chat(PEERS.brisk, 'gl out there') })
   t(28 + countdownSecs * 0.6, () => { if (s.countdown) chat(PEERS.jade, 'see you on the other side') })
+}
+
+// --- attention queue (issue #37) ---------------------------------------------------------
+
+// One item per agent, its latest; urgent first. Same shape and rules as the core's.
+const queue = new Map()
+const working = new Set()
+const RANK = { blocked: 0, failed: 1, finished: 2 }
+let attentionSeq = 0
+let several = false
+
+function attend (key, kind, title, summary = null) {
+  const a = AGENTS[key]
+  const prev = queue.get(key)
+  const same = prev?.kind === kind
+  queue.set(key, { id: same ? prev.id : String(++attentionSeq), harness: a.harness, sid: a.sid, cwd: a.cwd, kind, title, summary, at: same ? prev.at : Date.now() })
+  changed()
+}
+
+function unattend (key) {
+  if (queue.delete(key)) changed()
+}
+
+const attentionList = () => [...queue.values()].sort((a, b) => RANK[a.kind] - RANK[b.kind] || a.at - b.at)
+const itemKey = (id) => [...queue.entries()].find(([, a]) => a.id === String(id))?.[0]
+
+function agentSessions () {
+  s.sessions = [...working].map(k => ({ sid: AGENTS[k].sid, state: queue.get(k)?.kind === 'blocked' ? 'needed' : 'running', cwd: AGENTS[k].cwd, harness: AGENTS[k].harness }))
+}
+
+function agentBlocked (key, title, message) {
+  if (!working.has(key)) return
+  log(`${key} is blocked: ${title}`)
+  attend(key, 'blocked', title, message)
+  if (key === 'main') { s.request = { sid: AGENTS.main.sid, cwd: AGENTS.main.cwd, title, message, resolved: false }; setMembers() }
+  agentSessions()
+  changed()
+}
+
+// You answered it (Jump to): it carries on, then finishes a little later.
+function agentCarriesOn (key) {
+  if (queue.get(key)?.kind !== 'blocked') return
+  log(`${key} carries on`)
+  unattend(key)
+  if (key === 'main' && s.request) { s.request = null; setMembers() }
+  agentSessions()
+  changed()
+  at(4, () => agentEnds(key, 'finished', `${AGENTS[key].name} finished`, key === 'main' ? SUMMARY : 'Ran the migration on staging; all 212 web tests pass.'))
+}
+
+function agentEnds (key, kind, title, summary) {
+  if (!working.delete(key)) return
+  log(`${key} ${kind}`)
+  attend(key, kind, title, summary)
+  agentSessions()
+  // The countdown only runs when the last agent stops.
+  if (!working.size && s.phase === 'room') startCountdown(kind === 'failed' ? 'failed' : 'complete', { summary, cwd: AGENTS[key].cwd })
+  changed()
+}
+
+function runAttention (t) {
+  several = true
+  enterRoom()
+  joinPeers()
+  chat(PEERS.jade, "anyone else's copilot rewriting their whole test suite rn")
+  chat(PEERS.brisk, 'mine is 40 tool calls deep into a yaml file')
+  push({ kind: 'chat', from: ME.handle, text: 'four agents going at once. what could go wrong', color: ME.color, you: true })
+  for (const k of Object.keys(AGENTS)) working.add(k)
+  agentSessions()
+  changed()
+  t(2, () => agentEnds('sdk', 'finished', 'Codex finished', 'Bumped the SDK to 4.2 and fixed the three type errors it caused.'))
+  t(4, () => agentBlocked('web', 'Permission needed', 'Bash: npm run migrate -- --env staging'))
+  t(7, () => agentBlocked('main', 'Copilot has a question for you', HOTFIX))
+  t(10, () => agentEnds('docs', 'failed', 'Claude Code stopped on an error', 'API Error: Rate limit reached'))
+  t(12, () => chat(PEERS.jade, 'lol mine asked about migrations too'))
 }
 
 // --- agent room (issue #21) ------------------------------------------------------------
@@ -522,6 +621,21 @@ function command (msg, stream = 'lounge') {
     case 'jumpToCopilot':
       log('jumpToCopilot (would focus the Copilot terminal)')
       return { ok: true }
+    case 'jumpTo': {
+      const key = itemKey(msg.item)
+      if (!key) return { ok: false, error: 'unknown item' }
+      const a = queue.get(key)
+      log(`jumpTo ${a.id} (would focus ${a.harness} in ${a.cwd})`)
+      // Going to look handles a result; a blocked agent goes once it carries on.
+      if (a.kind === 'blocked') at(2, () => agentCarriesOn(key))
+      else unattend(key)
+      return { ok: true }
+    }
+    case 'dismissAttention': {
+      const key = itemKey(msg.item)
+      if (key) unattend(key)
+      return { ok: true }
+    }
     case 'dismissRequest':
       s.request = null
       if (s.phase === 'room') setMembers()
