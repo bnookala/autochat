@@ -1,7 +1,7 @@
 {
   "claude": "2.1.273",
-  "how": "claude -p \"…\" --permission-mode manual (Bash isn't allowed, so it asks; nobody answers in -p)",
-  "note": "Recorded from the real Claude Code with these hooks loaded via --settings and --setting-sources project,local, against a local stand-in for the Messages API. Paths scrubbed; env trimmed to what autochat reads.",
+  "how": "claude -p \"…\" --permission-mode manual --allowedTools \"Bash(echo autochat-check)\": the echo runs; `touch blocked.txt` isn't allowed, so it asks (PermissionRequest) and, with nobody to answer in -p, is denied at once",
+  "note": "Recorded from the real Claude Code 2.1.273, logged in with a claude.ai subscription, talking to the real API, with these hooks loaded via --settings and --setting-sources project,local and --strict-mcp-config. Paths scrubbed; env trimmed to what Claude Code sets for its hooks.",
   "events": [
     {
       "event": "SessionStart",
@@ -9,13 +9,14 @@
         "CLAUDECODE": "1",
         "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
         "CLAUDE_CODE_SESSION_ATTENDED": "0",
-        "CLAUDE_CODE_SESSION_ID": "097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4",
+        "CLAUDE_CODE_SESSION_ID": "38623aeb-12af-4e6b-a1c7-415de376c825",
         "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
-        "CLAUDE_CODE_CHILD_SESSION": "1"
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "96197"
       },
       "payload": {
-        "session_id": "097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4",
-        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4.jsonl",
+        "session_id": "38623aeb-12af-4e6b-a1c7-415de376c825",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/38623aeb-12af-4e6b-a1c7-415de376c825.jsonl",
         "cwd": "/Users/me/code/demo",
         "hook_event_name": "SessionStart",
         "source": "startup"
@@ -27,18 +28,19 @@
         "CLAUDECODE": "1",
         "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
         "CLAUDE_CODE_SESSION_ATTENDED": "0",
-        "CLAUDE_CODE_SESSION_ID": "097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4",
+        "CLAUDE_CODE_SESSION_ID": "38623aeb-12af-4e6b-a1c7-415de376c825",
         "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
-        "CLAUDE_CODE_CHILD_SESSION": "1"
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "96197"
       },
       "payload": {
-        "session_id": "097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4",
-        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4.jsonl",
+        "session_id": "38623aeb-12af-4e6b-a1c7-415de376c825",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/38623aeb-12af-4e6b-a1c7-415de376c825.jsonl",
         "cwd": "/Users/me/code/demo",
-        "prompt_id": "dda7210c-e652-412d-8c9c-0e5258807c9c",
+        "prompt_id": "845e32e6-04b0-4fc2-8132-60adf297ee6c",
         "permission_mode": "default",
         "hook_event_name": "UserPromptSubmit",
-        "prompt": "SCENARIO:perm make a file"
+        "prompt": "Use Bash to run `echo autochat-check`, then use Bash to run `touch blocked.txt`. Then say in one short sentence what happened."
       }
     },
     {
@@ -47,27 +49,96 @@
         "CLAUDECODE": "1",
         "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
         "CLAUDE_CODE_SESSION_ATTENDED": "0",
-        "CLAUDE_CODE_SESSION_ID": "097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4",
+        "CLAUDE_CODE_SESSION_ID": "38623aeb-12af-4e6b-a1c7-415de376c825",
         "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
-        "CLAUDE_EFFORT": "high",
-        "CLAUDE_CODE_CHILD_SESSION": "1"
+        "CLAUDE_EFFORT": "low",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "96197"
       },
       "payload": {
-        "session_id": "097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4",
-        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4.jsonl",
+        "session_id": "38623aeb-12af-4e6b-a1c7-415de376c825",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/38623aeb-12af-4e6b-a1c7-415de376c825.jsonl",
         "cwd": "/Users/me/code/demo",
-        "prompt_id": "dda7210c-e652-412d-8c9c-0e5258807c9c",
+        "prompt_id": "845e32e6-04b0-4fc2-8132-60adf297ee6c",
         "permission_mode": "default",
         "effort": {
-          "level": "high"
+          "level": "low"
         },
         "hook_event_name": "PreToolUse",
         "tool_name": "Bash",
         "tool_input": {
-          "command": "touch perm-test.txt",
-          "description": "Create a file"
+          "command": "echo autochat-check",
+          "description": "Echo check string"
         },
-        "tool_use_id": "toolu_mock_3"
+        "tool_use_id": "toolu_019VJ1mCrhv2duh7tQpeArVL"
+      }
+    },
+    {
+      "event": "PostToolUse",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "38623aeb-12af-4e6b-a1c7-415de376c825",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_EFFORT": "low",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "96197"
+      },
+      "payload": {
+        "session_id": "38623aeb-12af-4e6b-a1c7-415de376c825",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/38623aeb-12af-4e6b-a1c7-415de376c825.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "845e32e6-04b0-4fc2-8132-60adf297ee6c",
+        "permission_mode": "default",
+        "effort": {
+          "level": "low"
+        },
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "echo autochat-check",
+          "description": "Echo check string"
+        },
+        "tool_response": {
+          "stdout": "autochat-check",
+          "stderr": "",
+          "interrupted": false,
+          "isImage": false,
+          "noOutputExpected": false
+        },
+        "tool_use_id": "toolu_019VJ1mCrhv2duh7tQpeArVL",
+        "duration_ms": 2460
+      }
+    },
+    {
+      "event": "PreToolUse",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "38623aeb-12af-4e6b-a1c7-415de376c825",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_EFFORT": "low",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "96197"
+      },
+      "payload": {
+        "session_id": "38623aeb-12af-4e6b-a1c7-415de376c825",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/38623aeb-12af-4e6b-a1c7-415de376c825.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "845e32e6-04b0-4fc2-8132-60adf297ee6c",
+        "permission_mode": "default",
+        "effort": {
+          "level": "low"
+        },
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "touch blocked.txt",
+          "description": "Create empty file blocked.txt"
+        },
+        "tool_use_id": "toolu_01LkRUseHNsB191pVJRHZJWs"
       }
     },
     {
@@ -76,25 +147,26 @@
         "CLAUDECODE": "1",
         "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
         "CLAUDE_CODE_SESSION_ATTENDED": "0",
-        "CLAUDE_CODE_SESSION_ID": "097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4",
+        "CLAUDE_CODE_SESSION_ID": "38623aeb-12af-4e6b-a1c7-415de376c825",
         "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
-        "CLAUDE_EFFORT": "high",
-        "CLAUDE_CODE_CHILD_SESSION": "1"
+        "CLAUDE_EFFORT": "low",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "96197"
       },
       "payload": {
-        "session_id": "097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4",
-        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4.jsonl",
+        "session_id": "38623aeb-12af-4e6b-a1c7-415de376c825",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/38623aeb-12af-4e6b-a1c7-415de376c825.jsonl",
         "cwd": "/Users/me/code/demo",
-        "prompt_id": "dda7210c-e652-412d-8c9c-0e5258807c9c",
+        "prompt_id": "845e32e6-04b0-4fc2-8132-60adf297ee6c",
         "permission_mode": "default",
         "effort": {
-          "level": "high"
+          "level": "low"
         },
         "hook_event_name": "PermissionRequest",
         "tool_name": "Bash",
         "tool_input": {
-          "command": "touch perm-test.txt",
-          "description": "Create a file"
+          "command": "touch blocked.txt",
+          "description": "Create empty file blocked.txt"
         },
         "permission_suggestions": [
           {
@@ -118,23 +190,24 @@
         "CLAUDECODE": "1",
         "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
         "CLAUDE_CODE_SESSION_ATTENDED": "0",
-        "CLAUDE_CODE_SESSION_ID": "097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4",
+        "CLAUDE_CODE_SESSION_ID": "38623aeb-12af-4e6b-a1c7-415de376c825",
         "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
-        "CLAUDE_EFFORT": "high",
-        "CLAUDE_CODE_CHILD_SESSION": "1"
+        "CLAUDE_EFFORT": "low",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "96197"
       },
       "payload": {
-        "session_id": "097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4",
-        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4.jsonl",
+        "session_id": "38623aeb-12af-4e6b-a1c7-415de376c825",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/38623aeb-12af-4e6b-a1c7-415de376c825.jsonl",
         "cwd": "/Users/me/code/demo",
-        "prompt_id": "dda7210c-e652-412d-8c9c-0e5258807c9c",
+        "prompt_id": "845e32e6-04b0-4fc2-8132-60adf297ee6c",
         "permission_mode": "default",
         "effort": {
-          "level": "high"
+          "level": "low"
         },
         "hook_event_name": "Stop",
         "stop_hook_active": false,
-        "last_assistant_message": "Done with perm.",
+        "last_assistant_message": "The echo ran fine, but the touch command was blocked by a security restriction (odd, since the path shown is the allowed directory itself).",
         "background_tasks": [],
         "session_crons": []
       }
@@ -145,15 +218,16 @@
         "CLAUDECODE": "1",
         "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
         "CLAUDE_CODE_SESSION_ATTENDED": "0",
-        "CLAUDE_CODE_SESSION_ID": "097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4",
+        "CLAUDE_CODE_SESSION_ID": "38623aeb-12af-4e6b-a1c7-415de376c825",
         "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
-        "CLAUDE_CODE_CHILD_SESSION": "1"
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "96197"
       },
       "payload": {
-        "session_id": "097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4",
-        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/097d3fc2-e24b-4514-b1e9-1c6a87e2b0f4.jsonl",
+        "session_id": "38623aeb-12af-4e6b-a1c7-415de376c825",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/38623aeb-12af-4e6b-a1c7-415de376c825.jsonl",
         "cwd": "/Users/me/code/demo",
-        "prompt_id": "dda7210c-e652-412d-8c9c-0e5258807c9c",
+        "prompt_id": "845e32e6-04b0-4fc2-8132-60adf297ee6c",
         "hook_event_name": "SessionEnd",
         "reason": "other"
       }

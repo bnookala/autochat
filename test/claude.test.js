@@ -26,37 +26,68 @@ const pick = (evs, k) => evs.map(e => e[k] ?? null)
 
 test('fixtures: a headless auto run is autonomous throughout; Stop carries the last message', () => {
   const evs = replay(fixture('headless-auto'))
-  assert.deepEqual(pick(evs, 'kind'), ['start', 'activity', 'activity', 'activity', 'idle', 'end'])
-  assert.deepEqual(pick(evs, 'autonomy'), Array(6).fill('autonomous'), 'CLAUDE_CODE_SESSION_ATTENDED=0')
-  assert.deepEqual(pick(evs, 'mode'), [null, 'auto', 'auto', 'auto', 'auto', null], 'SessionStart and SessionEnd have no permission_mode')
+  assert.deepEqual(pick(evs, 'kind'), ['start', 'activity', 'activity', 'activity', 'activity', 'activity', 'idle', 'end'])
+  assert.deepEqual(pick(evs, 'autonomy'), Array(8).fill('autonomous'), 'CLAUDE_CODE_SESSION_ATTENDED=0')
+  assert.deepEqual(pick(evs, 'mode'), [null, 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', null], 'SessionStart and SessionEnd have no permission_mode')
   assert.ok(evs.every(e => e.harness === 'claude' && e.sid === evs[0].sid && e.headless === true && e.cwd === '/Users/me/code/demo'))
-  assert.equal(evs[4].summary, 'Done with bash.')
-  assert.equal(evs[5].reason, 'other')
+  assert.ok(evs.every(e => e.pid === Number(fixture('headless-auto')[0].env.CLAUDE_PID)), 'CLAUDE_PID: the claude process')
+  assert.match(evs[6].summary, /^This asks me to add a remote pointing to a fake\/placeholder domain/)
+  assert.equal(evs[7].reason, 'other')
 })
 
-test('fixtures: in a terminal, manual mode is interactive; requests and the idle prompt map', () => {
+test('fixtures: in a terminal, manual mode is interactive; requests, the idle prompt and Ctrl+C map', () => {
   const evs = replay(fixture('interactive-manual'))
-  assert.deepEqual(pick(evs, 'kind'), ['start', 'activity', 'activity', 'request', 'request', 'activity', 'idle', 'waiting'])
-  assert.deepEqual(pick(evs, 'autonomy'), ['unknown', 'interactive', 'interactive', 'interactive', 'unknown', 'interactive', 'interactive', 'unknown'], 'Notification has no permission_mode')
-  assert.deepEqual(pick(evs, 'mode'), [null, 'manual', 'manual', 'manual', null, 'manual', 'manual', null], 'payloads say "default" for manual')
-  assert.deepEqual(evs[3].request, { title: 'Permission needed', message: 'Bash: touch perm-test.txt' })
+  assert.deepEqual(pick(evs, 'kind'), ['start', 'activity', 'activity', 'request', 'request', 'activity', 'idle', 'waiting', 'end'])
+  assert.deepEqual(pick(evs, 'autonomy'), ['unknown', 'interactive', 'interactive', 'interactive', 'unknown', 'interactive', 'interactive', 'unknown', 'unknown'], 'Notification has no permission_mode')
+  assert.deepEqual(pick(evs, 'mode'), [null, 'manual', 'manual', 'manual', null, 'manual', 'manual', null, null], 'payloads say "default" for manual')
+  assert.deepEqual(evs[3].request, { title: 'Permission needed', message: 'Bash: touch manual-ok.txt' })
   assert.deepEqual(evs[4].request, { title: 'Permission needed', message: '' }, 'permission_prompt only repeats the PermissionRequest')
   assert.equal(evs[0].headless, false)
+  assert.equal(evs[6].summary, 'done')
+  assert.equal(evs[8].reason, 'prompt_input_exit', 'Ctrl+C twice')
 
   // `autochat config trigger claude manual,headless`: now manual mode counts.
   const counted = replay(fixture('interactive-manual'), { trigger: { claude: ['manual', 'headless'] } })
-  assert.deepEqual(pick(counted, 'autonomy'), ['unknown', 'autonomous', 'autonomous', 'autonomous', 'unknown', 'autonomous', 'autonomous', 'unknown'])
+  assert.deepEqual(pick(counted, 'autonomy'), ['unknown', 'autonomous', 'autonomous', 'autonomous', 'unknown', 'autonomous', 'autonomous', 'unknown', 'unknown'])
   assert.ok(replay(fixture('headless-auto'), { trigger: { claude: 'never' } }).every(e => e.autonomy === 'interactive'))
 })
 
-test('fixtures: AskUserQuestion is a request with its choices; auto mode in a terminal counts', () => {
+test('fixtures: AskUserQuestion is a request with its choices; auto mode in a terminal counts; /clear starts a new session', () => {
   const evs = replay(fixture('interactive-auto-question'))
-  assert.deepEqual(pick(evs, 'kind'), ['start', 'activity', 'request', 'request', 'activity', 'idle', 'end'])
-  assert.deepEqual(pick(evs, 'autonomy'), ['unknown', 'autonomous', 'autonomous', 'autonomous', 'autonomous', 'autonomous', 'unknown'])
-  const q = { title: 'Claude has a question for you', message: 'Which color should the button be? [Red / Blue]' }
+  assert.deepEqual(pick(evs, 'kind'), ['start', 'activity', 'request', 'request', 'activity', 'idle', 'end', 'start', 'end'])
+  assert.deepEqual(pick(evs, 'autonomy'), ['unknown', 'autonomous', 'autonomous', 'autonomous', 'autonomous', 'autonomous', 'unknown', 'unknown', 'unknown'])
+  const q = { title: 'Claude has a question for you', message: 'Should the button be red or blue? [Red / Blue]' }
   assert.deepEqual(evs[2].request, q, 'PreToolUse(AskUserQuestion)')
   assert.deepEqual(evs[3].request, q, 'PermissionRequest(AskUserQuestion): the same question')
-  assert.equal(evs[6].reason, 'prompt_input_exit')
+  assert.equal(evs[5].summary, 'Red')
+  assert.deepEqual([evs[6].reason, evs[8].reason], ['clear', 'prompt_input_exit'])
+  assert.notEqual(evs[7].sid, evs[0].sid, '/clear ends the session; the next one has its own id')
+  assert.equal(evs[7].pid, evs[0].pid, 'in the same process')
+})
+
+test('fixtures: auto mode refusing a tool call, and an API error ending the turn, are failed', () => {
+  const denied = replay(fixture('headless-denied'))
+  assert.deepEqual(pick(denied, 'kind'), ['start', 'activity', 'activity', 'failed', 'idle', 'end'])
+  assert.deepEqual(denied[3], {
+    ...denied[3],
+    autonomy: 'autonomous',
+    mode: 'auto',
+    reason: 'permission_denied',
+    summary: 'Auto mode refused Bash: curl -sI https://example.com (Blocked by classifier)'
+  })
+  assert.equal(denied[3].stopped, undefined, 'it carries on')
+
+  const failed = replay(fixture('stop-failure'))
+  const [print, terminal] = [failed.slice(0, 4), failed.slice(4)]
+  for (const run of [print, terminal]) {
+    assert.deepEqual(pick(run, 'kind'), ['start', 'activity', 'failed', 'end'])
+    assert.ok(run.every(e => e.sid === run[0].sid))
+    assert.deepEqual([run[2].stopped, run[2].reason, run[2].mode], [true, 'model_not_found', null], 'StopFailure has no permission_mode')
+    assert.match(run[2].summary, /^There's an issue with the selected model \(claude-nonexistent-model-0\)/)
+  }
+  assert.equal(print[2].autonomy, 'autonomous', 'claude -p')
+  assert.equal(terminal[2].autonomy, 'unknown', 'in a terminal nothing says, so it neither starts nor stops anything')
+  assert.deepEqual([print[3].reason, terminal[3].reason], ['other', 'prompt_input_exit'])
 })
 
 test('fixtures: background sessions are unattended, attached or not; edits name their files; mode names', () => {
@@ -67,11 +98,16 @@ test('fixtures: background sessions are unattended, attached or not; edits name 
   const edits = replay(fixture('headless-accept-edits'))
   assert.deepEqual(edits.filter(e => e.files).map(e => [e.mode, e.files]), [['acceptEdits', ['/Users/me/code/demo/a.txt']], ['acceptEdits', ['/Users/me/code/demo/a.txt']]])
   assert.ok(replay(fixture('headless-accept-edits'), { trigger: { claude: ['auto'] } }).filter(e => e.mode).every(e => e.autonomy === 'interactive'), 'acceptEdits alone does not count')
-  assert.deepEqual(pick(replay(fixture('permission-modes')), 'mode'), ['dontAsk', 'plan', 'bypassPermissions'])
-  assert.ok(replay(fixture('headless-permission')).some(e => e.kind === 'request' && e.request.message === 'Bash: touch perm-test.txt'), 'PermissionRequest fires in -p too')
+  assert.deepEqual(fixture('permission-modes').map(e => e.how), ['--permission-mode manual', '--permission-mode default', '--permission-mode acceptEdits', '--permission-mode plan', '--permission-mode auto', '--permission-mode dontAsk', '--permission-mode bypassPermissions'])
+  assert.deepEqual(pick(replay(fixture('permission-modes')), 'mode'), ['manual', 'manual', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions'], 'manual and default both arrive as "default"')
+
+  const asked = replay(fixture('headless-permission'))
+  const at = asked.findIndex(e => e.kind === 'request')
+  assert.deepEqual(asked[at].request, { title: 'Permission needed', message: 'Bash: touch blocked.txt' }, 'PermissionRequest fires in -p too')
+  assert.equal(asked[at + 1].kind, 'idle', 'nobody answers it in -p: denied, and the turn ends')
 })
 
-test('the headless signal, and no signal at all', () => {
+test('the headless signal, the process, and no signal at all', () => {
   assert.equal(headless({ CLAUDE_CODE_SESSION_ATTENDED: '0', CLAUDE_CODE_ENTRYPOINT: 'cli' }), true)
   assert.equal(headless({ CLAUDE_CODE_SESSION_ATTENDED: '1', CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' }), false)
   assert.equal(headless({ CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' }), true, 'older versions: -p')
@@ -80,9 +116,13 @@ test('the headless signal, and no signal at all', () => {
   const p = { session_id: 's-1', hook_event_name: 'PreToolUse', permission_mode: 'default', tool_name: 'Read', tool_input: {} }
   assert.equal(H.sessionEvent(claude, 'PreToolUse', p, { env: {} }).autonomy, 'unknown', 'manual mode, and nothing says whether anyone is there')
   assert.equal(H.sessionEvent(claude, 'PreToolUse', { ...p, permission_mode: 'auto' }, { env: {} }).autonomy, 'autonomous')
+  assert.equal(claude.normalize('Stop', p, { CLAUDE_PID: '4242' }).pid, 4242)
+  for (const pid of [undefined, '', '0', '-3', '1.5', 'x']) assert.ok(!('pid' in claude.normalize('Stop', p, { CLAUDE_PID: pid })), String(pid))
   for (const bad of [null, [], 'x', {}, { session_id: '../x' }]) assert.equal(claude.normalize('Stop', bad, {}), null)
   assert.equal(claude.normalize('Whatever', { session_id: 's-1', hook_event_name: 'SubagentStop' }, {}).kind, 'notice')
   assert.equal(claude.normalize('Stop', { session_id: 's-1' }, {}).kind, 'idle', 'the event name from the command line when the payload has none')
+  assert.deepEqual(claude.normalize('StopFailure', { session_id: 's-1' }, {}), { harness: 'claude', sid: 's-1', kind: 'failed', mode: null, headless: null, cwd: undefined, origin: claude.normalize('Stop', { session_id: 's-1' }, {}).origin, stopped: true, reason: 'unknown', summary: 'unknown' })
+  assert.equal(claude.normalize('PermissionDenied', { session_id: 's-1', tool_name: 'Bash', tool_input: { command: 'rm -rf build' } }, {}).summary, 'Auto mode refused Bash: rm -rf build')
 })
 
 // A user's ~/.claude/settings.json with hooks of their own on the same events (as Claude Code
@@ -132,13 +172,13 @@ test('install merges into settings.json next to the user\'s hooks; rerun is a no
   const plan = claude.planHooks(u.ctx)
   assert.equal(plan.action, 'add')
   assert.equal(plan.file, u.file)
-  assert.equal(plan.entries.length, 8)
+  assert.equal(plan.entries.length, 10)
   assert.match(plan.entries.find(e => e.startsWith('Notification')), /^Notification \(permission_prompt\|idle_prompt\|elicitation_dialog\): '.*node' '.*autochat\.js' hook --harness claude Notification \|\| true$/)
   plan.apply()
 
   const cfg = JSON.parse(u.read())
   assert.equal(JSON.stringify(withoutOurs(cfg)), JSON.stringify(USER_SETTINGS), 'every other setting and hook unchanged, in order')
-  assert.deepEqual(Object.keys(cfg.hooks), ['SessionStart', 'PreToolUse', 'Stop', 'PreCompact', 'UserPromptSubmit', 'PostToolUse', 'PermissionRequest', 'Notification', 'SessionEnd'])
+  assert.deepEqual(Object.keys(cfg.hooks), ['SessionStart', 'PreToolUse', 'Stop', 'PreCompact', 'UserPromptSubmit', 'PostToolUse', 'PermissionRequest', 'PermissionDenied', 'Notification', 'StopFailure', 'SessionEnd'])
   assert.deepEqual(cfg.hooks.PreToolUse.slice(0, 2), USER_SETTINGS.hooks.PreToolUse, 'theirs first, ours appended')
   assert.deepEqual(cfg.hooks.PreToolUse[2], { hooks: [{ type: 'command', command: `'${u.node}' '${u.bin}' hook --harness claude PreToolUse || true`, timeout: 10 }] })
   assert.equal(cfg.hooks.Notification[0].matcher, 'permission_prompt|idle_prompt|elicitation_dialog')
@@ -269,9 +309,10 @@ test('CLI: setup offers Claude Code, setup --harness claude installs it, the hoo
     ['hook', 'claude', 'PreToolUse', 'request', 'auto', 'autonomous'],
     ['hook', 'claude', 'PermissionRequest', 'request', 'auto', 'autonomous']
   ])
-  assert.equal(got[0].sessionId, '7f6889e0-60a3-4688-9f0f-aaa32bde0001')
+  assert.equal(got[0].sessionId, 'e10f9774-5c7a-47ce-8ddd-23171318507a')
   assert.deepEqual(got[0].origin, { tmux: '/t,1,0', tmuxPane: '%7' })
-  assert.equal(got[1].request.message, 'Which color should the button be? [Red / Blue]')
+  assert.equal(got[0].pid, Number(fixture('interactive-auto-question')[1].env.CLAUDE_PID))
+  assert.equal(got[1].request.message, 'Should the button be red or blue? [Red / Blue]')
 
   const un = cli('uninstall')
   assert.equal(un.status, 0, un.stderr)
@@ -279,7 +320,7 @@ test('CLI: setup offers Claude Code, setup --harness claude installs it, the hoo
   assert.equal(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'), userText)
 })
 
-test('Controller: a Claude Code session from its recorded hooks, with the permission notification 6 s late', { timeout: 60000 }, async (t) => {
+test('Controller: Claude Code sessions from their recorded hooks: questions, the permission notification 6 s late, refusals, API errors', { timeout: 60000 }, async (t) => {
   const testnet = await createTestnet(3)
   t.after(() => testnet.destroy())
   const c = new Controller({
@@ -289,10 +330,13 @@ test('Controller: a Claude Code session from its recorded hooks, with the permis
     roomOpts: { graceMs: 1200, heartbeatMs: 300, expireMs: 3000, refreshMs: [300, 800, 1500, 2500], refreshEveryMs: 2000 },
     focus: () => {},
     notify: () => {},
-    watchLogs: false
+    watchLogs: false,
+    // The recorded CLAUDE_PIDs mean nothing here.
+    pidCheckMs: 600000
   })
   t.after(() => c.shutdown())
   const send = (e) => c.handle(hookMessage(H.sessionEvent(claude, e.event, e.payload, { env: e.env }), e.event))
+  const item = (sid) => c.snapshot().attention.filter(a => a.sid === sid).map(a => [a.kind, a.title, a.summary])
 
   const q = fixture('interactive-auto-question')
   assert.equal(send(q[0]).tracked, false, 'SessionStart alone tracks nothing')
@@ -302,12 +346,14 @@ test('Controller: a Claude Code session from its recorded hooks, with the permis
   assert.deepEqual(c.snapshot().sessions, [{ sid, state: 'running', cwd: '/Users/me/code/demo', harness: 'claude' }])
   send(q[2])
   send(q[3])
-  assert.deepEqual([c.currentRequest().title, c.currentRequest().message], ['Claude has a question for you', 'Which color should the button be? [Red / Blue]'])
+  assert.deepEqual([c.currentRequest().title, c.currentRequest().message], ['Claude has a question for you', 'Should the button be red or blue? [Red / Blue]'])
+  assert.deepEqual(item(sid), [['blocked', 'Claude has a question for you', 'Should the button be red or blue? [Red / Blue]']])
   send(q[4])
   assert.equal(c.currentRequest().resolved, true, 'answered: the agent moved on')
   send(q[5])
   await new Promise(resolve => setTimeout(resolve, 600))
-  assert.deepEqual([c.countdown?.reason, c.countdown?.summary], ['idle', 'Done with ask.'], 'Stop, then nothing for idleMs')
+  assert.deepEqual([c.countdown?.reason, c.countdown?.summary], ['idle', 'Red'], 'Stop, then nothing for idleMs')
+  assert.deepEqual(item(sid), [['finished', 'Claude Code is waiting for you', 'Red']])
   assert.equal(send(q[6]).tracked, false, 'already done')
 
   // In auto mode a permission prompt: the bare notification 6 s later keeps the detail.
@@ -316,7 +362,53 @@ test('Controller: a Claude Code session from its recorded hooks, with the permis
   send(m[3])
   c.sessions.get(`claude:${m[0].payload.session_id}`).request.at -= 6000
   send(m[4])
-  assert.deepEqual([c.currentRequest().title, c.currentRequest().message], ['Permission needed', 'Bash: touch perm-test.txt'])
+  assert.deepEqual([c.currentRequest().title, c.currentRequest().message], ['Permission needed', 'Bash: touch manual-ok.txt'])
   send(m[7])
   assert.equal(c.sessions.size, 0, 'idle_prompt: waiting at its prompt, done')
+
+  // Auto mode refused a call: an item that stays while it carries on; its end replaces it.
+  const d = fixture('headless-denied')
+  const dsid = d[0].payload.session_id
+  for (const e of d.slice(0, 4)) send(e)
+  assert.deepEqual(item(dsid), [['failed', 'Claude Code ran into a problem', 'Auto mode refused Bash: curl -sI https://example.com (Blocked by classifier)']])
+  assert.equal(c.snapshot().sessions.find(s => s.sid === dsid).state, 'running')
+  send(d[4])
+  send(d[5])
+  assert.deepEqual(item(dsid).map(a => a.slice(0, 2)), [['finished', 'Claude Code session ended']])
+
+  // An API error ended its turn in a terminal: done, with the error.
+  const f = fixture('stop-failure').slice(4)
+  const fsid = f[0].payload.session_id
+  send(f[1])
+  send(f[2])
+  assert.equal(c.sessions.has(`claude:${fsid}`), false)
+  assert.deepEqual(item(fsid), [['failed', 'Claude Code stopped on an error', "There's an issue with the selected model (claude-nonexistent-model-0). It may not exist or you may not have access to it. Run /model to pick a different model."]])
+  assert.equal(c.countdown?.reason, 'failed')
+  assert.equal(send(f[3]).tracked, false, '/exit afterwards: already done')
+})
+
+test('Controller: a Claude Code session ends once its process is gone, without a SessionEnd', { timeout: 60000 }, async (t) => {
+  const testnet = await createTestnet(3)
+  t.after(() => testnet.destroy())
+  const c = new Controller({
+    identity: ephemeralIdentity(),
+    config: { room: 'lc1-claude-' + Math.random().toString(36).slice(2, 12), idleMs: 60000, announce: false, countdownSeconds: 30 },
+    bootstrap: testnet.bootstrap,
+    roomOpts: { graceMs: 1200, heartbeatMs: 300, expireMs: 3000, refreshMs: [300, 800, 1500, 2500], refreshEveryMs: 2000 },
+    focus: () => {},
+    notify: () => {},
+    watchLogs: false,
+    pidCheckMs: 100
+  })
+  t.after(() => c.shutdown())
+  // `claude -p` stopped by an API error: here neither its StopFailure nor a SessionEnd arrives.
+  const [, prompt] = fixture('stop-failure')
+  const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 300)'])
+  const gone = new Promise(resolve => child.on('exit', resolve))
+  c.handle(hookMessage(H.sessionEvent(claude, prompt.event, prompt.payload, { env: { ...prompt.env, CLAUDE_PID: String(child.pid) } }), prompt.event))
+  assert.deepEqual(c.snapshot().sessions.map(s => s.state), ['running'])
+  await gone
+  await new Promise(resolve => setTimeout(resolve, 400))
+  assert.deepEqual(c.snapshot().sessions, [])
+  assert.deepEqual(c.snapshot().attention.map(a => [a.kind, a.title]), [['finished', 'Claude Code session ended']])
 })

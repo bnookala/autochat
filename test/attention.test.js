@@ -206,14 +206,14 @@ test('Claude Code from its recorded hooks: the queue alongside its request mergi
   send(q[1])
   send(q[2])
   const [asked] = queue(c)
-  assert.deepEqual([asked.kind, asked.harness, asked.title, asked.summary], ['blocked', 'claude', 'Claude has a question for you', 'Which color should the button be? [Red / Blue]'])
+  assert.deepEqual([asked.kind, asked.harness, asked.title, asked.summary], ['blocked', 'claude', 'Claude has a question for you', 'Should the button be red or blue? [Red / Blue]'])
   send(q[3])
   assert.deepEqual(queue(c).map(a => a.id), [asked.id])
   send(q[4])
   assert.deepEqual(queue(c), [], 'answered: handled')
   send(q[5])
   await new Promise(resolve => setTimeout(resolve, 600))
-  assert.deepEqual(queue(c).map(a => [a.kind, a.title, a.summary]), [['finished', 'Claude Code is waiting for you', 'Done with ask.']], 'Stop, then nothing for idleMs')
+  assert.deepEqual(queue(c).map(a => [a.kind, a.title, a.summary]), [['finished', 'Claude Code is waiting for you', 'Red']], 'Stop, then nothing for idleMs')
 
   // In auto mode, the bare permission notification 6 s later keeps the PermissionRequest's
   // detail: in the request, and in the queue (the same item).
@@ -223,11 +223,11 @@ test('Claude Code from its recorded hooks: the queue alongside its request mergi
   send(m[1])
   send(m[3])
   const [blocked] = mine()
-  assert.deepEqual([blocked.kind, blocked.title, blocked.summary], ['blocked', 'Permission needed', 'Bash: touch perm-test.txt'])
+  assert.deepEqual([blocked.kind, blocked.title, blocked.summary], ['blocked', 'Permission needed', 'Bash: touch manual-ok.txt'])
   c.sessions.get(`claude:${sid}`).request.at -= 6000
   send(m[4])
-  assert.deepEqual([c.currentRequest().title, c.currentRequest().message], ['Permission needed', 'Bash: touch perm-test.txt'])
-  assert.deepEqual(mine().map(a => [a.id, a.summary]), [[blocked.id, 'Bash: touch perm-test.txt']])
+  assert.deepEqual([c.currentRequest().title, c.currentRequest().message], ['Permission needed', 'Bash: touch manual-ok.txt'])
+  assert.deepEqual(mine().map(a => [a.id, a.summary]), [[blocked.id, 'Bash: touch manual-ok.txt']])
   send(m[7])
   assert.deepEqual(mine().map(a => [a.kind, a.title]), [['finished', 'Claude Code is waiting for you']], 'idle_prompt: waiting at its prompt')
 })
