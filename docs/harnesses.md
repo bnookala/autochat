@@ -207,13 +207,13 @@ the agent's context, wherever that harness lets a hook add context to a tool cal
 | --- | --- | --- | --- |
 | Copilot CLI | `{"additionalContext": …}` from the hook: a user message after the tool's result | `preToolUse` | live, 1.0.102 |
 | Claude Code | `hookSpecificOutput.additionalContext`: right after the tool's result | `PostToolUse` | live, 2.1.273 |
-| Codex | `hookSpecificOutput.additionalContext`: developer context | `PostToolUse` | Codex's docs |
+| Codex | `hookSpecificOutput.additionalContext`: a developer message before the tool's output | `PostToolUse` | live, 0.166.0 |
 | opencode | the plugin's `tool.execute.after` appends it to the tool's output | every tool call | live, 1.2.6 |
 | pi | the extension's `tool_result` handler appends a text block to the result | every tool call | live, 0.74.0 |
 | Gemini CLI | none: no autochat hooks yet | | |
 
 **Checked live** means against the installed binary, in a throwaway `HOME` (and
-`COPILOT_HOME`, `CLAUDE_CONFIG_DIR`, XDG dirs, `PI_CODING_AGENT_DIR`), with a local stand-in for
+`COPILOT_HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, XDG dirs, `PI_CODING_AGENT_DIR`), with a local stand-in for
 the model API that logs every request in full: first with a probe hook (or plugin, or extension)
 that returns a marker, then with autochat's own, installed by `autochat setup`, and
 `autochat mcp` as an MCP server, against a stand-in daemon that answers the doorbell. The line
@@ -365,6 +365,13 @@ against a stand-in daemon.
   `CLAUDE_CODE_SESSION_ID` (verified), which `autochat mcp` sends in its hello. Hooks get
   `CLAUDE_PID`, the Claude Code process (verified), which is also the hello's `harnessPid`: that's
   the doorbell's `pid`.
+- **With a real model** (Claude Haiku 4.5 on the real login; its config in a throwaway
+  `CLAUDE_CONFIG_DIR`, the hook from a temp `--settings` file, a stand-in daemon), told to run one
+  command and report: after "1 unread from copilot-greeter (a question, overlap on
+  src/greeting.js): use mcp__autochat__read" it reported and stopped, twice, without a word about
+  it. After "autochat: copilot-greeter asked you a question (overlap on src/greeting.js). Read it
+  with mcp__autochat__read before you go on." its report ended "there's also an autochat message
+  from copilot-greeter about src/greeting.js that I should read". Say who, what and what to do.
 
 ## pi
 
@@ -432,11 +439,12 @@ first, then autochat's own (`autochat setup --agents`), against a stand-in daemo
 
 ## Codex
 
-`src/harness/codex.js`. Codex isn't installed where this adapter was written, so it follows
+`src/harness/codex.js`. Codex wasn't installed where this adapter was written, so it follows
 Codex's hooks documentation (developers.openai.com/codex/hooks) and, where that's silent, the
 source and generated hook schemas of Codex `rust-v0.166.0` (`codex-rs/hooks`,
 `codex-rs/core/src/hook_runtime.rs`). The fixtures in `test/fixtures/codex/` are built from those
-documented payloads, not recorded: [what isn't verified](#what-isnt-verified-live).
+documented payloads, not recorded. Since then, `codex exec` from Codex 0.166.0 has run with
+these hooks: [what's verified](#whats-verified-live).
 
 **Hooks** go in `$CODEX_HOME/hooks.json` (`~/.codex/hooks.json`): one matcher group of ours per
 event, appended after the user's own, each running `… hook --harness codex <Event> || true`,
@@ -478,41 +486,44 @@ says `codex exec`; its session's rollout (`transcript_path`) does: the first lin
 run without a rollout (`--ephemeral`): neither starts nor ends anything. By default `headless`
 counts.
 
-### What isn't verified live
+### What's verified live
 
-None of this ran against a real Codex. From the documentation: the location and shape of
-`hooks.json`, the event list and payload fields (checked against the generated schemas), the
-trust flow, `SessionEnd`'s and `Interrupt`'s timeouts, that an exit 0 with nothing on stdout is a
-success (`Stop` and `Interrupt` reject plain text), and that hooks run through your login shell
-(`$SHELL -lc`) in the session's directory. From the source, not the documentation:
-`permission_mode` as above; that the rollout exists, with its `session_meta`, before the first
-hook runs; the rollout line format and the `source` values; `request_user_input` and its input
-(`questions` with `options`); that subagent hooks carry `agent_id` with the parent's session id;
-and how trust is keyed. Not checked at all: how long a login shell plus node takes per tool call on
-your machine, and whether Codex shows anything while our hooks run. There's no fallback observer
-for Codex yet: rollouts under `~/.codex/sessions` say what a session did, but not whether its
-process is still alive.
+`codex exec` from Codex 0.166.0, with a custom provider (`wire_api = "responses"`; `"chat"` is no
+longer supported) pointing at a local stand-in for the Responses API, in a throwaway `HOME` and
+`CODEX_HOME` with no `auth.json`, the hooks from `autochat setup --harness codex`, run with
+`--dangerously-bypass-hook-trust`, against a stand-in daemon: `hooks.json` as autochat writes it
+loads; `SessionStart`, `UserPromptSubmit`, `PreToolUse` and `PostToolUse` (for a shell command and
+for an MCP tool, `mcp__autochat__catch_up`), `Stop` and `SessionEnd` fire; the rollout says
+`source: "exec"`, so the session is headless and autonomous; `permission_mode` is
+`bypassPermissions`; `SessionEnd`'s `reason` is `other`. Codex ran the hooks through the user's
+shell with `-c` (`/bin/zsh -c '…'`), whose parent is the Codex process.
+
+Still from the documentation or the source, not checked: the trust flow and how trust is keyed,
+the TUI, `PermissionRequest`, `Interrupt`, `request_user_input`, subagents, and the timeouts. Not
+checked at all: whether Codex shows anything while our hooks run. There's no fallback observer for
+Codex yet: rollouts under `~/.codex/sessions` say what a session did, but not whether its process
+is still alive.
 
 ### Doorbell
 
-**From Codex's hooks documentation**, not run live (Codex isn't installed where this was written);
-the source of `rust-v0.166.0` agrees that `PreToolUse` and `PostToolUse` can return
-`additionalContext`.
+**Verified live** against Codex 0.166.0, in the setup [above](#whats-verified-live): a stand-in
+daemon answered the doorbell, and `autochat mcp` was Codex's MCP server.
 
 - A `PostToolUse` hook that prints
-  `{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"…"}}` has the text
-  "added as extra developer context". Plain text on stdout is ignored. Codex runs `PostToolUse`
-  after Bash commands that fail too, and spills context longer than about 2,500 tokens to a file
-  (`additionalContextLimit`): the doorbell's line is far shorter.
+  `{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"…"}}` gets it to the
+  model in its next request, as a `developer` message just before that tool's output. Codex's
+  documentation says the same ("added as extra developer context"), and that plain text on stdout
+  is ignored, `PostToolUse` also runs after shell commands that fail, and context longer than
+  about 2,500 tokens spills to a file (`additionalContextLimit`): the doorbell's line is far
+  shorter.
 - The doorbell rings on `PostToolUse`, which our hooks already run for every tool. The hook
   commands don't change, so the hooks you trusted stay trusted. It doesn't ring for autochat's own
-  tools (`mcp__autochat__…`).
-- **Which agent.** The payload's `session_id`. Codex's documentation doesn't say whether its MCP
-  servers get the session id (`autochat mcp` looks for `CODEX_SESSION_ID`), so the daemon may need
-  the `pid`: the login shell Codex runs the hook in (`$SHELL -lc`), whose parent is Codex, the
-  hello's `harnessPid`.
-- Not checked: whether Codex shows the model the line where the documentation says, and how its
-  `systemMessage` and `additionalContext` interact with other hooks' output.
+  tools: Codex's hooks name them `mcp__autochat__catch_up` and so on (verified), while the model
+  sees them as the `mcp__autochat` namespace's `catch_up`.
+- **Which agent.** Codex starts its MCP servers with a filtered environment: no session id, so
+  `autochat mcp`'s hello has none, and not even `AUTOCHAT_HOME` unless the server's `env_vars`
+  lists it. The doorbell's `pid` is the shell Codex runs the hook in, and its parent is the Codex
+  process, which is the hello's `harnessPid` (verified): the daemon matches the pid's parent.
 
 ## Process scan (detection only)
 

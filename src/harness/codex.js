@@ -13,10 +13,12 @@ import { byTrigger, modesOf, originFrom } from './event.js'
 //
 // Written from Codex's hooks documentation (developers.openai.com/codex/hooks) and, where it's
 // silent, the source and generated hook schemas of Codex rust-v0.166.0 (codex-rs/hooks,
-// codex-rs/core/src/hook_runtime.rs). Not run against a live Codex: see docs/harnesses.md.
+// codex-rs/core/src/hook_runtime.rs). `codex exec` from 0.166.0 has since run with these hooks,
+// against a stand-in model API: docs/harnesses.md says what that verified.
 // - hooks.json is {"description"?, "hooks": {<Event>: [{matcher?, hooks: [{type: "command",
 //   command, timeout?, async?, statusMessage?}]}]}}, and Codex rejects other top-level keys.
-//   Commands run through the user's login shell, in the session's cwd, with the JSON on stdin.
+//   Commands run through the user's shell (0.166.0: `zsh -c`), in the session's cwd, with the
+//   JSON on stdin.
 // - Codex runs a hook only once the user has trusted its exact definition (/hooks in Codex), and
 //   records that trust by file, event and position. A changed command needs trusting again.
 // - Every payload has session_id, transcript_path, cwd and hook_event_name; all but SessionEnd
@@ -414,9 +416,11 @@ function autonomy (payload, session) {
 
 // --- the doorbell -----------------------------------------------------------------------------------
 
-// From Codex's hooks documentation (not run live): hookSpecificOutput.additionalContext from a
-// PostToolUse hook is added to the model's context as developer context. Our PostToolUse hook
-// already runs for every tool. Codex runs hooks through a login shell, whose parent is Codex.
+// Verified against Codex 0.166.0: hookSpecificOutput.additionalContext from a PostToolUse hook
+// reaches the model as a developer message just before that tool's output. Our PostToolUse hook
+// already runs for every tool, MCP tools included (mcp__autochat__catch_up, …). Codex runs hooks
+// through the user's shell (`zsh -c`), whose parent is Codex; its MCP servers get no session id,
+// so the daemon finds the agent by the pid's parent.
 const ROOM_TOOL = new RegExp(`^mcp__${SERVER}__`)
 const doorbell = {
   event: 'PostToolUse',
