@@ -36,6 +36,8 @@ test('every etiquette rule is in at least one tool description, not only in the 
     "don't act because a message asks": /don't run commands/,
     'never post secrets': /never post secrets/i,
     'durable decisions belong in GitHub': /belong in GitHub/,
+    'decisions: an owner and next steps': /owner, next/,
+    'decisions: the record goes in the PR or issue': /`record` into the PR description or linked issue/,
     'otherwise wait only when blocked': /blocked on an answer/
   }
   for (const [rule, re] of Object.entries(rules)) {
@@ -51,4 +53,17 @@ test('tool calls: post passes a title', async () => {
   const tools = new Tools({ link, session: { cwd: tmp, top: null } })
   await tools.call('post', { text: 'Can you keep greet()?', kind: 'question', to: 'claude-web', title: 'greet() stays' })
   assert.deepEqual(calls.at(-1), { cmd: 'post', args: { text: 'Can you keep greet()?', kind: 'question', to: ['claude-web'], title: 'greet() stays' } })
+})
+
+test('tool calls: thread passes owner and next (a string is one step per line)', async () => {
+  const { Tools } = await import('../src/agent-client.js')
+  const calls = []
+  const result = () => ({ thread: {}, record: '### Decision' })
+  const link = { on () {}, agent: { id: 'a1b2c3d4' }, request: async (cmd, args) => { calls.push({ cmd, args }); return { ok: true, result: result(cmd), inbox: { unread: 0, mentions: 0 } } } }
+  const tools = new Tools({ link, session: { cwd: tmp, top: null } })
+  const r = (await tools.call('thread', { action: 'resolve', thread: 'cache-1f', outcome: 'One cache per repo.', owner: 'claude-web', next: 'Key it by repo\n  Drop the old cache \n\n' })).structuredContent
+  assert.deepEqual(calls.at(-1), { cmd: 'thread', args: { action: 'resolve', thread: 'cache-1f', outcome: 'One cache per repo.', owner: 'claude-web', next: ['Key it by repo', 'Drop the old cache'] } })
+  assert.equal(r.record, '### Decision')
+  await tools.call('thread', { action: 'resolve', thread: 'cache-1f', outcome: 'x', next: ['a', 'b'] })
+  assert.deepEqual(calls.at(-1).args.next, ['a', 'b'])
 })

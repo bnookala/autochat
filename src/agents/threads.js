@@ -1,8 +1,9 @@
-import { sanitize } from '../text.js'
+import { sanitize, charCount } from '../text.js'
 import { fail, hex, isStr, label, opt } from './limits.js'
 
 // Threads: the `thread` command (open, resolve, list), thread ids and titles, and the decision a
-// resolve posts. See docs/agent-room/threads.md.
+// resolve posts: its owner and next steps, who has seen it, and its record.
+// See docs/agent-room/threads.md.
 
 function threadSlug (title) {
   let slug = ''
@@ -43,15 +44,21 @@ export const methods = {
         if (!isStr(msg.thread) || !this.threads.has(msg.thread)) fail(`unknown thread: ${label(msg.thread)}`)
         const t = this.threads.get(msg.thread)
         // Two agents resolving the same thread: the first outcome stands.
-        if (t.status !== 'open') return { thread: this._threadView(t), alreadyResolved: true }
+        if (t.status !== 'open') return { thread: this._threadView(t), alreadyResolved: true, record: this._record(t) }
         const outcome = this._text(msg.outcome, this.limits.outcome, 'outcome')
+        const owner = this._owner(agent, msg.owner)
+        const next = this._nextSteps(msg.next)
         t.status = 'resolved'
         t.outcome = outcome
         t.resolvedAt = this.now()
+        t.resolvedBy = agent.id
+        t.owner = owner
+        t.next = next
         t.participants.add(agent.id)
         this._sys(`🧵 ${agent.name} resolved “${t.title}”`)
+        // The `post` hook below makes it the thread's decision.
         this._append({ kind: 'decision', from: this._from(agent), thread: t.id, text: outcome }, { author: agent.id })
-        return { thread: this._threadView(t) }
+        return { thread: this._threadView(t), record: this._record(t) }
       }
       case 'list':
         return { threads: this._threadList() }
@@ -80,7 +87,8 @@ export const methods = {
     let id
     do id = `${slug}-${hex(1)}`; while (this.threads.has(id))
     const now = this.now()
-    const t = { id, title, opener: agent.id, participants: new Set([agent.id, ...withIds]), status: 'open', outcome: null, count: 0, openedAt: now, lastAt: now, resolvedAt: null }
+    // A resolve sets resolvedAt and resolvedBy, owner and next, and the decision (its log entry).
+    const t = { id, title, opener: agent.id, participants: new Set([agent.id, ...withIds]), status: 'open', outcome: null, count: 0, openedAt: now, lastAt: now, resolvedAt: null, resolvedBy: null, owner: null, next: [], decision: null }
     this.threads.set(id, t)
     const names = withIds.map(i => this._nameOf(i))
     this._sys(`🧵 ${agent.name} opened “${title}”${names.length ? ' with ' + names.join(', ') : ''}`)
@@ -97,8 +105,54 @@ export const methods = {
       outcome: t.outcome,
       messages: t.count,
       openedAt: t.openedAt,
-      lastAt: t.lastAt
+      lastAt: t.lastAt,
+      owner: t.owner && this._nameOf(t.owner),
+      next: [...t.next],
+      resolvedBy: t.resolvedBy && this._nameOf(t.resolvedBy),
+      resolvedAt: t.resolvedAt
     }
+  },
+
+  // `owner`: an agent in the room; by default, whoever resolves.
+  _owner (agent, owner) {
+    if (opt(owner)) return agent.id
+    if (!isStr(owner)) fail('owner must be an agent name')
+    const [id] = this._resolveNames([owner], 'owner')
+    if (this.agents.get(id)?.left) fail(`${this._nameOf(id)} left the room`)
+    return id
+  },
+
+  // `next`: up to 5 next steps, one line of ≤ 140 characters each.
+  _nextSteps (next) {
+    const L = this.limits
+    if (opt(next)) return []
+    if (!Array.isArray(next) || next.some(s => !isStr(s))) fail('next must be a list of strings')
+    if (next.length > L.nextSteps) fail(`next has too many entries (max ${L.nextSteps})`)
+    const out = []
+    for (const raw of next) {
+      const step = raw.length > L.nextStep * 4 + 256 ? null : sanitize(raw, Infinity)
+      if (step === null || charCount(step) > L.nextStep) fail(`next entries are at most ${L.nextStep} characters`)
+      this._scan(step)
+      if (step) out.push(step)
+    }
+    return out
+  },
+
+  // The record of a decision, in markdown, for the PR description or the linked issue.
+  _record (t) {
+    const d = new Date(t.resolvedAt)
+    const day = [d.getFullYear(), d.getMonth() + 1, d.getDate()].map(n => String(n).padStart(2, '0')).join('-')
+    return [
+      `### Decision: ${t.title}`,
+      '',
+      ...t.outcome.split('\n').map(l => l ? '> ' + l : '>'),
+      '',
+      `- **Owner:** ${this._nameOf(t.owner)}`,
+      `- **Next steps:**${t.next.length ? '' : ' none'}`,
+      ...t.next.map(s => `  - [ ] ${s}`),
+      `- **Participants:** ${[...t.participants].map(id => this._nameOf(id)).join(', ')}`,
+      `- **Decided:** ${day}, in the autochat agent room (thread \`${t.id}\`)`
+    ].join('\n')
   },
 
   // Open first, then resolved; newest activity first.
@@ -114,6 +168,24 @@ export function register (r) {
   r.command('thread', methods._thread)
   r.on('post', function (entry, { thread }) {
     if (thread) { thread.count++; thread.lastAt = entry.msg.ts }
+    // A resolve's decision (nothing else can be posted in a resolved thread): its owner and next
+    // steps, and who has seen it, starting with whoever resolved it.
+    if (thread?.status === 'resolved' && entry.msg.kind === 'decision' && !thread.decision) {
+      thread.decision = entry
+      entry.decision = { owner: thread.owner, next: thread.next, seenBy: new Set([entry.author]) }
+    }
+  })
+  // Seen: catchUp, read or wait returned it to the agent.
+  r.on('deliver', function (agent, entries) {
+    let seen = false
+    for (const e of entries) {
+      if (e.decision && !e.decision.seenBy.has(agent.id)) { e.decision.seenBy.add(agent.id); seen = true }
+    }
+    if (seen) this._changed()
+  })
+  r.contribute('message', function ({ entry }) {
+    const d = entry.decision
+    return d ? { decision: { owner: this._nameOf(d.owner), next: [...d.next], seenBy: [...d.seenBy].map(id => this._nameOf(id)) } } : null
   })
   r.contribute('catchUp', function () {
     return { threads: this._threadList() }

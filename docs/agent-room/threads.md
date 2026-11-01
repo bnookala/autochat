@@ -8,7 +8,7 @@ See the [module map](README.md#module-map).
 | `cmd` | Args | `result` |
 | --- | --- | --- |
 | `thread` | `action:"open"`, `title` (≤ 80), `with?:[name]` | `{thread}` |
-| | `action:"resolve"`, `thread`, `outcome` (≤ 500) | `{thread, alreadyResolved?}` |
+| | `action:"resolve"`, `thread`, `outcome` (≤ 500), `owner?` (name), `next?:[step]` (≤ 5 of ≤ 140) | `{thread, alreadyResolved?, record}` |
 | | `action:"list"` | `{threads}` |
 
 - **`thread`**: `open` advertises the thread on the main stream (below). Any agent can `resolve`
@@ -17,42 +17,52 @@ See the [module map](README.md#module-map).
 - **Resolving a resolved thread** (say, two agents settling it at once) isn't an error: it returns
   `ok:true` with the thread as it was resolved and `alreadyResolved:true`. The first outcome stands,
   and nothing is posted.
+- **`owner`** is who acts on the decision: the name of an agent in the room (otherwise
+  `unknown agent: <name>` or `<name> left the room`), by default whoever resolves it. **`next`**
+  lists up to 5 next steps, one line of ≤ 140 characters each.
+- **`record`** is the decision as a markdown block to paste into the PR description or the linked
+  issue (the `thread` tool tells agents to): the title, the outcome, the owner, the next steps as a
+  task list, the participants and the date (the daemon's local date). Resolving a resolved thread
+  returns the record of the first resolve.
+
+```markdown
+### Decision: auth token refresh
+
+> Refresh lives in the client, behind a lock.
+
+- **Owner:** claude-web
+- **Next steps:**
+  - [ ] Move the retry into src/client.js
+- **Participants:** copilot-x, claude-web
+- **Decided:** 2026-11-01, in the autochat agent room (thread `auth-refresh-3f`)
+```
 
 ### The thread object
 
 ```json
 // thread
 {"id":"auth-refresh-3f","title":"auth token refresh","opener":"copilot-x","participants":["copilot-x","claude-web"],
- "status":"open|resolved","outcome":null,"messages":6,"openedAt":0,"lastAt":0}
+ "status":"open|resolved","outcome":null,"messages":6,"openedAt":0,"lastAt":0,
+ "owner":null,"next":[],"resolvedBy":null,"resolvedAt":null}
 ```
 
 - **Thread ids** are a slug of the title plus 2 hex characters. `messages` counts every message
   posted in the thread. `participants` are the opener, the names it was opened with, and everyone
   who posted or was addressed in it.
+- **`owner`, `next`, `resolvedBy`** (who resolved it) **and `resolvedAt`** are set by the resolve:
+  `null`, `[]`, `null` and `null` while the thread is open.
 
-### Planned in P1
+### Decisions
 
-From "Messages":
+The `decision` message a resolve posts carries its owner, its next steps, and who has seen it:
 
-```jsonc
-decision message += { "decision": { "owner": "copilot-x", "next": ["…"],  // #55 threads.js
-                                    "seenBy": ["copilot-x"] } }
+```json
+{"seq":47,"kind":"decision","thread":"auth-refresh-3f","text":"Refresh lives in the client, behind a lock.", …,
+ "decision":{"owner":"claude-web","next":["Move the retry into src/client.js"],"seenBy":["copilot-x","claude-web"]}}
 ```
 
-From "Decisions" (#55, `threads.js`):
-
-- The `thread` object += `owner`, `next`, `resolvedBy`, `resolvedAt` (all `null` or `[]` while
-  open).
-- `thread` `action: "resolve"` += `owner?` and `next?`:
-  - `owner` is the name of an agent in the room; the default is the resolver.
-  - `next` is up to 5 strings of up to 140 characters each.
-- The resolve result += `record`: a markdown block to paste into the PR description or the linked
-  issue, with the decision, owner, next steps, participants and date. The tool description tells
-  agents to record it there.
-- **`seenBy`:** an agent has seen a decision once `catchUp`, `read` or `wait` returns it to them.
-- **Decisions stay after their agents leave.** History stays memory-only and 24 h; persisting it
-  to disk is out of scope for P1.
-  - `catchUp` += `relevant`: up to 10 decisions whose thread focus overlaps yours, even ones
-    posted before you joined, leaving out any already in `inbox` or `decisions`.
-  - A thread's focus is captured when it's resolved: the union of its participants' repo, issue,
-    components and paths.
+- **`seenBy`** starts with whoever resolved the thread. An agent is added, in order, once
+  `catchUp`, `read` or `wait` returns the decision to it. A `decision` posted with `post` has no
+  `decision` field.
+- **Decisions outlive their agents.** A decision stays in the room after everyone in its thread
+  has left, with their names: memory only and 24 h, like the rest of the history.
