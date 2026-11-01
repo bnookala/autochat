@@ -151,9 +151,9 @@ shuts down, every subscriber connection is closed (EOF).
 | `now` | ms epoch | daemon clock when the snapshot was built |
 | `phase` | string | `lounge` (waiting for autopilot), `room` (in the room, can chat), `spectating` (host pulled back, read-only), `reality` / `dead` / `left` (banner showing; returns to `lounge` after ~6 s) |
 | `room.display` | string | room name to show (`#lobby`, `private:…`); set in every phase |
-| `room.isHost` | bool | you host the current room instance |
+| `room.isHost` | bool | you're the room's host: you started this room instance, or it was [handed on](#lounge-room-host-p2p) to you |
 | `room.activeCount` | int | people in the room on autopilot (including you); `0` outside a room |
-| `room.hostHandle` | string \| null | the host's handle once known |
+| `room.hostHandle` | string \| null | the current host's handle once known; it changes when the host leaves |
 | `room.peers` | int | connected peers; `0` in a room means "searching for peers…" |
 | `me.handle`, `me.color` | string | your anonymous handle and its color |
 | `members[]` | array | everyone in the room, you first; `[]` outside a room |
@@ -250,6 +250,59 @@ re-renders on every `state` stays current.
 - Length: `autochat config countdown <seconds>` (`countdownSeconds` in
   `~/.autochat/config.json`, default 30). `0` turns it off: you're pulled back the moment
   autopilot ends. `AUTOCHAT_COUNTDOWN_MS` overrides it in milliseconds (for tests).
+
+## Lounge room host (P2P)
+
+How the peers in a lounge room agree on its host. Clients need none of this: `room.isHost`,
+`room.hostHandle` and `members[].isHost` always name the current host, and a host change adds a
+`sys` message: "jade-lynx-0c is now host (handed off by stormy-newt-59)", or "… (stormy-newt-59
+timed out)" ("you're now host …" when it's you). Being host only gets you the label and the right
+to stay as a spectator when you're pulled back.
+
+Peers sign every message with their identity key and send their `state` every 5 s. The host lives
+in two fields of `state`:
+
+- **`inst`** `{iid, createdAt, hostId, sig}`: the room instance, created and signed by whoever was
+  in the room first (`sig` by `hostId` over `lolchat:v1:inst:<roomTag>:<iid>:<createdAt>:<hostId>`).
+  When two instances meet, the older one wins (`createdAt`, then `iid`). Unchanged since v1.
+- **`succession`** (optional, left out while empty): the host changes since then, oldest first.
+  The current host is the last entry's `hostId`, or `inst.hostId` if there are none. `state` also
+  carries **`since`**: when the sender entered this instance (ms epoch).
+
+| Entry `kind` | Fields | Signed by, over |
+| --- | --- | --- |
+| `handoff` | `{epoch, hostId, by, kind, ts, sig}` | `by`, the host handing over: `lolchat:v1:handoff:<roomTag>:<iid>:<epoch>:<hostId>:<ts>` |
+| `timeout` | `{epoch, hostId, by, kind, since, ts, sig}` | `hostId`, the claimant (`since` is its own): `lolchat:v1:timeout:<roomTag>:<iid>:<epoch>:<by>:<hostId>:<since>:<ts>` |
+
+A chain is checked from `inst.hostId`: epochs are 1, 2, 3, …, each entry's `by` is the host before
+it, `hostId` is someone else, and every signature holds. Anything else rejects the whole chain. A
+chain has at most 32 entries; after that the host doesn't change any more.
+
+- **Leaving.** Before its `bye`, a leaving host (quitting, ctrl-c, pulled back with nobody else on
+  autopilot, or a spectating host that leaves before the room dies) sends one more `state` with a
+  `handoff` to the member that joined earliest and is on autopilot, or else to the earliest
+  spectator. Only members that send `since` qualify, so a room of older peers gets no handoff.
+- **Timing out.** When the host vanishes without a handoff (a crash, a lost network, an older
+  version leaving), the active member with the smallest `since` (ties: the lower key) claims the
+  room with a `timeout` entry as soon as the host has left in its view. The host has left in a
+  peer's view once it timed out (16 s without a `state`) or sent `bye`, or, if the peer never heard
+  from it, once the peer has been in the instance for 16 s. A peer accepts a `timeout` entry only
+  if the old host has left in its own view, the claimant's `since` is the one in the claimant's
+  `state` (when it's in the room), and no active member it knows, itself included, has a smaller
+  `since` (or the same and a lower key). Chains ride along in every `state`, so a claim a peer
+  turned down too early is taken later. A host never accepts a timeout claim against itself: one
+  that dropped off (say, a laptop asleep) and came back after someone took over goes on hosting in
+  its own view until it leaves, and its handoff then settles it.
+- **Choosing between chains** (after a network split heals, or a race): a chain that extends yours
+  replaces it. Where two chains fork, a `handoff` beats a `timeout`, since the host's own word
+  outranks a guess. Between two timeouts, the claimant with the smaller `since` (then the lower
+  key) wins. Otherwise (a host that signed two handoffs), the longer chain wins, then the one whose
+  last entry has the lower SHA-256.
+- **Older peers** ignore `succession` and `since`. They keep verifying `inst`, stay in the room, and
+  show the original host: a stale label, nothing more.
+- **Limitation.** A newcomer can't check that a host really timed out, and `since` is self-reported.
+  So once a host has timed out, a malicious member can claim to be its successor. That's fine for
+  lounge rooms, where the host only gets a label and spectating; agent rooms must not reuse this.
 
 ## Agent room (local)
 

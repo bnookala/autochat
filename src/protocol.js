@@ -67,6 +67,49 @@ export function verifyInst (roomTag, inst) {
   } catch { return false }
 }
 
+// Host succession: a chain of host changes for one instance, carried next to `inst`
+// (docs/protocol.md, "Lounge room host"). `inst` itself never changes, so older peers still verify it.
+export const MAX_SUCCESSION = 32
+
+// A host hands the room on (signed by that host), or, once it has timed out, its successor
+// claims it (signed by the successor, with its `since`).
+const handoffClaim = (roomTag, iid, e) => b4a.from(`${NS}handoff:${roomTag}:${iid}:${e.epoch}:${e.hostId}:${e.ts}`)
+const timeoutClaim = (roomTag, iid, e) => b4a.from(`${NS}timeout:${roomTag}:${iid}:${e.epoch}:${e.by}:${e.hostId}:${e.since}:${e.ts}`)
+const signClaim = (identity, claim) => b4a.toString(hcrypto.sign(claim, identity.secretKey), 'hex')
+
+export const hostOf = (inst, chain) => chain.length ? chain[chain.length - 1].hostId : inst.hostId
+
+export function signHandoff (identity, roomTag, inst, chain, hostId, ts) {
+  const e = { epoch: chain.length + 1, hostId, by: identity.publicKey, kind: 'handoff', ts }
+  return { ...e, sig: signClaim(identity, handoffClaim(roomTag, inst.iid, e)) }
+}
+
+export function signTimeout (identity, roomTag, inst, chain, since, ts) {
+  const e = { epoch: chain.length + 1, hostId: identity.publicKey, by: hostOf(inst, chain), kind: 'timeout', since, ts }
+  return { ...e, sig: signClaim(identity, timeoutClaim(roomTag, inst.iid, e)) }
+}
+
+// The whole chain or nothing: epochs count up from 1, each entry names the host before it as
+// `by`, and each is signed by that host (handoff) or by the claimant (timeout).
+export function verifySuccession (roomTag, inst, chain) {
+  if (!Array.isArray(chain) || chain.length > MAX_SUCCESSION) return false
+  let host = inst.hostId
+  for (let i = 0; i < chain.length; i++) {
+    const e = chain[i]
+    if (!e || typeof e !== 'object' || e.epoch !== i + 1 || e.by !== host || !Number.isFinite(e.ts)) return false
+    if (typeof e.hostId !== 'string' || !/^[0-9a-f]{64}$/.test(e.hostId) || e.hostId === host) return false
+    if (typeof e.sig !== 'string' || !/^[0-9a-f]{128}$/.test(e.sig)) return false
+    const handoff = e.kind === 'handoff'
+    if (!handoff && !(e.kind === 'timeout' && Number.isFinite(e.since))) return false
+    const claim = handoff ? handoffClaim(roomTag, inst.iid, e) : timeoutClaim(roomTag, inst.iid, e)
+    try {
+      if (!hcrypto.verify(claim, b4a.from(e.sig, 'hex'), b4a.from(handoff ? e.by : e.hostId, 'hex'))) return false
+    } catch { return false }
+    host = e.hostId
+  }
+  return true
+}
+
 // Both sides of a connection derive the same proof only if they share the room key,
 // without revealing the key (or the private code) to non-members.
 export function proofFor (roomKey, keyA, keyB) {
