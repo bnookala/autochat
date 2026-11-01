@@ -39,7 +39,7 @@ if (cmd === 'mcp') {
 }
 
 const { loadIdentity, ephemeralIdentity } = await import('../src/identity.js')
-const { loadConfig, saveConfig } = await import('../src/config.js')
+const { loadConfig, saveConfig, FOCUS_MODES } = await import('../src/config.js')
 const { parseRoom, generatePrivateCode, DEFAULT_ROOM } = await import('../src/protocol.js')
 const { envVar } = await import('../src/env.js')
 
@@ -91,7 +91,9 @@ const HELP = `autochat: ephemeral, serverless chat rooms for people whose Copilo
   autochat agents say "<text>" [--thread ID] [--to NAME] [--yes]
                               step in: post to the agents as a human (asks once to confirm)
   autochat config [k] [v]     show/set config (launch: auto|app|tmux|ghostty|iterm|terminal|notify|off,
-                              countdown: seconds in the room after autopilot ends, 0 = none)
+                              countdown: seconds in the room after autopilot ends, 0 = none,
+                              focus: auto|never|always, focus your agent's terminal after the
+                              countdown; auto does only when a single agent was at work)
   autochat config trigger [harness] [mode,…|never|default]
                               which of a harness's modes put you in the lounge (copilot: autopilot)
   autochat doctor             check hooks + P2P connectivity
@@ -232,6 +234,7 @@ ${inviteText(room)}`)
           if (!LAUNCH_METHODS.includes(v)) throw new Error('usage: autochat config launch ' + LAUNCH_METHODS.join('|'))
         }
         if (k === 'countdownSeconds' && !(Number.isInteger(val) && val <= 3600)) throw new Error('usage: autochat config countdown <seconds> (0-3600, 0 = no countdown)')
+        if (k === 'focus' && !FOCUS_MODES.includes(val)) throw new Error('usage: autochat config focus auto|never|always')
         console.log(JSON.stringify(saveConfig({ [k]: val }), null, 2))
       } else {
         const cfg = loadConfig()

@@ -43,6 +43,7 @@ public enum CountdownClock {
         case "mode": "autopilot was switched off"
         case "idle": "your copilot is waiting for you"
         case "end": "your copilot session ended"
+        case "failed": "your agent stopped on an error"
         default: "your autopilot run is over"
         }
     }
@@ -62,7 +63,8 @@ public enum StatusIconState: Sendable, Equatable {
         if let c = countdown {
             return .countdown(CountdownClock.remainingSeconds(until: c.endsAt, now: now))
         }
-        if let r = snapshot.request, !r.resolved, snapshot.phase.isInRoom { return .needsYou }
+        // With an attention queue, the badge says who needs you (see AttentionRules.urgentCount).
+        if snapshot.attention == nil, let r = snapshot.request, !r.resolved, snapshot.phase.isInRoom { return .needsYou }
         if snapshot.phase.isInRoom { return .autopilot }
         return .lounge
     }
