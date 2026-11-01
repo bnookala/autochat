@@ -407,6 +407,8 @@ export class Controller extends EventEmitter {
     this.room = null
     this.phase = 'left'
     this.banner = { kind: 'left' }
+    // Nothing else ever finishes the manual "Join now" pseudo-session, so retire it here.
+    for (const [key, s] of this.sessions) if (s.manual) this.sessions.delete(key)
     if (room) await room.leave('left').catch(() => {})
     this._afterBanner()
   }
