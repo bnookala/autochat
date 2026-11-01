@@ -28,7 +28,8 @@ export const methods = {
       case 'resolve': {
         if (!isStr(msg.thread) || !this.threads.has(msg.thread)) fail(`unknown thread: ${label(msg.thread)}`)
         const t = this.threads.get(msg.thread)
-        if (t.status !== 'open') fail(`thread ${t.id} is already resolved`)
+        // Two agents resolving the same thread: the first outcome stands.
+        if (t.status !== 'open') return { thread: this._threadView(t), alreadyResolved: true }
         const outcome = this._text(msg.outcome, this.limits.outcome, 'outcome')
         t.status = 'resolved'
         t.outcome = outcome
