@@ -429,7 +429,7 @@ test('CLI: setup offers opencode; setup --harness opencode installs the plugin, 
 })
 
 test('autochat hook --harness opencode: a headless run opens autochat; the TUI never does', () => {
-  const env = { ...baseEnv, HOME: path.join(tmp, 'hook-home'), AUTOCHAT_HOME: path.join(tmp, 'hook-ac'), AUTOCHAT_LAUNCH_RECORD: path.join(tmp, 'hook-launches.jsonl'), AUTOCHAT_APP_DIRS: path.join(tmp, 'no-apps'), AUTOCHAT_DEBUG: '1' }
+  const env = { ...baseEnv, HOME: path.join(tmp, 'hook-home'), AUTOCHAT_HOME: path.join(tmp, 'hook-ac'), AUTOCHAT_LAUNCH_RECORD: path.join(tmp, 'hook-launches.jsonl'), AUTOCHAT_APP_DIRS: path.join(tmp, 'no-apps'), AUTOCHAT_DEBUG: '1', TMUX: '/x/tmux,1,0', TMUX_PANE: '%1' }
   const hook = (event, payload) => {
     const r = spawnSync(process.execPath, [BIN, 'hook', '--harness', 'opencode', event], { input: JSON.stringify(payload), env, encoding: 'utf8' })
     assert.equal(r.stdout, '')
