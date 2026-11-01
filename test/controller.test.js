@@ -261,3 +261,54 @@ test('leaving during the countdown behaves like ctrl-c always did', { timeout: 6
   assert.equal(c.focused.length, 0)
   await waitFor(() => c.phase === 'lounge', 3000, 'back to the lounge')
 })
+
+test('autochat join/host/leave while the core runs: the room is re-read on entering one, never under an open room', { timeout: 60000 }, async (t) => {
+  const testnet = await createTestnet(3)
+  t.after(() => testnet.destroy())
+  const { saveConfig, loadConfig } = await import('../src/config.js')
+  const { Room } = await import('../src/room.js')
+  const { parseRoom } = await import('../src/protocol.js')
+  const code = (words) => `lc1-${words}-${Math.random().toString(36).slice(2, 12)}`
+  const [first, second, third, fourth] = [code('ctl-first'), code('ctl-second'), code('ctl-third'), code('ctl-fourth')]
+  saveConfig({ room: first })
+  const c = new Controller({
+    identity: ephemeralIdentity(),
+    config: { ...loadConfig(), idleMs: 400, announce: false, countdownSeconds: 0 },
+    loadConfig,
+    bootstrap: testnet.bootstrap,
+    roomOpts: FAST,
+    focus: () => {},
+    notify: () => {},
+    bannerMs: 300,
+    watchLogs: false
+  })
+  t.after(() => c.shutdown())
+  assert.equal(c.snapshot().room.display, 'private:ctl-first')
+
+  // `autochat join` in the lounge, then autopilot: the core enters the new room.
+  saveConfig({ room: second })
+  c.handle(hook('j1', 'activity'))
+  assert.equal(c.phase, 'room')
+  assert.equal(c.room.room.code, second)
+  assert.equal(c.snapshot().room.display, 'private:ctl-second')
+  const peer = new Room({ room: parseRoom(second), identity: ephemeralIdentity(), bootstrap: testnet.bootstrap, ...FAST })
+  t.after(() => peer.leave())
+  await peer.join()
+  await waitFor(() => [...c.room.members.values()].some(m => m.from === peer.me), 20000, 'a peer in the new room')
+
+  // A reload while the room is open changes nothing until the next room.
+  saveConfig({ room: third })
+  assert.deepEqual(c.handle({ type: 'reload' }), { reloaded: false, room: 'private:ctl-second' })
+  assert.equal(c.room.room.code, second)
+  assert.equal(c.snapshot().room.display, 'private:ctl-second')
+
+  // Back in the lounge it shows the configured room; a reload there applies at once.
+  await c.leaveRoom()
+  await waitFor(() => c.phase === 'lounge', 3000, 'back to the lounge')
+  assert.equal(c.snapshot().room.display, 'private:ctl-third')
+  saveConfig({ room: fourth })
+  assert.deepEqual(c.handle({ type: 'reload' }), { reloaded: true, room: 'private:ctl-fourth' })
+  assert.equal(c.snapshot().room.display, 'private:ctl-fourth')
+  c.handle(hook('j2', 'activity'))
+  assert.equal(c.room.room.code, fourth)
+})

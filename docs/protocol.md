@@ -20,6 +20,10 @@ autochat daemon            # or: node <install>/bin/autochat.js daemon
 
 - Headless: no TTY needed, nothing on stdout. One status line per lifecycle event on stderr.
 - Never exits on its own. When autopilot ends it shows the banner, then returns to `lounge`.
+- Reads `room` from `config.json` again whenever it's about to enter a room (and when it gets back
+  to `lounge`), never while a room is open. So `autochat join`, `host` and `leave` apply to the next
+  autopilot run without a restart, and they send [`reload`](#one-shot-requests) so the lounge
+  shows the new room at once.
 - `SIGTERM`, `SIGINT` (and `SIGHUP`) leave the room cleanly, stop tailing session logs,
   close all subscriber connections, remove the socket, and exit `0` (forced after 5 s).
 - Single instance. If the socket is already owned by a live autochat process, the daemon
@@ -78,17 +82,23 @@ The terminal UI (`autochat ui`) serves the same socket and protocol, with `daemo
 
 ## One-shot requests
 
-These are what hooks and `autochat status` use. Replies always carry `ok`.
+These are what hooks, `autochat status`, and `autochat join`/`host`/`leave` use. Replies always carry `ok`.
 
 | Request | Reply |
 | --- | --- |
 | `{"type":"ping"}` | `{"ok":true,"pong":true,"phase":"lounge","daemon":true,"pid":123,"agentRoom":true}` |
 | `{"type":"status"}` | `{"ok":true,"phase":"room","room":"#lobby","sessions":[{"sid","state","cwd"}]}` |
 | `{"type":"hook",…}` | `{"ok":true,"tracked":true}` (message built by `autochat hook`, see `src/hook.js`) |
+| `{"type":"reload"}` | `{"ok":true,"reloaded":true,"room":"#rustaceans"}` |
 
 `daemon` is `true` for `autochat daemon` and `false` for the terminal UI. `agentRoom` says
 whether this process hosts the agent room (only the daemon does). Unparseable lines get
 `{"ok":false}`.
+
+`autochat join`, `host` and `leave` send `reload` after saving `config.json`. Outside a room the
+core reads `room` again right away (`reloaded: true`), so `room.display` in the next snapshot is
+the new room. While a room is open (`room` or `spectating`) nothing changes (`reloaded: false`):
+the new room applies the next time the core enters one. `room` is what `room.display` shows now.
 
 ## Subscriptions
 

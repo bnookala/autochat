@@ -41,6 +41,7 @@ export class Controller extends EventEmitter {
   constructor ({
     identity, config, auto = false, daemon = false, bootstrap, roomOpts = {},
     focus = defaultFocus, notify = defaultNotify, bannerMs = 6000, watchLogs = true, requestLingerMs = 20000,
+    loadConfig = null,
     countdownMs = countdownMsFor(config)
   }) {
     super()
@@ -51,6 +52,7 @@ export class Controller extends EventEmitter {
     this.requestLingerMs = requestLingerMs
     this.identity = identity
     this.config = config
+    this.loadConfig = loadConfig
     this.auto = auto
     this.daemon = daemon
     this.bootstrap = bootstrap
@@ -75,6 +77,7 @@ export class Controller extends EventEmitter {
 
   handle (msg) {
     if (!msg || typeof msg !== 'object') return { ok: false }
+    if (msg.type === 'reload') return this.reload()
     if (msg.type === 'ping') return { pong: true, phase: this.phase, daemon: this.daemon, pid: process.pid }
     if (msg.type === 'status') return { phase: this.phase, room: this.roomInfo.display, sessions: [...this.sessions.values()].map(s => ({ sid: s.sid, state: s.state, cwd: s.cwd })) }
     if (msg.type === 'hook') return { tracked: this._onHook(msg) }
@@ -281,6 +284,20 @@ export class Controller extends EventEmitter {
     return this.countdown ? Math.max(0, Math.ceil((this.countdown.endsAt - Date.now()) / 1000)) : null
   }
 
+  // `autochat join`/`host`/`leave` changed the room in config.json. Never switch under an open
+  // room: then it's picked up the next time we enter one.
+  reload () {
+    if (this.room) return { reloaded: false, room: this.roomInfo.display }
+    this._loadRoom()
+    this._changed()
+    return { reloaded: true, room: this.roomInfo.display }
+  }
+
+  _loadRoom () {
+    if (!this.loadConfig) return
+    try { this.roomInfo = parseRoom(this.loadConfig().room) } catch {}
+  }
+
   _enterRoom (status) {
     clearTimeout(this.bannerTimer)
     this.banner = null
@@ -292,6 +309,7 @@ export class Controller extends EventEmitter {
     }
     this.phase = 'room'
     this.messages = []
+    this._loadRoom()
     const room = new Room({ room: this.roomInfo, identity: this.identity, status, bootstrap: this.bootstrap, announce: this.config.announce, ...this.roomOpts })
     this.room = room
     room.on('change', () => this._changed())
@@ -354,7 +372,7 @@ export class Controller extends EventEmitter {
     this.bannerTimer = setTimeout(() => {
       if (this.phase !== 'reality' && this.phase !== 'dead' && this.phase !== 'left') return
       if (this.auto) this.emit('exit')
-      else { this.phase = 'lounge'; this.banner = null; this._changed() }
+      else { this.phase = 'lounge'; this.banner = null; this._loadRoom(); this._changed() }
     }, this.bannerMs)
     this._changed()
   }
