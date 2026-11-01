@@ -4,7 +4,8 @@ import Observation
 
 /// Single source of UI state: the latest daemon snapshot plus local, time-driven state
 /// (the ticking countdown, the autopilot notice, the closeout timer). Shared by the status
-/// item, the descending panel and the chat window. The Agents tab's state lives in `agents`.
+/// item, the descending panel and the chat window. The Agents tab's state lives in `agents`;
+/// the attention queue comes with the snapshot.
 @MainActor
 @Observable
 public final class AppModel {
@@ -20,10 +21,21 @@ public final class AppModel {
     public private(set) var closeoutClosesAt: Date?
     public private(set) var lastError: String?
     public var chatWindow: ChatWindowState = .closed {
-        didSet { if chatWindow != oldValue { updateAgentsSubscription() } }
+        didSet {
+            guard chatWindow != oldValue else { return }
+            updateAgentsSubscription()
+            markAttentionSeenInChat()
+        }
     }
+    /// Blocked items already seen (in the chat, or by jumping to them): they don't bring the
+    /// panel down again. They stay in the queue (and the badge) until the agent carries on.
+    public private(set) var seenAttention: Set<String> = []
+    /// The chat's attention strip shows the whole queue rather than its first item.
+    public var attentionExpanded = false
     /// The tab the user picked; `effectiveTab` is what the window shows.
-    public private(set) var chatTab: ChatTab = .lounge
+    public private(set) var chatTab: ChatTab = .lounge {
+        didSet { markAttentionSeenInChat() }
+    }
     public let agents: AgentsModel
     public var draft: String = "" {
         didSet { if draft.count > 500 { draft = String(draft.prefix(500)) } }
@@ -97,12 +109,23 @@ public final class AppModel {
         PanelRules.decide(PanelInputs(
             connected: connected, phase: snapshot?.phase ?? .lounge, countdown: countdown,
             request: snapshot?.request, dismissedRequestKey: dismissedRequestKey,
-            autopilotNoticeUntil: autopilotNoticeUntil, chat: chatWindow, chatShowsLounge: effectiveTab == .lounge, now: now
+            autopilotNoticeUntil: autopilotNoticeUntil, chat: chatWindow, chatShowsLounge: effectiveTab == .lounge,
+            attention: snapshot?.attention, seenAttention: seenAttention, now: now
         ))
     }
 
     public var iconState: StatusIconState {
         StatusIconState.from(connected: connected, snapshot: snapshot, countdown: countdown, now: now)
+    }
+
+    /// The attention queue, urgent first.
+    public var attention: [AttentionItem] {
+        connected ? AttentionRules.sorted(snapshot?.attention ?? []) : []
+    }
+
+    /// The menu bar badge: agents blocked on you.
+    public var badgeCount: Int {
+        connected ? AttentionRules.urgentCount(snapshot?.attention) : 0
     }
 
     public var countdownRemaining: Int? {
@@ -136,8 +159,12 @@ public final class AppModel {
         }
         if !next.phase.isCloseout { closeoutClosesAt = nil }
         if (previous?.agents == nil) != (next.agents == nil) { DebugLog.log("agent room \(next.agents == nil ? "gone" : "available")") }
+        if previous?.attention != next.attention { DebugLog.log("attention: \(AttentionRules.counts(next.attention ?? []))") }
+        seenAttention.formIntersection((next.attention ?? []).map(\.id))
+        if (next.attention ?? []).count < 2 { attentionExpanded = false }
         reschedule()
         updateAgentsSubscription()
+        markAttentionSeenInChat()
     }
 
     func connectionChanged(_ state: DaemonClient.State) {
@@ -200,6 +227,25 @@ public final class AppModel {
 
     public func dismissAutopilotNotice() {
         autopilotNoticeUntil = nil
+    }
+
+    /// Jump to: focus that agent's terminal. A blocked agent stays in the queue until it carries
+    /// on, but the panel won't come down for it again.
+    public func jump(to item: AttentionItem) {
+        if item.kind.isUrgent { seenAttention.insert(item.id) }
+        perform(.jumpTo(item.id))
+    }
+
+    public func dismiss(_ item: AttentionItem) {
+        seenAttention.insert(item.id)
+        perform(.dismissAttention(item.id))
+    }
+
+    /// What the chat shows in front of you counts as seen: the panel doesn't nag about it later.
+    private func markAttentionSeenInChat() {
+        guard chatWindowIsVisibleAndKey(chatWindow), effectiveTab == .lounge, let items = snapshot?.attention else { return }
+        let urgent = items.filter(\.kind.isUrgent).map(\.id)
+        if !seenAttention.isSuperset(of: urgent) { seenAttention.formUnion(urgent) }
     }
 
     public func selectTab(_ tab: ChatTab) {

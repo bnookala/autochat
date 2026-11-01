@@ -70,6 +70,10 @@ extension Optional where Wrapped == HandleColor {
 /// SF Symbol names used by the status item, with fallbacks for older systems.
 enum Symbols {
     static func image(_ names: String..., description: String) -> NSImage? {
+        image(names, description: description)
+    }
+
+    static func image(_ names: [String], description: String) -> NSImage? {
         for name in names {
             if let image = NSImage(systemSymbolName: name, accessibilityDescription: description) { return image }
         }

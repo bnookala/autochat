@@ -3,9 +3,9 @@ import AutoChatCore
 import SwiftUI
 
 /// `AutoChat --render-snapshots <dir>`: renders the descending panel, the chat window and its
-/// Agents tab from fixture snapshots to PNGs, without screen-recording permission (NSView
-/// bitmap caching of offscreen windows). Writes light-mode files with the canonical names plus
-/// `-dark` variants.
+/// Agents tab, the attention queue and the status item's badge from fixture snapshots to PNGs,
+/// without screen-recording permission (NSView bitmap caching of offscreen windows). Writes
+/// light-mode files with the canonical names plus `-dark` variants.
 @MainActor
 enum SnapshotRenderer {
     static func renderAll(to dir: URL) -> Bool {
@@ -49,6 +49,21 @@ enum SnapshotRenderer {
                 AgentsModel(fixture: Fixtures.agents(now: now), intervening: true),
                 now: now, appearance: appearance, to: dir.appendingPathComponent("agents-ack\(suffix).png")
             ) && ok
+            // The attention queue: the badge, the panel when agents are blocked on you, the
+            // countdown with several agents, and the strip in the chat (collapsed, expanded, and
+            // back in the lounge).
+            ok = render(BadgeScene(dark: appearance == .darkAqua), size: NSSize(width: 600, height: 150), appearance: appearance, to: dir.appendingPathComponent("status-item-badge\(suffix).png")) && ok
+            ok = renderPanel(.attention, snapshot: Fixtures.attention(now: now), now: now, appearance: appearance, to: dir.appendingPathComponent("status-panel-attention\(suffix).png"), height: 520) && ok
+            ok = renderPanel(
+                .countdown, snapshot: Fixtures.attentionCountdown(now: now, remaining: 22.6), now: now, appearance: appearance,
+                to: dir.appendingPathComponent("status-panel-countdown-queue\(suffix).png"), height: 430
+            ) && ok
+            ok = renderChat(Fixtures.attention(now: now), now: now, draft: "", appearance: appearance, to: dir.appendingPathComponent("chat-window-attention\(suffix).png")) && ok
+            ok = renderChat(
+                Fixtures.attention(now: now), now: now, draft: "", appearance: appearance,
+                to: dir.appendingPathComponent("chat-window-attention-expanded\(suffix).png"), attentionExpanded: true
+            ) && ok
+            ok = renderChat(Fixtures.attentionLounge(now: now), now: now, draft: "", appearance: appearance, to: dir.appendingPathComponent("chat-window-lounge-attention\(suffix).png")) && ok
         }
         return ok
     }
@@ -64,10 +79,10 @@ enum SnapshotRenderer {
 
     // MARK: Panel (shown hanging from a mock menu bar so the "descending" placement is visible)
 
-    private static func renderPanel(_ kind: PanelKind, snapshot: Snapshot, now: Date, appearance: NSAppearance.Name, to url: URL) -> Bool {
+    private static func renderPanel(_ kind: PanelKind, snapshot: Snapshot, now: Date, appearance: NSAppearance.Name, to url: URL, height: CGFloat? = nil) -> Bool {
         let model = AppModel(fixture: snapshot, now: now)
         let scene = PanelScene(model: model, kind: kind, dark: appearance == .darkAqua)
-        return render(scene, size: NSSize(width: 600, height: kind == .autopilot ? 200 : 250), appearance: appearance, to: url)
+        return render(scene, size: NSSize(width: 600, height: height ?? (kind == .autopilot ? 200 : 250)), appearance: appearance, to: url)
     }
 
     private static func render<V: View>(_ view: V, size: NSSize, appearance: NSAppearance.Name, to url: URL) -> Bool {
@@ -84,9 +99,12 @@ enum SnapshotRenderer {
 
     // MARK: Chat window (the real window and toolbar, drawn as key)
 
-    private static func renderChat(_ snapshot: Snapshot, now: Date, draft: String, appearance: NSAppearance.Name, to url: URL, closeoutSeconds: TimeInterval? = nil) -> Bool {
+    private static func renderChat(
+        _ snapshot: Snapshot, now: Date, draft: String, appearance: NSAppearance.Name, to url: URL, closeoutSeconds: TimeInterval? = nil, attentionExpanded: Bool = false
+    ) -> Bool {
         let model = AppModel(fixture: snapshot, now: now, chatWindow: ChatWindowState(isVisible: true, isKey: true, appIsActive: true), draft: draft)
         if let closeoutSeconds { model.showCloseoutTimerForSnapshot(closesAt: now.addingTimeInterval(closeoutSeconds)) }
+        model.attentionExpanded = attentionExpanded
         let (controller, window) = ChatWindowController.makeForSnapshot(model: model, size: NSSize(width: 560, height: 600), appearance: appearance)
         window.orderFrontRegardless()
         settle()
@@ -236,7 +254,7 @@ private struct PanelScene: View {
     }
 
     private var menuBar: some View {
-        let status: StatusIconState = kind == .countdown ? .countdown(model.countdownRemaining ?? 0) : kind == .request ? .needsYou : .autopilot
+        let status = model.iconState
         return HStack(spacing: 18) {
             Image(systemName: "apple.logo").font(.system(size: 14, weight: .medium))
             Text("Terminal").font(.system(size: 13, weight: .bold))
@@ -261,17 +279,79 @@ private struct PanelScene: View {
     }
 
     private func statusItem(_ status: StatusIconState) -> some View {
-        HStack(spacing: 3) {
-            Image(systemName: status == .needsYou ? "bubble.left.and.exclamationmark.bubble.right.fill" : "bubble.left.and.bubble.right.fill")
-                .font(.system(size: 13, weight: .medium))
+        StatusItemMock(status: status, badge: model.badgeCount, dark: dark)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill((dark ? Color.white : Color.black).opacity(0.14)))
+    }
+}
+
+/// The status item as the menu bar draws it: the same template image as the real one.
+private struct StatusItemMock: View {
+    let status: StatusIconState
+    let badge: Int
+    let dark: Bool
+    var scale: CGFloat = 1
+
+    var body: some View {
+        HStack(spacing: 3 * scale) {
+            if let image = StatusIcon.image(for: status, badge: badge, description: "AutoChat") {
+                Image(nsImage: image)
+                    .renderingMode(.template)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: image.size.width * scale, height: image.size.height * scale)
+            }
             if case let .countdown(n) = status {
-                Text(verbatim: "\(n)").font(.system(size: 13, weight: .semibold)).monospacedDigit()
+                Text(verbatim: "\(n)").font(.system(size: 13 * scale, weight: .semibold)).monospacedDigit()
             }
         }
         .foregroundStyle(dark ? Color.white : Color.black.opacity(0.85))
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .background(Capsule().fill((dark ? Color.white : Color.black).opacity(0.14)))
+    }
+}
+
+/// The badge up close: the menu bar at its real size, then each state magnified.
+private struct BadgeScene: View {
+    let dark: Bool
+
+    private let cases: [(StatusIconState, Int, String)] = [
+        (.autopilot, 0, "no one waiting"), (.autopilot, 1, "1 blocked"), (.autopilot, 2, "2 blocked"), (.autopilot, 12, "12 blocked"), (.lounge, 1, "in the lounge")
+    ]
+
+    var body: some View {
+        let ink = dark ? Color.white : Color.black.opacity(0.85)
+        ZStack(alignment: .top) {
+            LinearGradient(
+                colors: dark
+                    ? [Color(red: 0.10, green: 0.12, blue: 0.24), Color(red: 0.22, green: 0.12, blue: 0.30)]
+                    : [Color(red: 0.55, green: 0.70, blue: 0.98), Color(red: 0.86, green: 0.70, blue: 0.95)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            )
+            VStack(spacing: 18) {
+                HStack(spacing: 18) {
+                    Spacer()
+                    StatusItemMock(status: .autopilot, badge: 2, dark: dark)
+                    Image(systemName: "wifi").font(.system(size: 13, weight: .medium))
+                    Image(systemName: "battery.75percent").font(.system(size: 14))
+                    Text("Fri 2:32 PM").font(.system(size: 13, weight: .medium))
+                }
+                .foregroundStyle(ink)
+                .padding(.horizontal, 14)
+                .frame(height: 30)
+                .background(dark ? Color.black.opacity(0.35) : Color.white.opacity(0.45))
+                HStack(alignment: .top, spacing: 26) {
+                    ForEach(Array(cases.enumerated()), id: \.offset) { _, c in
+                        VStack(spacing: 10) {
+                            StatusItemMock(status: c.0, badge: c.1, dark: dark, scale: 3)
+                                .frame(height: 60)
+                            Text(verbatim: c.2)
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(ink.opacity(0.8))
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
