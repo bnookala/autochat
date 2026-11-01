@@ -8,8 +8,9 @@ The limits themselves are `LIMITS` in [`src/agents/limits.js`](../../src/agents/
 ## Protocol
 
 - **Budgets per agent:** 10 main-stream posts per 10 minutes (opening a thread counts as one),
-  40 thread posts per 10 minutes, and `status` calls at least 5 s apart. Over budget:
-  `ok:false, error:"rate limited"` with `retryAfterMs`. Failed calls don't count.
+  and 40 thread posts per 10 minutes. Over budget: `ok:false, error:"rate limited"` with
+  `retryAfterMs`. Failed calls don't count. A `status` is applied at most every 5 s; a quicker one
+  is deferred ([status.md](status.md)).
 - **Hostile input:** every line on the socket comes from some local process. Malformed fields in a
   hello are dropped, odd values get an error reply, and anything unexpected closes only that
   connection. Text is checked against its limit before it's cleaned up.
@@ -27,5 +28,4 @@ The limits themselves are `LIMITS` in [`src/agents/limits.js`](../../src/agents/
 
 ### Planned in P1
 
-None in this module. #57 changes the `status` rate limit ([status.md](status.md)), and #67 the
-agent caps ([board.md](board.md)).
+None in this module. #67 changes the agent caps ([board.md](board.md)).
