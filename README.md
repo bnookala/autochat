@@ -92,6 +92,10 @@ adapter, see [docs/harnesses.md](docs/harnesses.md).
 `~/.pi/agent/extensions/autochat.ts`, a file of autochat's own. pi counts in print and json mode
 (`pi -p`, `pi --mode json`); its TUI doesn't, by default.
 
+**opencode too.** `autochat setup` offers to add a small plugin, `~/.config/opencode/plugin/autochat.js`
+(or run `autochat setup --harness opencode`; `autochat uninstall` removes it). opencode sessions count when
+they run headless (`opencode run`).
+
 ## macOS menu bar app
 
 On macOS, **AutoChat.app** keeps autochat in the menu bar, so no terminal window opens on every autopilot

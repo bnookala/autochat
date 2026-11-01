@@ -1,0 +1,43 @@
+{
+  "opencode": "1.2.6",
+  "how": "opencode run \"SCENARIO:perm\" (bash: ask in opencode.json)",
+  "note": "Recorded from the real opencode: a capture plugin in the project's .opencode/plugin, the model a local stand-in for an OpenAI-compatible API. Every call opencode made into the plugin, in order (message.part.delta and session.diff left out); paths scrubbed, tool output trimmed.",
+  "argv": [
+    "bun",
+    "/$bunfs/root/src/index.js",
+    "run",
+    "SCENARIO:perm"
+  ],
+  "env": {
+    "AGENT": "1",
+    "OPENCODE": "1"
+  },
+  "directory": "/Users/me/code/demo",
+  "calls": [
+    {"event":{"type":"session.created","properties":{"info":{"id":"ses_e6a1c3184ffeK26qpMwHOC2n08","slug":"eager-nebula","version":"1.2.6","projectID":"f6280cf4928d4a9d997ad9efbdd1fe15f2ed7123","directory":"/Users/me/code/demo","title":"New session - 2026-11-01T06:54:57.147Z","permission":[{"permission":"question","pattern":"*","action":"deny"},{"permission":"plan_enter","pattern":"*","action":"deny"},{"permission":"plan_exit","pattern":"*","action":"deny"}],"time":{"created":1793516097147,"updated":1793516097147}}}}},
+    {"event":{"type":"session.updated","properties":{"info":{"id":"ses_e6a1c3184ffeK26qpMwHOC2n08","slug":"eager-nebula","version":"1.2.6","projectID":"f6280cf4928d4a9d997ad9efbdd1fe15f2ed7123","directory":"/Users/me/code/demo","title":"New session - 2026-11-01T06:54:57.147Z","permission":[{"permission":"question","pattern":"*","action":"deny"},{"permission":"plan_enter","pattern":"*","action":"deny"},{"permission":"plan_exit","pattern":"*","action":"deny"}],"time":{"created":1793516097147,"updated":1793516097147}}}}},
+    {"hook":"chat.message","input":{"sessionID":"ses_e6a1c3184ffeK26qpMwHOC2n08"},"output":{"message":{"role":"user","agent":"build"}}},
+    {"event":{"type":"message.updated","properties":{"info":{"id":"msg_195e3ce8f0011y0tbYISvjd8YP","sessionID":"ses_e6a1c3184ffeK26qpMwHOC2n08","role":"user","time":{"created":1793516097167},"agent":"build","model":{"providerID":"mock","modelID":"m1"}}}}},
+    {"event":{"type":"message.part.updated","properties":{"part":{"id":"prt_195e3ce8f002mh8DEAQqFMX8KL","sessionID":"ses_e6a1c3184ffeK26qpMwHOC2n08","messageID":"msg_195e3ce8f0011y0tbYISvjd8YP","type":"text","text":"SCENARIO:perm\n"}}}},
+    {"event":{"type":"session.updated","properties":{"info":{"id":"ses_e6a1c3184ffeK26qpMwHOC2n08","slug":"eager-nebula","projectID":"f6280cf4928d4a9d997ad9efbdd1fe15f2ed7123","directory":"/Users/me/code/demo","title":"New session - 2026-11-01T06:54:57.147Z","version":"1.2.6","permission":[{"permission":"question","pattern":"*","action":"deny"},{"permission":"plan_enter","pattern":"*","action":"deny"},{"permission":"plan_exit","pattern":"*","action":"deny"}],"time":{"created":1793516097147,"updated":1793516097183}}}}},
+    {"event":{"type":"session.status","properties":{"sessionID":"ses_e6a1c3184ffeK26qpMwHOC2n08","status":{"type":"busy"}}}},
+    {"event":{"type":"message.updated","properties":{"info":{"id":"msg_195e3cec8001EHE5WV5hJNl0dc","sessionID":"ses_e6a1c3184ffeK26qpMwHOC2n08","role":"assistant","time":{"created":1793516097224},"parentID":"msg_195e3ce8f0011y0tbYISvjd8YP","modelID":"m1","providerID":"mock","mode":"build","agent":"build","path":{"cwd":"/Users/me/code/demo","root":"/Users/me/code/demo"},"cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}}}},
+    {"event":{"type":"session.updated","properties":{"info":{"id":"ses_e6a1c3184ffeK26qpMwHOC2n08","slug":"eager-nebula","projectID":"f6280cf4928d4a9d997ad9efbdd1fe15f2ed7123","directory":"/Users/me/code/demo","title":"New session - 2026-11-01T06:54:57.147Z","version":"1.2.6","summary":{"additions":0,"deletions":0,"files":0},"permission":[{"permission":"question","pattern":"*","action":"deny"},{"permission":"plan_enter","pattern":"*","action":"deny"},{"permission":"plan_exit","pattern":"*","action":"deny"}],"time":{"created":1793516097147,"updated":1793516097239}}}}},
+    {"event":{"type":"message.updated","properties":{"info":{"id":"msg_195e3ce8f0011y0tbYISvjd8YP","sessionID":"ses_e6a1c3184ffeK26qpMwHOC2n08","role":"user","time":{"created":1793516097167},"summary":{"diffs":[]},"agent":"build","model":{"providerID":"mock","modelID":"m1"}}}}},
+    {"event":{"type":"session.status","properties":{"sessionID":"ses_e6a1c3184ffeK26qpMwHOC2n08","status":{"type":"busy"}}}},
+    {"event":{"type":"session.updated","properties":{"info":{"id":"ses_e6a1c3184ffeK26qpMwHOC2n08","slug":"eager-nebula","projectID":"f6280cf4928d4a9d997ad9efbdd1fe15f2ed7123","directory":"/Users/me/code/demo","title":"Title for perm","version":"1.2.6","summary":{"additions":0,"deletions":0,"files":0},"permission":[{"permission":"question","pattern":"*","action":"deny"},{"permission":"plan_enter","pattern":"*","action":"deny"},{"permission":"plan_exit","pattern":"*","action":"deny"}],"time":{"created":1793516097147,"updated":1793516097309}}}}},
+    {"hook":"tool.execute.before","input":{"tool":"bash","sessionID":"ses_e6a1c3184ffeK26qpMwHOC2n08","callID":"call_mock_12"},"output":{"args":{"command":"touch perm-test.txt","description":"Create a file"}}},
+    {"event":{"type":"permission.asked","properties":{"id":"per_195e3cf350018wt6Y8H3nK44A1","sessionID":"ses_e6a1c3184ffeK26qpMwHOC2n08","permission":"bash","patterns":["touch perm-test.txt"],"metadata":{},"always":["touch *"],"tool":{"messageID":"msg_195e3cec8001EHE5WV5hJNl0dc","callID":"call_mock_12"}}}},
+    {"event":{"type":"permission.replied","properties":{"sessionID":"ses_e6a1c3184ffeK26qpMwHOC2n08","requestID":"per_195e3cf350018wt6Y8H3nK44A1","reply":"reject"}}},
+    {"event":{"type":"message.part.updated","properties":{"part":{"id":"prt_195e3cf48001asWA4CjhwqYgIU","sessionID":"ses_e6a1c3184ffeK26qpMwHOC2n08","messageID":"msg_195e3cec8001EHE5WV5hJNl0dc","type":"step-start","snapshot":"20c729070767db63af25842631ae80ea0bbe6a2a"}}}},
+    {"event":{"type":"message.part.updated","properties":{"part":{"id":"prt_195e3cf49001Gdh491l8QcxkDp","sessionID":"ses_e6a1c3184ffeK26qpMwHOC2n08","messageID":"msg_195e3cec8001EHE5WV5hJNl0dc","type":"tool","callID":"call_mock_12","tool":"bash","state":{"status":"pending","input":{}}}}}},
+    {"event":{"type":"message.part.updated","properties":{"part":{"id":"prt_195e3cf49001Gdh491l8QcxkDp","sessionID":"ses_e6a1c3184ffeK26qpMwHOC2n08","messageID":"msg_195e3cec8001EHE5WV5hJNl0dc","type":"tool","callID":"call_mock_12","tool":"bash","state":{"status":"running","input":{"command":"touch perm-test.txt","description":"Create a file"}}}}}},
+    {"event":{"type":"message.part.updated","properties":{"part":{"id":"prt_195e3cf49001Gdh491l8QcxkDp","sessionID":"ses_e6a1c3184ffeK26qpMwHOC2n08","messageID":"msg_195e3cec8001EHE5WV5hJNl0dc","type":"tool","callID":"call_mock_12","tool":"bash","state":{"status":"error","input":{"command":"touch perm-test.txt","description":"Create a file"},"error":"Error: The user rejected permission to use this specific tool call."}}}}},
+    {"event":{"type":"message.part.updated","properties":{"part":{"id":"prt_195e3cf4d001NpOrWN65WkSBxj","sessionID":"ses_e6a1c3184ffeK26qpMwHOC2n08","messageID":"msg_195e3cec8001EHE5WV5hJNl0dc","type":"step-finish","reason":"tool-calls","snapshot":"20c729070767db63af25842631ae80ea0bbe6a2a","cost":0,"tokens":{"total":15,"input":10,"output":5,"reasoning":0,"cache":{"read":0,"write":0}}}}}},
+    {"event":{"type":"message.updated","properties":{"info":{"id":"msg_195e3cec8001EHE5WV5hJNl0dc","sessionID":"ses_e6a1c3184ffeK26qpMwHOC2n08","role":"assistant","time":{"created":1793516097224},"parentID":"msg_195e3ce8f0011y0tbYISvjd8YP","modelID":"m1","providerID":"mock","mode":"build","agent":"build","path":{"cwd":"/Users/me/code/demo","root":"/Users/me/code/demo"},"cost":0,"tokens":{"total":15,"input":10,"output":5,"reasoning":0,"cache":{"read":0,"write":0}},"finish":"tool-calls"}}}},
+    {"event":{"type":"message.updated","properties":{"info":{"id":"msg_195e3cec8001EHE5WV5hJNl0dc","sessionID":"ses_e6a1c3184ffeK26qpMwHOC2n08","role":"assistant","time":{"created":1793516097224,"completed":1793516097413},"parentID":"msg_195e3ce8f0011y0tbYISvjd8YP","modelID":"m1","providerID":"mock","mode":"build","agent":"build","path":{"cwd":"/Users/me/code/demo","root":"/Users/me/code/demo"},"cost":0,"tokens":{"total":15,"input":10,"output":5,"reasoning":0,"cache":{"read":0,"write":0}},"finish":"tool-calls"}}}},
+    {"event":{"type":"session.status","properties":{"sessionID":"ses_e6a1c3184ffeK26qpMwHOC2n08","status":{"type":"idle"}}}},
+    {"event":{"type":"session.idle","properties":{"sessionID":"ses_e6a1c3184ffeK26qpMwHOC2n08"}}},
+    {"event":{"type":"server.instance.disposed","properties":{"directory":"/Users/me/code/demo"}}}
+  ]
+}

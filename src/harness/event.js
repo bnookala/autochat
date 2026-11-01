@@ -3,7 +3,7 @@ import { isValidSessionId } from '../paths.js'
 // The normalized session event (#17, #30): what every adapter's normalize() returns, what
 // `autochat hook` sends to the core, and what the Controller consumes.
 //
-//   { harness, sid, kind, autonomy, mode, headless, cwd, repo, branch, origin, request, summary, reason, stopped, files }
+//   { harness, sid, kind, autonomy, mode, headless, cwd, repo, branch, origin, request, summary, reason, stopped, files, at, pid }
 //
 // kind
 //   start     the session started; nothing to do yet
@@ -14,12 +14,16 @@ import { isValidSessionId } from '../paths.js'
 //   complete  it says it's done (summary)
 //   failed    it hit an error (reason, summary): stopped is true when the error ended its turn
 //             (Claude's StopFailure); otherwise it carries on (a refused tool call, PermissionDenied)
-//   end       the session or its process ended (reason)
+//   end       the session or its process ended (reason; summary when it says what it last did)
 //   notice    a hook fired and nothing changed (it still refreshes cwd and origin)
 //
 // autonomy says whether the agent works without you taking turns, which is what puts you in the
 // lounge: see byTrigger(). mode is the harness's own name for its mode (`autopilot`, `auto`, …)
-// and headless is true for non-interactive runs (`claude -p`, `codex exec`, …).
+// and headless is true for non-interactive runs (`claude -p`, `codex exec`, …). at is when it
+// happened (ms), from harnesses whose events can reach the core out of order (opencode's plugin):
+// the Controller drops one older than what it already has for that session. pid is the harness
+// process the session lives in, from harnesses that can die without a word (opencode on Ctrl+C):
+// the session ends once it's gone.
 
 export const KINDS = ['start', 'activity', 'request', 'waiting', 'idle', 'complete', 'failed', 'end', 'notice']
 export const AUTONOMY = ['autonomous', 'interactive', 'unknown']
@@ -93,6 +97,8 @@ export function fromHookMessage (msg) {
     reason: msg.reason,
     stopped: msg.stopped === true,
     files: msg.files,
+    at: Number.isFinite(msg.at) && msg.at > 0 ? msg.at : undefined,
+    pid: Number.isInteger(msg.pid) && msg.pid > 0 ? msg.pid : undefined,
     via: msg.via,
     ts: msg.ts
   }

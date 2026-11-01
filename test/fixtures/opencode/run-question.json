@@ -1,0 +1,35 @@
+{
+  "opencode": "1.2.6",
+  "how": "opencode run \"SCENARIO:ask\": the model calls the question tool",
+  "note": "Recorded from the real opencode: a capture plugin in the project's .opencode/plugin, the model a local stand-in for an OpenAI-compatible API. opencode run never answers the question, so it hung here until killed. Every call opencode made into the plugin, in order (message.part.delta and session.diff left out); paths scrubbed, tool output trimmed.",
+  "argv": [
+    "bun",
+    "/$bunfs/root/src/index.js",
+    "run",
+    "SCENARIO:ask"
+  ],
+  "env": {
+    "AGENT": "1",
+    "OPENCODE": "1"
+  },
+  "directory": "/Users/me/code/demo",
+  "calls": [
+    {"event":{"type":"session.created","properties":{"info":{"id":"ses_e6a1c2e2bffe50L5wB94P1KEFI","slug":"kind-harbor","version":"1.2.6","projectID":"f6280cf4928d4a9d997ad9efbdd1fe15f2ed7123","directory":"/Users/me/code/demo","title":"New session - 2026-11-01T06:54:58.004Z","permission":[{"permission":"question","pattern":"*","action":"deny"},{"permission":"plan_enter","pattern":"*","action":"deny"},{"permission":"plan_exit","pattern":"*","action":"deny"}],"time":{"created":1793516098004,"updated":1793516098004}}}}},
+    {"event":{"type":"session.updated","properties":{"info":{"id":"ses_e6a1c2e2bffe50L5wB94P1KEFI","slug":"kind-harbor","version":"1.2.6","projectID":"f6280cf4928d4a9d997ad9efbdd1fe15f2ed7123","directory":"/Users/me/code/demo","title":"New session - 2026-11-01T06:54:58.004Z","permission":[{"permission":"question","pattern":"*","action":"deny"},{"permission":"plan_enter","pattern":"*","action":"deny"},{"permission":"plan_exit","pattern":"*","action":"deny"}],"time":{"created":1793516098004,"updated":1793516098004}}}}},
+    {"hook":"chat.message","input":{"sessionID":"ses_e6a1c2e2bffe50L5wB94P1KEFI"},"output":{"message":{"role":"user","agent":"build"}}},
+    {"event":{"type":"message.updated","properties":{"info":{"id":"msg_195e3d1e50016QCKepiw2evP2x","sessionID":"ses_e6a1c2e2bffe50L5wB94P1KEFI","role":"user","time":{"created":1793516098021},"agent":"build","model":{"providerID":"mock","modelID":"m1"}}}}},
+    {"event":{"type":"message.part.updated","properties":{"part":{"id":"prt_195e3d1e5002jXb74M0jrjFs4r","sessionID":"ses_e6a1c2e2bffe50L5wB94P1KEFI","messageID":"msg_195e3d1e50016QCKepiw2evP2x","type":"text","text":"SCENARIO:ask\n"}}}},
+    {"event":{"type":"session.updated","properties":{"info":{"id":"ses_e6a1c2e2bffe50L5wB94P1KEFI","slug":"kind-harbor","projectID":"f6280cf4928d4a9d997ad9efbdd1fe15f2ed7123","directory":"/Users/me/code/demo","title":"New session - 2026-11-01T06:54:58.004Z","version":"1.2.6","permission":[{"permission":"question","pattern":"*","action":"deny"},{"permission":"plan_enter","pattern":"*","action":"deny"},{"permission":"plan_exit","pattern":"*","action":"deny"}],"time":{"created":1793516098004,"updated":1793516098025}}}}},
+    {"event":{"type":"session.status","properties":{"sessionID":"ses_e6a1c2e2bffe50L5wB94P1KEFI","status":{"type":"busy"}}}},
+    {"event":{"type":"message.updated","properties":{"info":{"id":"msg_195e3d20f001PeohZpfyQ8fSt0","sessionID":"ses_e6a1c2e2bffe50L5wB94P1KEFI","role":"assistant","time":{"created":1793516098063},"parentID":"msg_195e3d1e50016QCKepiw2evP2x","modelID":"m1","providerID":"mock","mode":"build","agent":"build","path":{"cwd":"/Users/me/code/demo","root":"/Users/me/code/demo"},"cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}}}},
+    {"event":{"type":"session.updated","properties":{"info":{"id":"ses_e6a1c2e2bffe50L5wB94P1KEFI","slug":"kind-harbor","projectID":"f6280cf4928d4a9d997ad9efbdd1fe15f2ed7123","directory":"/Users/me/code/demo","title":"New session - 2026-11-01T06:54:58.004Z","version":"1.2.6","summary":{"additions":0,"deletions":0,"files":0},"permission":[{"permission":"question","pattern":"*","action":"deny"},{"permission":"plan_enter","pattern":"*","action":"deny"},{"permission":"plan_exit","pattern":"*","action":"deny"}],"time":{"created":1793516098004,"updated":1793516098071}}}}},
+    {"event":{"type":"message.updated","properties":{"info":{"id":"msg_195e3d1e50016QCKepiw2evP2x","sessionID":"ses_e6a1c2e2bffe50L5wB94P1KEFI","role":"user","time":{"created":1793516098021},"summary":{"diffs":[]},"agent":"build","model":{"providerID":"mock","modelID":"m1"}}}}},
+    {"event":{"type":"session.status","properties":{"sessionID":"ses_e6a1c2e2bffe50L5wB94P1KEFI","status":{"type":"busy"}}}},
+    {"event":{"type":"session.updated","properties":{"info":{"id":"ses_e6a1c2e2bffe50L5wB94P1KEFI","slug":"kind-harbor","projectID":"f6280cf4928d4a9d997ad9efbdd1fe15f2ed7123","directory":"/Users/me/code/demo","title":"Title for ask","version":"1.2.6","summary":{"additions":0,"deletions":0,"files":0},"permission":[{"permission":"question","pattern":"*","action":"deny"},{"permission":"plan_enter","pattern":"*","action":"deny"},{"permission":"plan_exit","pattern":"*","action":"deny"}],"time":{"created":1793516098004,"updated":1793516098140}}}}},
+    {"hook":"tool.execute.before","input":{"tool":"question","sessionID":"ses_e6a1c2e2bffe50L5wB94P1KEFI","callID":"call_mock_14"},"output":{"args":{"questions":[{"question":"Which color should the button be?","header":"Color","options":[{"label":"Red","description":"A red button"},{"label":"Blue","description":"A blue button"}]}]}}},
+    {"event":{"type":"question.asked","properties":{"id":"que_195e3d26a0012U99H18eVFzW6n","sessionID":"ses_e6a1c2e2bffe50L5wB94P1KEFI","questions":[{"question":"Which color should the button be?","header":"Color","options":[{"label":"Red","description":"A red button"},{"label":"Blue","description":"A blue button"}]}],"tool":{"messageID":"msg_195e3d20f001PeohZpfyQ8fSt0","callID":"call_mock_14"}}}},
+    {"event":{"type":"message.part.updated","properties":{"part":{"id":"prt_195e3d28d001P2vANzmXeHQvs6","sessionID":"ses_e6a1c2e2bffe50L5wB94P1KEFI","messageID":"msg_195e3d20f001PeohZpfyQ8fSt0","type":"step-start","snapshot":"20c729070767db63af25842631ae80ea0bbe6a2a"}}}},
+    {"event":{"type":"message.part.updated","properties":{"part":{"id":"prt_195e3d294001BPzgZtFX0MNeEh","sessionID":"ses_e6a1c2e2bffe50L5wB94P1KEFI","messageID":"msg_195e3d20f001PeohZpfyQ8fSt0","type":"tool","callID":"call_mock_14","tool":"question","state":{"status":"pending","input":{}}}}}},
+    {"event":{"type":"message.part.updated","properties":{"part":{"id":"prt_195e3d294001BPzgZtFX0MNeEh","sessionID":"ses_e6a1c2e2bffe50L5wB94P1KEFI","messageID":"msg_195e3d20f001PeohZpfyQ8fSt0","type":"tool","callID":"call_mock_14","tool":"question","state":{"status":"running","input":{"questions":[{"question":"Which color should the button be?","header":"Color","options":[{"label":"Red","description":"A red button"},{"label":"Blue","description":"A blue button"}]}]}}}}}}
+  ]
+}

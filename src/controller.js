@@ -7,6 +7,7 @@ import { envVar } from './env.js'
 import { loadConfig as readConfig } from './config.js'
 import { adapter, triggerFor, focusSession } from './harness/index.js'
 import { SessionMap, sessionKey, fromHookMessage, byTrigger, modesOf } from './harness/event.js'
+import { pidAlive } from './harness/util.js'
 
 const MAX_MESSAGES = 400
 const RUNNING = new Set(['running', 'needed'])
@@ -54,10 +55,12 @@ export class Controller extends EventEmitter {
     identity, config, auto = false, daemon = false, bootstrap, roomOpts = {},
     focus = focusSession, notify = defaultNotify, bannerMs = 6000, watchLogs = true, requestLingerMs = 20000,
     loadConfig = null,
-    countdownMs = countdownMsFor(config)
+    countdownMs = countdownMsFor(config),
+    pidCheckMs = 5000
   }) {
     super()
     this.countdownMs = countdownMs
+    this.pidCheckMs = pidCheckMs
     this.countdown = null
     this.countdownTimer = null
     this.countdownTick = null
@@ -76,6 +79,8 @@ export class Controller extends EventEmitter {
     this.roomInfo = parseRoom(config.room)
     this.sessions = new SessionMap()
     this.finished = new Map()
+    // Per session key, when its newest event with an `at` happened.
+    this.lastAt = new Map()
     this.messages = []
     this.msgSeq = 0
     this.phase = 'lounge'
@@ -112,9 +117,20 @@ export class Controller extends EventEmitter {
     if (!ev) return false
     // Hook messages from before adapters carry only Copilot's mode.
     if (!ev.autonomy) ev.autonomy = this._autonomy(ev.harness, modesOf(ev))
+    const key = sessionKey(ev.harness, ev.sid)
+    // Events that can overtake each other on the way here (opencode's plugin runs a hook per
+    // event) say when they happened: one from before the last one seen for its session, finished
+    // or not, is stale.
+    if (ev.at) {
+      const last = this.lastAt.get(key)
+      if (last && ev.at < last) return this.sessions.has(key)
+      this.lastAt.delete(key)
+      this.lastAt.set(key, ev.at)
+      if (this.lastAt.size > 500) this.lastAt.delete(this.lastAt.keys().next().value)
+    }
     // At work again, or you're chatting with it: its question or its last result is handled.
-    if (ev.kind === 'activity') this._resumeAttention(sessionKey(ev.harness, ev.sid))
-    let s = this.sessions.get(sessionKey(ev.harness, ev.sid))
+    if (ev.kind === 'activity') this._resumeAttention(key)
+    let s = this.sessions.get(key)
     if (!s) {
       if (!(ev.autonomy === 'autonomous' && (ev.kind === 'activity' || ev.kind === 'request'))) return false
       s = this._track(ev)
@@ -124,6 +140,7 @@ export class Controller extends EventEmitter {
     else s.hooked = true
     if (ev.cwd) s.cwd = ev.cwd
     if (ev.origin && (ev.origin.tmuxPane || ev.origin.bundleId || ev.origin.termProgram)) s.origin = ev.origin
+    if (ev.pid && ev.pid !== s.pid) this._watchPid(s, ev.pid)
     if (s.optout && ev.kind !== 'complete' && ev.kind !== 'end') return true
     const leftAutopilot = ev.autonomy === 'interactive'
     switch (ev.kind) {
@@ -165,7 +182,7 @@ export class Controller extends EventEmitter {
         this._finish(s, leftAutopilot ? 'mode' : 'idle', ev.summary)
         break
       case 'end':
-        this._finish(s, 'end')
+        this._finish(s, 'end', ev.summary)
         break
     }
     // Start tailing only now, replaying lifecycle events logged since this hook fired
@@ -189,6 +206,18 @@ export class Controller extends EventEmitter {
       s.log.on('activity', () => { if (RUNNING.has(s.state)) this._clearIdle(s) })
     }
     return s
+  }
+
+  // Some harnesses' processes die without a word (opencode on Ctrl+C): their events say which
+  // process the session lives in, and the session ends once that's gone.
+  _watchPid (s, pid) {
+    clearInterval(s.pidTimer)
+    s.pid = pid
+    s.pidTimer = setInterval(() => {
+      if (this.sessions.get(s.key) !== s) clearInterval(s.pidTimer)
+      else if (!pidAlive(s.pid)) this._finish(s, 'end')
+    }, this.pidCheckMs)
+    s.pidTimer.unref?.()
   }
 
   _run (s, state, request) {
@@ -238,6 +267,7 @@ export class Controller extends EventEmitter {
     if (summary) s.summary = sanitize(summary, 2000)
     this._clearIdle(s)
     clearTimeout(s.reqTimer)
+    clearInterval(s.pidTimer)
     s.log?.stop()
     if (this.sessions.get(s.key) === s) this.sessions.delete(s.key)
     this.finished.set(s.key, Date.now())
@@ -641,7 +671,7 @@ export class Controller extends EventEmitter {
   async shutdown () {
     clearTimeout(this.bannerTimer)
     this._clearCountdown()
-    for (const s of this.sessions.values()) { this._clearIdle(s); clearTimeout(s.reqTimer); s.log?.stop() }
+    for (const s of this.sessions.values()) { this._clearIdle(s); clearTimeout(s.reqTimer); clearInterval(s.pidTimer); s.log?.stop() }
     if (this.room) { const r = this.room; this.room = null; await r.leave('left').catch(() => {}) }
   }
 }
