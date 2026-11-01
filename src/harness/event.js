@@ -3,7 +3,7 @@ import { isValidSessionId } from '../paths.js'
 // The normalized session event (#17, #30): what every adapter's normalize() returns, what
 // `autochat hook` sends to the core, and what the Controller consumes.
 //
-//   { harness, sid, kind, autonomy, mode, headless, cwd, repo, branch, origin, request, summary, reason, files }
+//   { harness, sid, kind, autonomy, mode, headless, cwd, repo, branch, origin, request, summary, reason, stopped, files }
 //
 // kind
 //   start     the session started; nothing to do yet
@@ -12,6 +12,8 @@ import { isValidSessionId } from '../paths.js'
 //   waiting   it finished its turn and sits at its prompt, waiting for you
 //   idle      its turn ended: it may carry on by itself, or wait for you
 //   complete  it says it's done (summary)
+//   failed    it hit an error (reason, summary): stopped is true when the error ended its turn
+//             (Claude's StopFailure); otherwise it carries on (a refused tool call, PermissionDenied)
 //   end       the session or its process ended (reason)
 //   notice    a hook fired and nothing changed (it still refreshes cwd and origin)
 //
@@ -19,7 +21,7 @@ import { isValidSessionId } from '../paths.js'
 // lounge: see byTrigger(). mode is the harness's own name for its mode (`autopilot`, `auto`, …)
 // and headless is true for non-interactive runs (`claude -p`, `codex exec`, …).
 
-export const KINDS = ['start', 'activity', 'request', 'waiting', 'idle', 'complete', 'end', 'notice']
+export const KINDS = ['start', 'activity', 'request', 'waiting', 'idle', 'complete', 'failed', 'end', 'notice']
 export const AUTONOMY = ['autonomous', 'interactive', 'unknown']
 const HARNESS_ID = /^[a-z][a-z0-9-]{0,19}$/
 
@@ -89,6 +91,7 @@ export function fromHookMessage (msg) {
     request: msg.request,
     summary: msg.summary,
     reason: msg.reason,
+    stopped: msg.stopped === true,
     files: msg.files,
     via: msg.via,
     ts: msg.ts
