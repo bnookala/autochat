@@ -200,6 +200,7 @@ export default {
     const binary = ctx.which('pi')
     return { installed: !!binary || isDir(agentDir(ctx)), binary, paths: { extension: extensionFile(ctx) } }
   },
+  hooksNote: 'New pi sessions load the extension; running ones pick it up on /reload.',
   planHooks: (ctx) => planned((c) => computeExtension(c, 'lounge', true), ctx),
   unplanHooks: (ctx) => planned((c) => computeExtension(c, 'lounge', false), ctx),
   hookStatus (ctx) {

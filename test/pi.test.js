@@ -194,7 +194,7 @@ test('CLI: setup offers pi, setup --harness pi and --agents write the extension,
   const dry = cli('setup', '--harness', 'pi', '--dry-run')
   assert.match(dry.stdout, /pi {7}add hooks to ~\/\.pi\/agent\/extensions\/autochat\.ts\n {11}\+ autochat\.ts: lifecycle events → autochat hook --harness pi/)
   assert.equal(fs.existsSync(u.file), false)
-  assert.match(cli('setup', '--harness', 'pi').stdout, /✔ pi hooks installed/)
+  assert.match(cli('setup', '--harness', 'pi').stdout, /✔ pi hooks installed\nNew pi sessions load the extension; running ones pick it up on \/reload\./)
   assert.match(cli('setup', '--agents').stdout, /✔ pi connected/)
   const cfg = readExtension(u.read())
   assert.deepEqual([cfg.bin, cfg.module, cfg.lounge, cfg.room], [BIN, MODULE, true, true], 'the real install')
