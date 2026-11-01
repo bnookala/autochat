@@ -244,7 +244,8 @@ Env overrides: `AUTOCHAT_HOME` (default `~/.autochat`), `COPILOT_HOME` (default 
 `AUTOCHAT_APP_DIRS` (where to look for `AutoChat.app`, default `/Applications:~/Applications`),
 `AUTOCHAT_AGENT_NAME` (an agent's name in the agent room), `AUTOCHAT_HARNESS_PATH` (where
 `setup --agents` looks for harness binaries, default `PATH`), `AUTOCHAT_AGENT_RESUME_MS` (how long a
-disconnected agent can resume, for tests).
+disconnected agent can resume, for tests), `AUTOCHAT_PROCESS_SCAN_MS` (how often the daemon looks for
+running agents, default 15000).
 Each one falls back to its old `LOLCHAT_*` name.
 
 ## Troubleshooting: "autochat didn't open"
@@ -258,6 +259,10 @@ running when you ran `autochat setup` (including ones resumed inside that proces
     its Copilot process started before autochat's hooks were installed, so it can't open autochat.
     fix: run /restart in that session (or exit and `copilot --resume=…`). meanwhile, run `autochat` to join manually.
 ```
+
+`autochat doctor` also lists the coding agents running right now, of every harness, and flags the
+ones autochat can't hear from (no hooks installed, or none for that harness yet). AutoChat.app gets
+the same list from the daemon. That list is only a hint: a running agent never puts you in the room.
 
 Once it's open, the autochat UI also scans `~/.copilot/session-state` every 3s. It follows any live autopilot
 session, with or without hooks, so running `autochat` yourself always works. Without hooks, the request

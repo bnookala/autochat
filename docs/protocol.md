@@ -52,6 +52,8 @@ Environment (all optional):
 | `AUTOCHAT_NO_NOTIFY`, `AUTOCHAT_NO_FOCUS` | disable desktop notifications / focusing the Copilot terminal |
 | `AUTOCHAT_COUNTDOWN_MS` | exit countdown length in ms, overriding `countdownSeconds` (tests) |
 | `AUTOCHAT_AGENT_RESUME_MS` | how long a disconnected agent can resume before it has left (default 10000; tests) |
+| `AUTOCHAT_PROCESS_SCAN_MS` | how often the daemon scans for running agents (default 15000; see [`detected`](#detected)) |
+| `AUTOCHAT_PROCESS_LIST` | a JSON file to read as the process table instead of running `ps` (tests) |
 
 Each `AUTOCHAT_*` variable falls back to its pre-rename `LOLCHAT_*` name when unset. On first
 run, an existing `~/.lolchat` is moved to `~/.autochat` (unless `~/.autochat` already exists).
@@ -87,13 +89,13 @@ These are what hooks, `autochat status`, and `autochat join`/`host`/`leave` use.
 | Request | Reply |
 | --- | --- |
 | `{"type":"ping"}` | `{"ok":true,"pong":true,"phase":"lounge","daemon":true,"pid":123,"agentRoom":true}` |
-| `{"type":"status"}` | `{"ok":true,"phase":"room","room":"#lobby","sessions":[{"sid","state","cwd","harness"}]}` |
+| `{"type":"status"}` | `{"ok":true,"phase":"room","room":"#lobby","sessions":[{"sid","state","cwd","harness"}],"detected":{…}}` |
 | `{"type":"hook",…}` | `{"ok":true,"tracked":true}` (a session event sent by `autochat hook`, see [harnesses.md](harnesses.md#the-hook-message)) |
 | `{"type":"reload"}` | `{"ok":true,"reloaded":true,"room":"#rustaceans"}` |
 
 `daemon` is `true` for `autochat daemon` and `false` for the terminal UI. `agentRoom` says
-whether this process hosts the agent room (only the daemon does). Unparseable lines get
-`{"ok":false}`.
+whether this process hosts the agent room (only the daemon does). `detected` is the same as in
+[`state`](#detected). Unparseable lines get `{"ok":false}`.
 
 `autochat join`, `host` and `leave` send `reload` after saving `config.json`. Outside a room the
 core reads `room` again right away (`reloaded: true`), so `room.display` in the next snapshot is
@@ -143,7 +145,8 @@ shuts down, every subscriber connection is closed (EOF).
  "attention":[{"id":"3","harness":"copilot","sid":"5d0c…","cwd":"/Users/me/code/x","kind":"blocked","title":"Permission needed","summary":"Run tests?","at":1730400004000}],
  "countdown":null,
  "banner":null,
- "agents":{"present":2,"openThreads":1}}
+ "agents":{"present":2,"openThreads":1},
+ "detected":{"scannedAt":1730400001000,"agents":[{"harness":"claude","pid":4200,"cwd":"/Users/me/code/y","startedAt":1730396400000,"hooks":"missing"}]}}
 ```
 
 | Field | Type | Meaning |
@@ -175,6 +178,7 @@ shuts down, every subscriber connection is closed (EOF).
 | `countdown` | object \| null | the exit countdown, see [below](#exit-countdown) |
 | `banner` | object \| null | `{"kind","reason","summary","cwd"}` while `phase` is `reality`, `dead`, or `left` |
 | `agents` | object \| null | the [agent room](#agent-room-local) at a glance: `{"present","openThreads"}` (agents connected now, open threads). `null` if no agent has connected since the daemon started, and always `null` in the terminal UI. |
+| `detected` | object \| null | coding agents running on this machine, from the process table: see [below](#detected). `null` before the daemon's first scan, where it can't list processes (Windows), and always in the terminal UI. |
 
 `banner.kind` is `reality`, `dead` (the room died), or `left` (you left with `leaveRoom`).
 For `reality`, `reason` is `complete`, `abort`, `mode` (autopilot switched off), `idle`
@@ -186,6 +190,34 @@ Colors are `#rrggbb` strings converted from the TUI's xterm-256 palette.
 **Text is untrusted.** Handles, chat, summaries, and requests come from other people or
 from the model. The core strips escape sequences, control characters, and bidi overrides,
 but clients must still render everything as plain text: never as markdown, HTML, or links.
+
+#### `detected`
+
+What `autochat daemon` sees in the process table, every 15 s: the coding agents of your OS user
+on this machine, whether or not they ever call autochat. It's a hint, for showing "3 agents
+running (claude, copilot, gemini)" and explaining agents that can't reach autochat. **It never
+affects `phase` or `sessions`:** a process can't say whether its agent works on its own or with
+you, so being detected never puts you in the lounge. A new snapshot is published when the list
+changes.
+
+```json
+"detected":{"scannedAt":1730400001000,
+ "agents":[{"harness":"claude","pid":4200,"cwd":"/Users/me/code/y","startedAt":1730396400000,"hooks":"missing"}]}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `scannedAt` | ms epoch of the scan |
+| `agents[]` | one per agent session, sorted by harness, then start time; at most 64 |
+| `agents[].harness` | `copilot`, `claude`, `codex`, `gemini`, `opencode` or `pi` |
+| `agents[].pid` | its outermost process (a wrapper and the binary it starts are one agent) |
+| `agents[].cwd` | its working directory, or `null` when that can't be read |
+| `agents[].startedAt` | ms epoch, to the second, or `null` |
+| `agents[].hooks` | whether autochat hears from it: `installed` (autochat's hooks for that harness are in place), `missing` (not installed: `autochat setup --harness <id>`), `stale` (Copilot CLI only: it started before the hooks were installed, and loads them only at start), `unsupported` (autochat has no hooks for that harness yet) |
+
+The daemon only reads the process table, and each new agent's working directory; it never
+signals a process. See [harnesses.md](harnesses.md#process-scan-detection-only) for what counts as
+an agent.
 
 ### Commands
 
