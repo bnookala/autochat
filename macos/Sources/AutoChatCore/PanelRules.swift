@@ -35,6 +35,8 @@ public enum PanelKind: Sendable, Equatable {
     case autopilot
     case countdown
     case request
+    /// The attention queue, when an agent is blocked on you.
+    case attention
 }
 
 public struct PanelInputs: Sendable, Equatable {
@@ -47,12 +49,16 @@ public struct PanelInputs: Sendable, Equatable {
     public var chat: ChatWindowState
     /// The chat window shows the Lounge tab (not Agents).
     public var chatShowsLounge: Bool
+    /// The snapshot's queue; nil from a daemon without one (then `request` decides).
+    public var attention: [AttentionItem]?
+    /// Blocked items the user has already seen (in the chat, or by jumping to them).
+    public var seenAttention: Set<String>
     public var now: Date
 
     public init(
         connected: Bool, phase: Phase, countdown: Countdown? = nil, request: CopilotRequest? = nil,
         dismissedRequestKey: String? = nil, autopilotNoticeUntil: Date? = nil, chat: ChatWindowState,
-        chatShowsLounge: Bool = true, now: Date
+        chatShowsLounge: Bool = true, attention: [AttentionItem]? = nil, seenAttention: Set<String> = [], now: Date
     ) {
         self.connected = connected
         self.phase = phase
@@ -62,6 +68,8 @@ public struct PanelInputs: Sendable, Equatable {
         self.autopilotNoticeUntil = autopilotNoticeUntil
         self.chat = chat
         self.chatShowsLounge = chatShowsLounge
+        self.attention = attention
+        self.seenAttention = seenAttention
         self.now = now
     }
 }
@@ -72,15 +80,19 @@ public enum PanelRules {
     /// How long the "Autopilot is on" notice stays up.
     public static let autopilotNoticeDuration: TimeInterval = 6
 
-    /// Which panel (if any) should hang under the status item. Countdown beats a Copilot
-    /// request, which beats the autopilot notice. Nothing shows while the chat is in front on
-    /// its Lounge tab (the Agents tab doesn't show any of this). Agents never get a panel.
+    /// Which panel (if any) should hang under the status item. Countdown beats an agent that's
+    /// blocked on you (the attention queue, or a Copilot request from a daemon without one),
+    /// which beats the autopilot notice. Finished and failed agents never bring the panel down
+    /// by themselves. Nothing shows while the chat is in front on its Lounge tab (the Agents tab
+    /// doesn't show any of this). The agent room never gets a panel.
     public static func decide(_ i: PanelInputs) -> PanelKind? {
         guard i.connected, !(chatWindowIsVisibleAndKey(i.chat) && i.chatShowsLounge) else { return nil }
         if let c = i.countdown, i.now < c.endsAt.addingTimeInterval(zeroHold) {
             return .countdown
         }
-        if let r = i.request, !r.resolved, r.key != i.dismissedRequestKey, i.phase.isInRoom {
+        if let items = i.attention {
+            if items.contains(where: { $0.kind.isUrgent && !i.seenAttention.contains($0.id) }) { return .attention }
+        } else if let r = i.request, !r.resolved, r.key != i.dismissedRequestKey, i.phase.isInRoom {
             return .request
         }
         if let until = i.autopilotNoticeUntil, i.now < until, i.phase == .room {

@@ -77,6 +77,12 @@ struct RealDaemonE2ETests {
         #expect(counting.phase == .room)
         let countdown = try #require(counting.countdown)
         #expect(countdown.reason == "complete")
+        // Its result is in the attention queue (one agent: no badge, no panel).
+        let finished = try #require(counting.attention?.first { $0.sid == sid })
+        #expect(finished.kind == .finished)
+        #expect(finished.harness == .copilot)
+        #expect(finished.summary?.contains("Refactored") == true)
+        #expect(AttentionRules.urgentCount(counting.attention) == 0)
         #expect(countdown.endsAt > (counting.now ?? Date()))
         let during = try await client.send(.say("still typing during the countdown"))
         #expect(during.ok, "say during countdown failed: \(during.error ?? "")")
@@ -98,6 +104,32 @@ struct RealDaemonE2ETests {
             #expect(ChatPresentation(snapshot: last, connected: true, countdown: nil, now: Date()).closeout?.title == "Back to reality")
         }
         #expect(await eventually(timeout: 12) { snapshots.value.last?.phase == .lounge })
+        // One agent: the pull-back focused it, which handles its item.
+        #expect(snapshots.value.last?.attention?.contains { $0.sid == sid } == false)
+
+        // Two agents at once: one blocked on you; Jump to keeps it until it carries on.
+        let other = "e2e-\(UUID().uuidString.prefix(8))"
+        try hook("activity", sid: sid)
+        try hook("activity", sid: other)
+        try hook("request", sid: other, extra: ["request": ["title": "Permission needed", "message": "Run the tests?"]])
+        #expect(await eventually(timeout: 10) { AttentionRules.urgentCount(snapshots.value.last?.attention) == 1 })
+        let blocked = try #require(snapshots.value.last?.attention?.first { $0.kind == .blocked })
+        #expect(blocked.sid == other)
+        #expect(try await client.send(.jumpTo(blocked.id)).ok)
+        #expect(try await client.send(.jumpTo("no-such-item")).error == "unknown item")
+        try hook("activity", sid: other)
+        #expect(await eventually(timeout: 5) { snapshots.value.last?.attention?.isEmpty == true })
+        try hook("complete", sid: sid)
+        try hook("end", sid: other)
+        #expect(await eventually(timeout: 10) { snapshots.value.last?.countdown != nil })
+        #expect(snapshots.value.last?.attention?.count == 2)
+        let skip = try await client.send(.returnNow)
+        #expect(skip.ok)
+        #expect(await eventually(timeout: 12) { snapshots.value.last?.phase == .lounge })
+        let kept = snapshots.value.last?.attention ?? []
+        #expect(kept.count == 2, "several agents: nothing took focus, the queue keeps both")
+        for item in kept { #expect(try await client.send(.dismissAttention(item.id)).ok) }
+        #expect(await eventually(timeout: 5) { snapshots.value.last?.attention?.isEmpty == true })
 
         // Manual join, then leave with the banner.
         let join = try await client.send(.joinNow)

@@ -46,9 +46,11 @@ struct ChatView: View {
             } else if snapshot.phase.isCloseout {
                 Spacer(minLength: 0)
             } else {
+                attentionStrip(snapshot)
                 LoungeView(model: model, presentation: p)
             }
         }
+        .animation(.smooth(duration: 0.2), value: AttentionRules.stripItems(snapshot).map(\.id))
         .overlay {
             if let closeout = p.closeout {
                 CloseoutOverlay(closeout: closeout, secondsLeft: model.closeoutSecondsLeft, onKeepOpen: { model.cancelCloseout() })
@@ -64,6 +66,7 @@ struct ChatView: View {
             MembersBar(members: snapshot.members)
             Divider()
         }
+        attentionStrip(snapshot)
         if let request = snapshot.request {
             RequestCard(request: request, model: model)
                 .padding(.horizontal, 12)
@@ -83,6 +86,17 @@ struct ChatView: View {
         }
         .background(.bar)
         .animation(.smooth(duration: 0.25), value: snapshot.countdown == nil)
+    }
+
+    /// The attention queue, minus the question the request card shows. One slim line.
+    @ViewBuilder
+    private func attentionStrip(_ snapshot: Snapshot) -> some View {
+        let items = AttentionRules.stripItems(snapshot)
+        if !items.isEmpty {
+            AttentionStrip(items: items, model: model, besideRequest: items.count < (snapshot.attention?.count ?? 0))
+                .transition(.move(edge: .top).combined(with: .opacity))
+            Divider()
+        }
     }
 }
 

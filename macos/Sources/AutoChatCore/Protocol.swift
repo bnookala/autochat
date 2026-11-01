@@ -13,6 +13,10 @@ public enum Command: Sendable, Equatable {
     case agentsAck
     /// A human intervention in the agent room: `thread` nil is the main stream.
     case agentsSay(text: String, thread: String?, to: [String])
+    /// Focus the terminal of the agent behind an attention item (its `id`).
+    case jumpTo(String)
+    /// Drop an attention item from the queue.
+    case dismissAttention(String)
 
     public var name: String {
         switch self {
@@ -24,17 +28,21 @@ public enum Command: Sendable, Equatable {
         case .joinNow: "joinNow"
         case .agentsAck: "agents.ack"
         case .agentsSay: "agents.say"
+        case .jumpTo: "jumpTo"
+        case .dismissAttention: "dismissAttention"
         }
     }
 
-    /// `{"type":"cmd","id":7,"cmd":"say","text":"lol same"}`, or for an intervention
-    /// `{"type":"cmd","id":2,"cmd":"agents.say","text":"…","thread":null,"to":[]}`.
+    /// `{"type":"cmd","id":7,"cmd":"say","text":"lol same"}`, for an intervention
+    /// `{"type":"cmd","id":2,"cmd":"agents.say","text":"…","thread":null,"to":[]}`, and for the
+    /// attention queue `{"type":"cmd","id":3,"cmd":"jumpTo","item":"7"}` (`id` is the command's).
     public func encodedLine(id: Int) -> Data {
         struct Envelope: Encodable {
             let type = "cmd"
             let id: Int
             let cmd: String
             let text: String?
+            var item: String?
         }
         struct SayEnvelope: Encodable {
             let id: Int
@@ -64,6 +72,8 @@ public enum Command: Sendable, Equatable {
             data = (try? encoder.encode(SayEnvelope(id: id, cmd: name, text: text, thread: thread, to: to))) ?? Data()
         case let .say(text):
             data = (try? encoder.encode(Envelope(id: id, cmd: name, text: text))) ?? Data()
+        case let .jumpTo(item), let .dismissAttention(item):
+            data = (try? encoder.encode(Envelope(id: id, cmd: name, text: nil, item: item))) ?? Data()
         default:
             data = (try? encoder.encode(Envelope(id: id, cmd: name, text: nil))) ?? Data()
         }

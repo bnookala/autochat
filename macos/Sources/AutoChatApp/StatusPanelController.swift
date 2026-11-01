@@ -83,7 +83,7 @@ final class StatusPanelController {
     private func update() {
         let kind = model.panelKind
         // Read what the panel displays so a content change (e.g. the countdown second) resizes it.
-        _ = (model.now, model.snapshot?.request, model.countdown)
+        _ = (model.now, model.snapshot?.request, model.countdown, model.snapshot?.attention)
         guard kind != shownKind else {
             if kind != nil { reposition(animated: false) }
             return
@@ -101,8 +101,14 @@ final class StatusPanelController {
         shownKind = kind
         hideGeneration += 1
         display.kind = kind
-        if kind == .autopilot || kind == .request {
-            NSAccessibility.post(element: panel, notification: .announcementRequested, userInfo: [.announcement: kind == .autopilot ? "Autopilot is on" : "Copilot needs you", .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+        let announcement: String? = switch kind {
+        case .autopilot: "Autopilot is on"
+        case .request: "Copilot needs you"
+        case .attention: AttentionRules.headline(model.attention)
+        case .countdown: nil
+        }
+        if let announcement {
+            NSAccessibility.post(element: panel, notification: .announcementRequested, userInfo: [.announcement: announcement, .priority: NSAccessibilityPriorityLevel.medium.rawValue])
         }
         let target = targetFrame()
         if wasVisible {
