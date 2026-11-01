@@ -226,3 +226,28 @@ test('CLI: setup --agents --dry-run changes nothing; setup --agents, rerun, unin
   assert.match(un.stdout, /^hooks removed\.\nremoved the autochat MCP server from Gemini CLI \(~\/\.gemini\/settings\.json\)\n$/)
   assert.deepEqual(JSON.parse(read(u.file('.gemini', 'settings.json'))), { theme: 'x', mcpServers: {} })
 })
+
+test('changes made between showing the plan and applying it are kept; symlinked configs stay symlinks', () => {
+  const u = user({ bins: ['gemini'] })
+  fs.mkdirSync(u.file('.gemini'), { recursive: true })
+  fs.writeFileSync(u.file('.gemini', 'settings.json'), '{"theme":"x"}\n')
+  const plan = planAgents(u.ctx).find(p => p.id === 'gemini')
+  // Meanwhile (say, while the [Y/n] prompt waits), something else adds a server.
+  fs.writeFileSync(u.file('.gemini', 'settings.json'), '{"theme":"x","mcpServers":{"added":{"command":"y"}}}\n')
+  plan.apply()
+  assert.deepEqual(Object.keys(JSON.parse(read(u.file('.gemini', 'settings.json'))).mcpServers), ['added', 'autochat'])
+
+  // dotfile managers: ~/.codex/config.toml -> ~/dotfiles/codex.toml
+  const dot = path.join(u.root, 'dotfiles')
+  fs.mkdirSync(dot, { recursive: true })
+  fs.writeFileSync(path.join(dot, 'codex.toml'), 'model = "o3"\n')
+  fs.mkdirSync(u.file('.codex'), { recursive: true })
+  fs.symlinkSync(path.join(dot, 'codex.toml'), u.file('.codex', 'config.toml'))
+  assert.deepEqual(setupAgents({ ctx: u.ctx, ...quiet }).applied, ['codex'])
+  assert.ok(fs.lstatSync(u.file('.codex', 'config.toml')).isSymbolicLink(), 'still a symlink')
+  assert.match(read(path.join(dot, 'codex.toml')), /^model = "o3"\n\n\[mcp_servers\.autochat\]\n/, 'the target got the entry')
+  assert.equal(read(u.file('.codex', 'config.toml.autochat.bak')), 'model = "o3"\n')
+  removeAgents({ ctx: u.ctx, ...quiet })
+  assert.ok(fs.lstatSync(u.file('.codex', 'config.toml')).isSymbolicLink())
+  assert.equal(read(path.join(dot, 'codex.toml')), 'model = "o3"\n')
+})

@@ -67,18 +67,31 @@ function readText (file) {
   try { return fs.readFileSync(file, 'utf8') } catch (err) { if (err.code === 'ENOENT') return null; throw err }
 }
 
+// Atomic (temp file + rename), with a one-time backup. A symlinked config (stow, chezmoi,
+// home-manager) is written through to its target, so the link stays a link.
 export function writeFileSafely (file, text) {
-  fs.mkdirSync(path.dirname(file), { recursive: true })
+  let target = file
+  try { target = fs.realpathSync(file) } catch {}
+  fs.mkdirSync(path.dirname(target), { recursive: true })
   let mode = 0o600
-  if (exists(file)) {
-    mode = fs.statSync(file).mode & 0o777
+  if (exists(target)) {
+    mode = fs.statSync(target).mode & 0o777
     const backup = file + '.autochat.bak'
-    if (!fs.existsSync(backup)) fs.copyFileSync(file, backup)
+    if (!fs.existsSync(backup)) fs.copyFileSync(target, backup)
   }
-  const tmp = `${file}.autochat-${process.pid}.tmp`
+  const tmp = `${target}.autochat-${process.pid}.tmp`
   fs.writeFileSync(tmp, text, { mode })
-  fs.renameSync(tmp, file)
+  fs.renameSync(tmp, target)
 }
+
+// Plans are shown first and applied later (maybe after a prompt), so apply() works from the file
+// as it is then, not as it was when planned: nothing written in between gets lost.
+const freshly = (compute, ctx) => () => {
+  const now = compute(ctx)
+  if (now.action === 'manual') throw new Error(now.reason)
+  now.write?.()
+}
+const shown = ({ write, ...rest }) => rest
 
 function jsonIndent (text) {
   const m = /^([ \t]+)["}\]]/m.exec(text || '')
@@ -113,6 +126,10 @@ function jsonHarness ({ id, name, binary, file, servers, entry, initial = () => 
       return { registered: true, valid: commandValid(command, args), command: [command, ...(args || [])].join(' ') }
     },
     plan (ctx) {
+      const p = this.compute(ctx)
+      return p.write ? { ...shown(p), apply: freshly((c) => this.compute(c), ctx) } : shown(p)
+    },
+    compute (ctx) {
       const { f, text, root } = load(ctx)
       const want = entry(ctx)
       if (root === undefined) return { id, action: 'manual', file: f, reason: `${tilde(f, ctx)} isn't plain JSON (comments?), so autochat won't rewrite it`, snippet: { [SERVER]: want } }
@@ -122,14 +139,18 @@ function jsonHarness ({ id, name, binary, file, servers, entry, initial = () => 
       const merged = isObj(have) ? { ...have, ...want } : want
       if (isObj(have) && same(merged, have)) return { id, action: 'none', file: f }
       map[SERVER] = merged
-      return { id, action: have ? 'update' : 'add', file: f, entry: want, apply: () => write(f, text, next) }
+      return { id, action: have ? 'update' : 'add', file: f, entry: want, write: () => write(f, text, next) }
     },
     unplan (ctx) {
+      const p = this.uncompute(ctx)
+      return p.write ? { ...shown(p), apply: freshly((c) => this.uncompute(c), ctx) } : shown(p)
+    },
+    uncompute (ctx) {
       const { f, text, root } = load(ctx)
       const map = root ? servers(root, false) : null
       if (!map || !(SERVER in map)) return { id, action: 'none', file: f }
       delete map[SERVER]
-      return { id, action: 'remove', file: f, apply: () => write(f, text, root) }
+      return { id, action: 'remove', file: f, write: () => write(f, text, root) }
     }
   }
 }
@@ -228,6 +249,10 @@ const codex = {
     return { registered: true, valid: commandValid(command, args), command: [command, ...(Array.isArray(args) ? args : [])].join(' ') }
   },
   plan (ctx) {
+    const p = this.compute(ctx)
+    return p.write ? { ...shown(p), apply: freshly((c) => this.compute(c), ctx) } : shown(p)
+  },
+  compute (ctx) {
     const f = this.file(ctx)
     const { text, lines, main, body, inline } = this.read(ctx)
     const want = { command: ctx.node, args: argsFor('codex', ctx) }
@@ -250,16 +275,20 @@ const codex = {
       const base = text.replace(/\n*$/, '')
       next = (base ? base + '\n\n' : '') + `[mcp_servers.autochat]\n${block.join('\n')}\n`
     }
-    return { id: 'codex', action: main ? 'update' : 'add', file: f, entry: `[mcp_servers.autochat]\n${block.join('\n')}`, apply: () => writeFileSafely(f, next) }
+    return { id: 'codex', action: main ? 'update' : 'add', file: f, entry: `[mcp_servers.autochat]\n${block.join('\n')}`, write: () => writeFileSafely(f, next) }
   },
   unplan (ctx) {
+    const p = this.uncompute(ctx)
+    return p.write ? { ...shown(p), apply: freshly((c) => this.uncompute(c), ctx) } : shown(p)
+  },
+  uncompute (ctx) {
     const f = this.file(ctx)
     const { lines, ranges } = this.read(ctx)
     if (!ranges.length) return { id: 'codex', action: 'none', file: f }
     const drop = new Set()
     for (const r of ranges) for (let i = r.start; i < r.end; i++) drop.add(i)
     const next = lines.filter((_, i) => !drop.has(i)).join('\n').replace(/\n{3,}/g, '\n\n').replace(/\n+$/, '\n')
-    return { id: 'codex', action: 'remove', file: f, apply: () => writeFileSafely(f, next) }
+    return { id: 'codex', action: 'remove', file: f, write: () => writeFileSafely(f, next) }
   }
 }
 
