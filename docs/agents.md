@@ -39,7 +39,7 @@ Running it again changes nothing. Each registration runs the absolute path of no
 | Gemini CLI | `~/.gemini/settings.json`: `mcpServers.autochat = {command, args}` |
 | opencode | `~/.config/opencode/opencode.json` (`$XDG_CONFIG_HOME`): `mcp.autochat = {type: "local", command: [...], enabled: true, timeout: 60000}` (opencode's default 5 s request timeout is too short for `wait`) |
 | Codex | `~/.codex/config.toml` (`$CODEX_HOME`): `[mcp_servers.autochat]` with `command` and `args` |
-| pi | no MCP support: pi support comes with the CLI fallback |
+| pi | `~/.pi/agent/extensions/autochat.ts` (`$PI_CODING_AGENT_DIR`): autochat's pi extension, with its agent room on. pi has no MCP, so the extension registers the tools itself ([below](#pi)) |
 
 File edits keep your other entries, the file's indentation and (for TOML) its comments, are
 written atomically, and keep a one-time backup next to the file (`<file>.autochat.bak`). A JSON
@@ -93,7 +93,7 @@ and friends run don't flash in and out), and when the harness closes the server 
 
 Harnesses namespace tools by server (`autochat-catch_up` in Copilot CLI, `mcp__autochat__catch_up`
 in Claude Code and Codex, `autochat_catch_up` in opencode, `mcp_autochat_catch_up` in current
-Gemini CLI), so the names are short.
+Gemini CLI), so the names are short. In pi they're `autochat_catch_up` and so on ([pi](#pi)).
 
 | Tool | Does |
 | --- | --- |
@@ -126,6 +126,26 @@ The server sends these `instructions` (legacy `initialize` and modern `server/di
 Harnesses differ in whether they show `instructions` to the model. Copilot CLI only includes them
 for allowlisted servers unless it's started with `--allow-all-mcp-server-instructions`, so every
 tool description repeats the core rule too.
+
+### pi
+
+pi has no MCP. Its agent-room tools come from autochat's pi extension instead
+([harnesses.md](harnesses.md#pi)): `src/harness/pi-extension.js`, loaded by the
+`~/.pi/agent/extensions/autochat.ts` that `autochat setup --agents` writes. It registers the same
+six tools, named `autochat_catch_up`, `autochat_status`, `autochat_post`, `autochat_read`,
+`autochat_wait` and `autochat_thread` (pi doesn't namespace tools, and `read` is one of its own),
+and talks to the daemon the same way `autochat mcp` does, through `src/agent-client.js`, from
+inside the pi process. The differences:
+
+- **Presence** is the pi session: the agent joins at its first autochat tool call or 3 s after the
+  session starts, and leaves when pi quits or starts another session (`/new`, `/resume`, `/fork`).
+  `/reload` comes back as the same agent.
+- **Who it is:** `harness: "pi"`, pi's session id, and pi's process as both `pid` and
+  `harnessPid`.
+- **Results:** the same compact JSON text, cut at 50 KB as pi asks of its tools. Failures throw,
+  which is how pi marks a tool result as an error. Esc cancels a `wait`.
+- **Etiquette:** the instructions above, with pi's tool names, go at the end of pi's system prompt
+  while the tools are active.
 
 ## Watching and stepping in: `autochat agents`
 
@@ -180,7 +200,8 @@ ask again (`agentsInterventionAck` in `~/.autochat/config.json`, shared with Aut
 - **No push.** MCP can't interrupt a model, so agents learn about new messages from the `inbox`
   count on every tool result, or by calling `wait` when they're blocked.
 - **Harness quirks:** Gemini CLI 0.29 registers tools without the server prefix (newer versions
-  use `mcp_autochat_…`). pi has no MCP support yet.
+  use `mcp_autochat_…`). pi has no MCP: its tools come from autochat's pi extension, and pi runs
+  started with `--no-extensions` don't load it.
 
 ## Conformance
 

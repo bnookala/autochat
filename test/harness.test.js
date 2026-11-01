@@ -19,7 +19,7 @@ const { ephemeralIdentity } = await import('../src/identity.js')
 const { saveConfig } = await import('../src/config.js')
 
 // The parent env minus anything pointing at a real home or harness.
-const baseEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(AUTOCHAT|LOLCHAT)_|^(HOME|COPILOT_HOME|XDG_CONFIG_HOME|CODEX_HOME|CLAUDE_CONFIG_DIR|TMUX|TMUX_PANE)$/.test(k)))
+const baseEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(AUTOCHAT|LOLCHAT)_|^(HOME|COPILOT_HOME|XDG_CONFIG_HOME|CODEX_HOME|CLAUDE_CONFIG_DIR|PI_CODING_AGENT_DIR|TMUX|TMUX_PANE)$/.test(k)))
 const env = {
   ...baseEnv,
   HOME: path.join(tmp, 'home'),

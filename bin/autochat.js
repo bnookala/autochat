@@ -75,7 +75,7 @@ const HELP = `autochat: ephemeral, serverless chat rooms for people whose Copilo
                               install the hooks of these harnesses (docs/harnesses.md)
   autochat setup --agents [--dry-run]
                               connect your coding agents (Copilot CLI, Claude Code, Gemini CLI,
-                              opencode, Codex) to the agent room (autochat mcp)
+                              opencode, Codex, pi) to the agent room (autochat mcp)
   autochat uninstall          remove the hooks and the agents' autochat MCP server
   autochat                    open the lounge; drops into the room when autopilot runs
   autochat whoami             your anonymous, stable handle

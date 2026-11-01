@@ -1,0 +1,66 @@
+{
+  "pi": "0.74.0",
+  "how": "pi --mode json -e autochat.ts \"…\": the model calls write",
+  "note": "Recorded from the real pi 0.74.0: the payloads src/harness/pi-extension.js sent to autochat hook --harness pi, with the stub loaded through -e, against a local stand-in for an OpenAI-compatible API. Consecutive activity is coalesced while a hook runs, so not every tool call has its own event. Paths scrubbed; env trimmed to what autochat reads.",
+  "events": [
+    {
+      "event": "session_start",
+      "env": {
+        "PI_CODING_AGENT": "true"
+      },
+      "payload": {
+        "hook_event_name": "session_start",
+        "session_id": "01a195e9-1c6e-72fa-9d6d-45f775fac48d",
+        "cwd": "/Users/me/code/demo",
+        "mode": "json",
+        "has_ui": false,
+        "reason": "startup"
+      }
+    },
+    {
+      "event": "tool_call",
+      "env": {
+        "PI_CODING_AGENT": "true"
+      },
+      "payload": {
+        "hook_event_name": "tool_call",
+        "session_id": "01a195e9-1c6e-72fa-9d6d-45f775fac48d",
+        "cwd": "/Users/me/code/demo",
+        "mode": "json",
+        "has_ui": false,
+        "tool_name": "write",
+        "files": [
+          "notes.txt"
+        ]
+      }
+    },
+    {
+      "event": "agent_end",
+      "env": {
+        "PI_CODING_AGENT": "true"
+      },
+      "payload": {
+        "hook_event_name": "agent_end",
+        "session_id": "01a195e9-1c6e-72fa-9d6d-45f775fac48d",
+        "cwd": "/Users/me/code/demo",
+        "mode": "json",
+        "has_ui": false,
+        "last_assistant_message": "Done with write."
+      }
+    },
+    {
+      "event": "session_shutdown",
+      "env": {
+        "PI_CODING_AGENT": "true"
+      },
+      "payload": {
+        "hook_event_name": "session_shutdown",
+        "session_id": "01a195e9-1c6e-72fa-9d6d-45f775fac48d",
+        "cwd": "/Users/me/code/demo",
+        "mode": "json",
+        "has_ui": false,
+        "reason": "quit"
+      }
+    }
+  ]
+}

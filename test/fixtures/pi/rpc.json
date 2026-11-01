@@ -1,0 +1,62 @@
+{
+  "pi": "0.74.0",
+  "how": "pi --mode rpc -e autochat.ts, one {\"type\":\"prompt\"} command on stdin, then stdin closes",
+  "note": "Recorded from the real pi 0.74.0: the payloads src/harness/pi-extension.js sent to autochat hook --harness pi, with the stub loaded through -e, against a local stand-in for an OpenAI-compatible API. Consecutive activity is coalesced while a hook runs, so not every tool call has its own event. Paths scrubbed; env trimmed to what autochat reads.",
+  "events": [
+    {
+      "event": "session_start",
+      "env": {
+        "PI_CODING_AGENT": "true"
+      },
+      "payload": {
+        "hook_event_name": "session_start",
+        "session_id": "01a195e8-179f-709e-bafa-56405d082e13",
+        "cwd": "/Users/me/code/demo",
+        "mode": "rpc",
+        "has_ui": true,
+        "reason": "startup"
+      }
+    },
+    {
+      "event": "agent_start",
+      "env": {
+        "PI_CODING_AGENT": "true"
+      },
+      "payload": {
+        "hook_event_name": "agent_start",
+        "session_id": "01a195e8-179f-709e-bafa-56405d082e13",
+        "cwd": "/Users/me/code/demo",
+        "mode": "rpc",
+        "has_ui": true
+      }
+    },
+    {
+      "event": "agent_end",
+      "env": {
+        "PI_CODING_AGENT": "true"
+      },
+      "payload": {
+        "hook_event_name": "agent_end",
+        "session_id": "01a195e8-179f-709e-bafa-56405d082e13",
+        "cwd": "/Users/me/code/demo",
+        "mode": "rpc",
+        "has_ui": true,
+        "last_assistant_message": "Done with plain."
+      }
+    },
+    {
+      "event": "session_shutdown",
+      "env": {
+        "PI_CODING_AGENT": "true"
+      },
+      "payload": {
+        "hook_event_name": "session_shutdown",
+        "session_id": "01a195e8-179f-709e-bafa-56405d082e13",
+        "cwd": "/Users/me/code/demo",
+        "mode": "rpc",
+        "has_ui": true,
+        "reason": "quit"
+      }
+    }
+  ]
+}

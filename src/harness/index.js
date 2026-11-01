@@ -252,7 +252,7 @@ export function setupAgents ({ ctx = harnessContext(), dryRun = false, out = con
   }
   if (applied.length) out('New agent sessions get the autochat tools; restart running ones to pick them up.')
   else if (!failed.length && plans.some(p => p.action === 'none')) out('Nothing to change.')
-  else if (!failed.length && !plans.some(p => ['none', 'manual'].includes(p.action))) out('No agent harnesses found (Copilot CLI, Claude Code, Gemini CLI, opencode, Codex).')
+  else if (!failed.length && !plans.some(p => ['none', 'manual'].includes(p.action))) out('No agent harnesses found (Copilot CLI, Claude Code, Gemini CLI, opencode, Codex, pi).')
   return { plans, applied, failed }
 }
 
