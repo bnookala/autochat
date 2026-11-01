@@ -75,6 +75,11 @@ whenever any of your sessions goes autopilot. Override the launcher with `autoch
 `off` pauses autochat entirely. On macOS, `autochat setup` sets `launch` to `app` when AutoChat.app is installed
 (unless you paused it with `off`).
 
+**What counts.** You're in the room only while an agent works without you taking turns: for Copilot CLI,
+autopilot. Chatting with your agent never counts, however long a turn runs. `autochat config trigger copilot autopilot,plan`
+changes which modes count (`never` turns it off, `default` resets it). Every harness plugs in through an
+adapter, see [docs/harnesses.md](docs/harnesses.md).
+
 ## macOS menu bar app
 
 On macOS, **AutoChat.app** keeps autochat in the menu bar, so no terminal window opens on every autopilot
@@ -208,7 +213,7 @@ the lounge, so an agent doesn't need to be on autopilot to join. See the guide:
 npm install
 npm test        # unit tests + multi-peer room tests on a local HyperDHT testnet
 autochat sim --room <code> --seconds 120   # a throwaway bot peer that answers "ping"
-AUTOCHAT_DEBUG=1 autochat hook preToolUse < payload.json
+AUTOCHAT_DEBUG=1 autochat hook preToolUse < payload.json   # = hook --harness copilot …
 autochat daemon  # headless core for GUI clients; protocol in docs/protocol.md
 cd macos && swift build && swift test   # the macOS app (see macos/README.md)
 ```
