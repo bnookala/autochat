@@ -49,7 +49,7 @@ args)`. Tests pass their own.
 ## SessionEvent
 
 ```js
-{ harness, sid, kind, autonomy, mode, headless, cwd, repo, branch, origin, request, summary, reason, stopped, files }
+{ harness, sid, kind, autonomy, mode, headless, cwd, repo, branch, origin, request, summary, reason, stopped, files, at, pid }
 ```
 
 | Field | Meaning |
@@ -62,10 +62,12 @@ args)`. Tests pass their own.
 | `cwd`, `repo`, `branch` | where it works (repo and branch are optional) |
 | `origin` | `originFrom(env)`: `{tmux, tmuxPane, termProgram, bundleId}` from the hook's environment, for focus |
 | `request` | `{title, message}` for `kind: 'request'` |
-| `summary` | what it did, for `complete` (and optionally `idle`: its last message); what went wrong, for `failed` |
+| `summary` | what it did, for `complete` (and optionally `idle` and `end`: its last message); what went wrong, for `failed` |
 | `reason` | why it ended, for `end`; what kind of error, for `failed` (say `rate_limit`) |
 | `stopped` | for `failed`: true when the error ended its turn |
 | `files` | paths a tool call edits, when the payload says |
+| `at` | when it happened (ms), from harnesses whose events can reach the core out of order (opencode's plugin runs a process per event). The Controller drops one older than the last it saw for that session, finished or not |
+| `pid` | the harness process the session lives in, from harnesses that can die without a word (opencode on Ctrl+C). The Controller ends a tracked session (reason `end`) once that process is gone |
 
 | `kind` | Meaning | What the Controller does |
 | --- | --- | --- |
@@ -76,7 +78,7 @@ args)`. Tests pass their own.
 | `idle` | its turn ended; it may carry on by itself | done after `idleMs` without activity, unless `continues()`; then a `finished` item |
 | `complete` | it says it's done | done, with `summary`; a `finished` item |
 | `failed` | it hit an error: `stopped` when it ended its turn (Claude's `StopFailure`), otherwise it carries on (a refused tool call, `PermissionDenied`) | a `failed` item. `stopped`: done (reason `failed`). Otherwise still `running`, and its activity doesn't clear the item |
-| `end` | the session or its process ended | done; a `finished` item |
+| `end` | the session or its process ended | done, with `summary` if it has one; a `finished` item |
 | `notice` | a hook fired and nothing changed | refreshes `cwd` and `origin` |
 
 When a tracked session's `activity`, `request`, `idle`, `waiting` or `failed` says
@@ -135,6 +137,11 @@ a prompt). Rules:
 - **Uninstall removes only ours**, recognised by the command (`autochat.js' hook --harness <id>`),
   and leaves the file byte-for-byte as it was before we added them.
 - A file autochat can't parse (JSON with comments) gets `action: 'manual'` and the snippet to add.
+- **Plugins.** A harness that runs in-process plugins instead of hook commands (opencode) gets a
+  plugin of autochat's own that hands each event to the same hook command, so `normalize()` and
+  the trigger rule still run in `autochat hook`. A file of our own: setup writes it whole when it
+  changed, uninstall deletes it, and one by that name that isn't ours is never replaced. Its
+  events are separate processes that can arrive out of order, so it stamps them with `at`.
 - Test it: an existing config with other hooks must stay byte-for-byte unchanged apart from our
   entries, through install, rerun and uninstall.
 
@@ -159,7 +166,8 @@ message (`hookMessage()`), in the shape every daemon has read, plus the new fiel
  "mode":"auto","cwd":"/Users/me/code/x","origin":{"tmuxPane":"%3"},"kind":"activity","ts":1730400000000}
 ```
 
-`sessionId` is the session id, and `idle` travels as `stop`. Messages without `harness` (or
+`sessionId` is the session id, and `idle` travels as `stop`. `at`, when there is one, is when the
+event happened (`ts` is when it was sent). Messages without `harness` (or
 `autonomy`) are from before adapters: they're Copilot's, and the core decides autonomy from their
 `mode`. Lounge snapshots list each session's `harness` (see [protocol.md](protocol.md#state)).
 
@@ -175,7 +183,8 @@ message (`hookMessage()`), in the shape every daemon has read, plus the new fiel
 4. Autonomy: set `mode` from the payload and `headless` from whatever reliably marks a
    non-interactive run (an env var the harness sets for its hooks, a payload field). If nothing
    does, leave it unknown. Fill in `modes` and `trigger`.
-5. Hooks: `planHooks`, `unplanHooks`, `hookStatus`, following the rules above.
+5. Hooks: `planHooks`, `unplanHooks`, `hookStatus`, following the rules above (or a plugin of
+   our own that forwards to `autochat hook`, like opencode's).
 6. Optional: `observe()` for sessions without hooks, `follow()`, `continues()`, `focus()`.
 7. Tests in temp homes only (`HOME`, `AUTOCHAT_HOME`, `COPILOT_HOME`, `CLAUDE_CONFIG_DIR`, …): the
    fixtures through `normalize()`, the autonomy rule, and install/rerun/uninstall around a config
@@ -189,7 +198,7 @@ message (`hookMessage()`), in the shape every daemon has read, plus the new fiel
 | Copilot CLI | `$COPILOT_HOME/hooks/autochat.json` (a file of our own) | `autopilot`, from `session-state/<id>/events.jsonl` | the session-state scan | `mcp-config.json` |
 | Claude Code | `$CLAUDE_CONFIG_DIR/settings.json`, merged ([below](#claude-code)) | `auto` (`permission_mode`); headless: `CLAUDE_CODE_SESSION_ATTENDED=0` | none needed: running sessions pick up new hooks | `claude mcp add` |
 | Gemini CLI | not yet | | | `~/.gemini/settings.json` |
-| opencode | not yet | | | `opencode.json` |
+| opencode | a plugin of our own, `$XDG_CONFIG_HOME/opencode/plugin/autochat.js` ([below](#opencode)) | headless: `opencode run` (the plugin's `process.argv`), or a server's session that denies the question tool (`run --attach`); never the TUI; the agent is the mode | none yet: opencode processes started before setup don't have the plugin | `opencode.json` |
 | Codex | `$CODEX_HOME/hooks.json`, merged ([below](#codex)); Codex runs them once you trust them | `headless`: `codex exec`, from the session's rollout; `bypassPermissions` for approval policy `never` | none yet | `config.toml` |
 | pi | `$PI_CODING_AGENT_DIR/extensions/autochat.ts`, an extension of our own ([below](#pi)) | `headless`: print and json mode (`ctx.hasUI` is false) | none: pi reports nothing without the extension | the same extension |
 
@@ -382,3 +391,66 @@ Each agent's `hooks` says whether autochat hears from it: `installed` when its h
 `hookStatus()` says so, `missing` when the harness has hooks that aren't installed,
 `unsupported` for a harness without them, and for Copilot CLI, `stale` when the process started
 before its hooks were installed (it loads them only at start).
+
+## opencode
+
+`src/harness/opencode.js`, verified against opencode 1.2.6. The fixtures in
+`test/fixtures/opencode/` are every call the real binary made into a plugin, recorded by a capture
+plugin in a throwaway project's `.opencode/plugin/`, in a throwaway `HOME` (so opencode's own XDG
+config, data and cache dirs too), against a local stand-in for an OpenAI-compatible API:
+`opencode run` in several scenarios, `opencode run --attach` to an `opencode serve`, and the TUI
+driven through a pseudo-terminal.
+
+**The plugin.** opencode loads every `{plugin,plugins}/*.{js,ts}` in its config dirs at startup and
+calls each export with `{client, project, worktree, directory, serverUrl, $}`.
+`autochat setup --harness opencode` writes `plugin/autochat.js` (`plugins/autochat.js` when that's
+the directory you have) in `$XDG_CONFIG_HOME/opencode` (`~/.config/opencode`), made from
+`src/harness/opencode-plugin.js` with the absolute node and `bin/autochat.js` filled in. New
+opencode processes load it; running ones (a TUI, `opencode serve`) don't until they restart. It
+forwards these to `autochat hook --harness opencode <event>`, each in a detached process (so the
+last ones outlive `opencode run`), never waiting for it and never throwing:
+
+| Event | Kind | Notes |
+| --- | --- | --- |
+| `session.created` | `start` | carries the session's `permission` rules |
+| `chat.message` (a hook) | `activity` | a prompt went in; its agent is the mode |
+| `tool.execute.before` (a hook) | `activity` | `files` for edit, write, multiedit |
+| `permission.asked` | `request` | the permission and its patterns: `bash: touch x` |
+| `question.asked` | `request` | the questions and their options |
+| `permission.replied`, `question.replied`, `question.rejected` | `activity` | answered |
+| `session.idle` | `idle` | the last text it wrote is the summary |
+| `server.instance.disposed` | `end` (`exit`) | opencode is done with the directory: `run` finished, or the TUI quit. One per session it forwarded, with its summary |
+
+Subagents work in child sessions (`parentID`) with their own prompts, tools and idle: the plugin
+leaves those out, and passes their permission requests and questions on as their root session's.
+It doesn't forward `message.updated` (several per message; it keeps the agent and the last text
+from them), `session.status`, `session.error` (an idle follows), `tool.execute.after`, or the
+`permission.ask` hook, which 1.2.6 doesn't call.
+
+**Order.** Each event is its own `autochat hook` process, so events milliseconds apart (a tool call
+and the question it asks; `run` rejecting a permission 4 ms after it's asked; idle, then the end)
+can reach the core in either order. The plugin stamps every event with `at`, strictly increasing,
+and the Controller drops one older than the last it saw for that session, finished or not.
+
+**Ctrl+C.** opencode has no signal handlers: Ctrl+C (or a closed terminal) kills it on the spot,
+with no `server.instance.disposed`. So every event says which process it's from (`pid`), and the
+Controller ends the session once that process is gone (within 5 s).
+
+**Autonomy.** The plugin passes its `process.argv` along: `opencode run` is
+`[bun, /$bunfs/root/src/index.js, run, …]` (whether it starts a session or continues one with
+`--continue` or `--session`), and the TUI runs plugins in its worker,
+`[bun, /$bunfs/root/src/cli/cmd/tui/worker.js]`. `run` is headless; the TUI, and an editor over
+`opencode acp`, never are. A server (`opencode serve`, `web`) runs sessions for whoever connects:
+there, the session's own rules decide. `opencode run` creates its session denying the `question`,
+`plan_enter` and `plan_exit` permissions (`opencode github` denies `question`), and
+`session.created` and `session.updated` carry those rules, so `run --attach` counts too (no
+`server.instance.disposed` follows on a server: it's done after `idleMs`). A session keeps those
+rules for good, which is why the TUI going on with a session `run` started still counts as
+attended; a server can't tell, so a run session continued in the web UI or `opencode attach` would
+count. The mode is the agent (`build`, `plan`, or one of your own), from `chat.message`. By default
+only `headless` counts: `autochat config trigger opencode build,headless` would count the TUI's
+build agent too.
+
+`run` rejects its own session's permission requests, within milliseconds, but a subagent's it
+leaves waiting, and it never answers a question: either hangs `opencode run`, which shows as a
+request until you stop it (Ctrl+C, see above).

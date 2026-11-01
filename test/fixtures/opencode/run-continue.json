@@ -1,0 +1,52 @@
+{
+  "opencode": "1.2.6",
+  "how": "opencode run --continue \"SCENARIO:glob\" (continuing the session of run-agent-plan)",
+  "note": "Recorded from the real opencode: a capture plugin in the project's .opencode/plugin, the model a local stand-in for an OpenAI-compatible API. Every call opencode made into the plugin, in order (message.part.delta and session.diff left out); paths scrubbed, tool output trimmed.",
+  "argv": [
+    "bun",
+    "/$bunfs/root/src/index.js",
+    "run",
+    "--continue",
+    "SCENARIO:glob"
+  ],
+  "env": {
+    "AGENT": "1",
+    "OPENCODE": "1"
+  },
+  "directory": "/Users/me/code/demo",
+  "calls": [
+    {"hook":"chat.message","input":{"sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX"},"output":{"message":{"role":"user","agent":"build"}}},
+    {"event":{"type":"message.updated","properties":{"info":{"id":"msg_195e7441b001sG76OvxlbV2rzO","sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","role":"user","time":{"created":1793516323867},"agent":"build","model":{"providerID":"mock","modelID":"m1"}}}}},
+    {"event":{"type":"message.part.updated","properties":{"part":{"id":"prt_195e7441b002CcdvXUMqpwD7On","sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","messageID":"msg_195e7441b001sG76OvxlbV2rzO","type":"text","text":"SCENARIO:glob\n"}}}},
+    {"event":{"type":"session.updated","properties":{"info":{"id":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","slug":"misty-canyon","projectID":"f6280cf4928d4a9d997ad9efbdd1fe15f2ed7123","directory":"/Users/me/code/demo","title":"Title for glob","version":"1.2.6","summary":{"additions":0,"deletions":0,"files":0},"permission":[{"permission":"question","pattern":"*","action":"deny"},{"permission":"plan_enter","pattern":"*","action":"deny"},{"permission":"plan_exit","pattern":"*","action":"deny"}],"time":{"created":1793516322932,"updated":1793516323873}}}}},
+    {"event":{"type":"session.status","properties":{"sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","status":{"type":"busy"}}}},
+    {"event":{"type":"message.updated","properties":{"info":{"id":"msg_195e7444300145HavVVvIvjNTl","sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","role":"assistant","time":{"created":1793516323907},"parentID":"msg_195e7441b001sG76OvxlbV2rzO","modelID":"m1","providerID":"mock","mode":"build","agent":"build","path":{"cwd":"/Users/me/code/demo","root":"/Users/me/code/demo"},"cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}}}},
+    {"event":{"type":"message.updated","properties":{"info":{"id":"msg_195e7441b001sG76OvxlbV2rzO","sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","role":"user","time":{"created":1793516323867},"summary":{"diffs":[]},"agent":"build","model":{"providerID":"mock","modelID":"m1"}}}}},
+    {"event":{"type":"session.status","properties":{"sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","status":{"type":"busy"}}}},
+    {"event":{"type":"session.updated","properties":{"info":{"id":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","slug":"misty-canyon","projectID":"f6280cf4928d4a9d997ad9efbdd1fe15f2ed7123","directory":"/Users/me/code/demo","title":"Title for glob","version":"1.2.6","summary":{"additions":0,"deletions":0,"files":0},"permission":[{"permission":"question","pattern":"*","action":"deny"},{"permission":"plan_enter","pattern":"*","action":"deny"},{"permission":"plan_exit","pattern":"*","action":"deny"}],"time":{"created":1793516322932,"updated":1793516323946}}}}},
+    {"hook":"tool.execute.before","input":{"tool":"glob","sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","callID":"call_mock_23"},"output":{"args":{"pattern":"*"}}},
+    {"hook":"tool.execute.after","input":{"tool":"glob","sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","callID":"call_mock_23","args":{"pattern":"*"}},"output":{"title":""}},
+    {"event":{"type":"message.part.updated","properties":{"part":{"id":"prt_195e744b6001zJInfQdVO7WZ0S","sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","messageID":"msg_195e7444300145HavVVvIvjNTl","type":"step-start","snapshot":"20c729070767db63af25842631ae80ea0bbe6a2a"}}}},
+    {"event":{"type":"message.part.updated","properties":{"part":{"id":"prt_195e744b700123Erhb8NUFInhO","sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","messageID":"msg_195e7444300145HavVVvIvjNTl","type":"tool","callID":"call_mock_23","tool":"glob","state":{"status":"pending","input":{}}}}}},
+    {"event":{"type":"message.part.updated","properties":{"part":{"id":"prt_195e744b700123Erhb8NUFInhO","sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","messageID":"msg_195e7444300145HavVVvIvjNTl","type":"tool","callID":"call_mock_23","tool":"glob","state":{"status":"running","input":{"pattern":"*"}}}}}},
+    {"event":{"type":"message.part.updated","properties":{"part":{"id":"prt_195e744b700123Erhb8NUFInhO","sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","messageID":"msg_195e7444300145HavVVvIvjNTl","type":"tool","callID":"call_mock_23","tool":"glob","state":{"status":"completed","input":{"pattern":"*"},"title":""}}}}},
+    {"event":{"type":"message.part.updated","properties":{"part":{"id":"prt_195e744bb001yl0Gx4KmlykqeP","sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","messageID":"msg_195e7444300145HavVVvIvjNTl","type":"step-finish","reason":"tool-calls","snapshot":"20c729070767db63af25842631ae80ea0bbe6a2a","cost":0,"tokens":{"total":15,"input":10,"output":5,"reasoning":0,"cache":{"read":0,"write":0}}}}}},
+    {"event":{"type":"message.updated","properties":{"info":{"id":"msg_195e7444300145HavVVvIvjNTl","sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","role":"assistant","time":{"created":1793516323907},"parentID":"msg_195e7441b001sG76OvxlbV2rzO","modelID":"m1","providerID":"mock","mode":"build","agent":"build","path":{"cwd":"/Users/me/code/demo","root":"/Users/me/code/demo"},"cost":0,"tokens":{"total":15,"input":10,"output":5,"reasoning":0,"cache":{"read":0,"write":0}},"finish":"tool-calls"}}}},
+    {"event":{"type":"message.updated","properties":{"info":{"id":"msg_195e7444300145HavVVvIvjNTl","sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","role":"assistant","time":{"created":1793516323907,"completed":1793516324088},"parentID":"msg_195e7441b001sG76OvxlbV2rzO","modelID":"m1","providerID":"mock","mode":"build","agent":"build","path":{"cwd":"/Users/me/code/demo","root":"/Users/me/code/demo"},"cost":0,"tokens":{"total":15,"input":10,"output":5,"reasoning":0,"cache":{"read":0,"write":0}},"finish":"tool-calls"}}}},
+    {"event":{"type":"session.status","properties":{"sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","status":{"type":"busy"}}}},
+    {"event":{"type":"message.updated","properties":{"info":{"id":"msg_195e744fb002Q1DC4vF7CUeUFq","sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","role":"assistant","time":{"created":1793516324091},"parentID":"msg_195e7441b001sG76OvxlbV2rzO","modelID":"m1","providerID":"mock","mode":"build","agent":"build","path":{"cwd":"/Users/me/code/demo","root":"/Users/me/code/demo"},"cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}}}},
+    {"event":{"type":"session.status","properties":{"sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","status":{"type":"busy"}}}},
+    {"event":{"type":"message.updated","properties":{"info":{"id":"msg_195e7441b001sG76OvxlbV2rzO","sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","role":"user","time":{"created":1793516323867},"summary":{"diffs":[]},"agent":"build","model":{"providerID":"mock","modelID":"m1"}}}}},
+    {"event":{"type":"session.updated","properties":{"info":{"id":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","slug":"misty-canyon","projectID":"f6280cf4928d4a9d997ad9efbdd1fe15f2ed7123","directory":"/Users/me/code/demo","title":"Title for glob","version":"1.2.6","summary":{"additions":0,"deletions":0,"files":0},"permission":[{"permission":"question","pattern":"*","action":"deny"},{"permission":"plan_enter","pattern":"*","action":"deny"},{"permission":"plan_exit","pattern":"*","action":"deny"}],"time":{"created":1793516322932,"updated":1793516324116}}}}},
+    {"event":{"type":"message.part.updated","properties":{"part":{"id":"prt_195e7451c001sNQb3SABrAAXJk","sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","messageID":"msg_195e744fb002Q1DC4vF7CUeUFq","type":"step-start","snapshot":"20c729070767db63af25842631ae80ea0bbe6a2a"}}}},
+    {"event":{"type":"message.part.updated","properties":{"part":{"id":"prt_195e7451d001ixdPn67v33mQuc","sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","messageID":"msg_195e744fb002Q1DC4vF7CUeUFq","type":"text","text":"","time":{"start":1793516324125}}}}},
+    {"event":{"type":"message.part.updated","properties":{"part":{"id":"prt_195e7451d001ixdPn67v33mQuc","sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","messageID":"msg_195e744fb002Q1DC4vF7CUeUFq","type":"text","text":"Done with glob.","time":{"start":1793516324126,"end":1793516324126}}}}},
+    {"event":{"type":"message.part.updated","properties":{"part":{"id":"prt_195e7451f001xSMLF6DIDpKgyG","sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","messageID":"msg_195e744fb002Q1DC4vF7CUeUFq","type":"step-finish","reason":"stop","snapshot":"20c729070767db63af25842631ae80ea0bbe6a2a","cost":0,"tokens":{"total":15,"input":10,"output":5,"reasoning":0,"cache":{"read":0,"write":0}}}}}},
+    {"event":{"type":"message.updated","properties":{"info":{"id":"msg_195e744fb002Q1DC4vF7CUeUFq","sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","role":"assistant","time":{"created":1793516324091},"parentID":"msg_195e7441b001sG76OvxlbV2rzO","modelID":"m1","providerID":"mock","mode":"build","agent":"build","path":{"cwd":"/Users/me/code/demo","root":"/Users/me/code/demo"},"cost":0,"tokens":{"total":15,"input":10,"output":5,"reasoning":0,"cache":{"read":0,"write":0}},"finish":"stop"}}}},
+    {"event":{"type":"message.updated","properties":{"info":{"id":"msg_195e744fb002Q1DC4vF7CUeUFq","sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","role":"assistant","time":{"created":1793516324091,"completed":1793516324190},"parentID":"msg_195e7441b001sG76OvxlbV2rzO","modelID":"m1","providerID":"mock","mode":"build","agent":"build","path":{"cwd":"/Users/me/code/demo","root":"/Users/me/code/demo"},"cost":0,"tokens":{"total":15,"input":10,"output":5,"reasoning":0,"cache":{"read":0,"write":0}},"finish":"stop"}}}},
+    {"event":{"type":"session.status","properties":{"sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","status":{"type":"busy"}}}},
+    {"event":{"type":"session.status","properties":{"sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX","status":{"type":"idle"}}}},
+    {"event":{"type":"session.idle","properties":{"sessionID":"ses_e6a18bf8bffe7uXgOfVzXhKCvX"}}},
+    {"event":{"type":"server.instance.disposed","properties":{"directory":"/Users/me/code/demo"}}}
+  ]
+}
