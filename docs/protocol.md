@@ -194,7 +194,7 @@ Client → daemon, any time after `subscribe`:
 | `leaveRoom` | leave for the rest of this autopilot run (ctrl-c in the TUI) | `not in a room` |
 | `jumpToCopilot` | focus the terminal running the copilot that needs you | |
 | `dismissRequest` | hide the current `request` | |
-| `joinNow` | manual "I'm here": enter the room without autopilot (`autochat ui --now`); stays until `leaveRoom` | |
+| `joinNow` | manual "I'm here": enter the room without autopilot (`autochat ui --now`); stays until `leaveRoom`. Meanwhile `sessions[]` lists a `manual-<pid>` pseudo-session, which `leaveRoom` drops | |
 
 Daemon → client, one per command (`id` echoed; `null` if the command had none):
 

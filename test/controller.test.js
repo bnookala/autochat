@@ -108,6 +108,25 @@ test('ctrl-c leave opts the session out; a new session brings you back', { timeo
   assert.equal(c.phase, 'room')
 })
 
+test('Leave Room retires the manual Join now session', { timeout: 60000 }, async (t) => {
+  const testnet = await createTestnet(3)
+  t.after(() => testnet.destroy())
+  const c = mk(testnet, 'lc1-ctl-manual-' + Math.random().toString(36).slice(2, 12), false)
+  t.after(() => c.shutdown())
+  const manual = 'manual-' + process.pid
+  await c.command({ cmd: 'joinNow' })
+  assert.equal(c.phase, 'room')
+  assert.deepEqual(c.handle({ type: 'status' }).sessions.map(s => [s.sid, s.state]), [[manual, 'running']])
+  await c.command({ cmd: 'leaveRoom' })
+  assert.equal(c.phase, 'left')
+  assert.deepEqual(c.handle({ type: 'status' }).sessions, [], 'no longer listed as running')
+  assert.deepEqual(c.snapshot().sessions, [])
+  await waitFor(() => c.phase === 'lounge', 3000, 'back to the lounge')
+  await c.command({ cmd: 'joinNow' })
+  assert.equal(c.phase, 'room', 'Join now works again')
+  assert.deepEqual(c.snapshot().sessions.map(s => s.sid), [manual])
+})
+
 test('adopts unhooked autopilot sessions from the session scan, without flip-flopping', { timeout: 60000 }, async (t) => {
   const testnet = await createTestnet(3)
   t.after(() => testnet.destroy())
