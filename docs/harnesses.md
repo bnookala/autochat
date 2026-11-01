@@ -57,7 +57,7 @@ args)`. Tests pass their own.
 | `kind` | see below |
 | `autonomy` | `autonomous`, `interactive` or `unknown` |
 | `mode` | the harness's own name for its current mode (`autopilot`, `auto`, `acceptEdits`, …), or null |
-| `headless` | true for a non-interactive run (`claude -p`, `codex exec`, …) |
+| `headless` | true for a non-interactive run (`claude -p`, `codex exec`, …), false when someone's there, null when the harness doesn't say |
 | `cwd`, `repo`, `branch` | where it works (repo and branch are optional) |
 | `origin` | `originFrom(env)`: `{tmux, tmuxPane, termProgram, bundleId}` from the hook's environment, for focus |
 | `request` | `{title, message}` for `kind: 'request'` |
