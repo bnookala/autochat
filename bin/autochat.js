@@ -347,13 +347,19 @@ async function startCore ({ auto = false, daemon = false }) {
     })
   }
   const agents = agentRoom && { connect: (hello, peer) => agentRoom.connect(hello, peer), state: () => agentRoom.snapshot(), command: (msg) => agentRoom.command(msg) }
+  // The daemon also looks for running agents in the process table (#38). Detection only: it
+  // never tracks a session, so it never puts you in the lounge.
+  let scanner = null
+  const detected = () => scanner ? scanner.snapshot() : null
   let server
   try {
     server = await serve((msg) => {
       const reply = controller.handle(msg)
-      return msg?.type === 'ping' ? { ...reply, agentRoom: !!agentRoom } : reply
+      if (msg?.type === 'ping') return { ...reply, agentRoom: !!agentRoom }
+      if (msg?.type === 'status') return { ...reply, detected: detected() }
+      return reply
     }, {
-      state: () => ({ ...controller.snapshot(), agents: agentRoom ? agentRoom.summary() : null }),
+      state: () => ({ ...controller.snapshot(), agents: agentRoom ? agentRoom.summary() : null, detected: detected() }),
       command: (msg) => controller.command(msg),
       agents
     })
@@ -373,6 +379,12 @@ async function startCore ({ auto = false, daemon = false }) {
       if (next !== summary) { summary = next; server.publish('lounge') }
     })
   }
+  if (daemon) {
+    const { ProcessScanner } = await import('../src/harness/procscan.js')
+    scanner = new ProcessScanner()
+    scanner.on('change', () => server.publish('lounge'))
+    scanner.start()
+  }
   // Hooks that fire while a UI is starting (or a second launch loses the race) queue events in the spool.
   const drain = () => { for (const m of readSpool()) if (Date.now() - (m.ts || 0) < 60000) controller.handle(m) }
   drain()
@@ -388,6 +400,7 @@ async function startCore ({ auto = false, daemon = false }) {
   const stop = async () => {
     clearInterval(drainTimer)
     stopObserving()
+    scanner?.stop()
     agentRoom?.close()
     server.close()
     await controller.shutdown()
@@ -577,6 +590,26 @@ async function doctorAgents (ping, ok) {
   }
 }
 
+// The agents running now, from the process table, and what autochat hears from them. Copilot
+// CLI's sessions are checked above, from their own logs.
+async function doctorProcesses (ok) {
+  const { scanProcesses } = await import('../src/harness/procscan.js')
+  const { harnessContext, tilde } = await import('../src/harness/index.js')
+  const ctx = harnessContext()
+  const found = await scanProcesses({ ctx }).catch(() => null)
+  if (!found) return
+  const counts = {}
+  for (const a of found.agents) counts[a.harness] = (counts[a.harness] || 0) + 1
+  const n = found.agents.length
+  console.log(`… ${n} coding agent${n === 1 ? '' : 's'} running${n ? ': ' + Object.entries(counts).map(([h, c]) => c > 1 ? `${h} ×${c}` : h).join(', ') : ''}`)
+  for (const a of found.agents) {
+    if (a.harness === 'copilot') continue
+    const what = `${a.harness} (pid ${a.pid})${a.cwd ? ` in ${tilde(a.cwd, ctx)}` : ''}`
+    if (a.hooks === 'missing') ok(false, `${what} has no autochat hooks, so it can't open autochat (autochat setup --harness ${a.harness})`)
+    else if (a.hooks === 'unsupported') console.log(`… ${what}: autochat can't follow ${a.harness} yet`)
+  }
+}
+
 // Each harness's hooks, and which of its modes put you in the lounge.
 async function doctorHooks (ok, cfg) {
   const { harnessContext, hooksStatus, triggerFor, tilde } = await import('../src/harness/index.js')
@@ -642,6 +675,7 @@ async function doctor () {
     else if (started === null || installedAt === null) ok(true, `${what} (hooks: unknown)`)
     else ok(false, `${what}\n    its Copilot process started before autochat's hooks were installed, so it can't open autochat.\n    fix: run /restart in that session (or exit and \`copilot --resume=${l.sid}\`). meanwhile, run \`autochat\` to join manually.`)
   }
+  await doctorProcesses(ok)
   console.log('… testing P2P (two local peers via the public DHT, up to 40s)')
   const topic = crypto.createHash('sha256').update('autochat-doctor-' + crypto.randomBytes(8).toString('hex')).digest()
   const a = new Hyperswarm({ bootstrap: bootstrap() })

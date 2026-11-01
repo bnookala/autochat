@@ -14,6 +14,7 @@ harness ──hook──▶ autochat hook --harness <id> <event> ──▶ adapt
                      unix socket (or the spool while the core starts) ──▶ Controller
 adapter.observe() ── fallback: sessions without hooks ─────────────────▶ controller.adopt(live, id)
 adapter.follow(sid) ── the harness's own session log, for what no hook reports ─▲
+process scan (ps) ── which agents run at all: a hint, never a session ──▶ snapshots (detected), doctor
 ```
 
 The Controller keys sessions by `${harness}:${sid}` and puts you in the lounge while at least one of
@@ -339,3 +340,45 @@ and how trust is keyed. Not checked at all: how long a login shell plus node tak
 your machine, and whether Codex shows anything while our hooks run. There's no fallback observer
 for Codex yet: rollouts under `~/.codex/sessions` say what a session did, but not whether its
 process is still alive.
+
+## Process scan (detection only)
+
+`src/harness/procscan.js` (#38). Hooks only reach autochat from agents that have them: sessions
+started before `autochat setup`, harnesses whose hooks you haven't installed, and harnesses with no
+adapter hooks yet stay silent. To explain that, `autochat daemon` scans the process table every
+15 s (`ps -A -o pid,ppid,uid,lstart,command`) for the coding agents of your OS user, and reads the
+working directory of each new one (`lsof` on macOS, `/proc` on Linux). The result is `detected`
+in the lounge snapshot and the `status` reply ([protocol.md](protocol.md#detected)), and
+`autochat doctor` scans once itself:
+
+```
+… 3 coding agents running: claude, copilot, gemini
+✘ claude (pid 4200) in ~/code/y has no autochat hooks, so it can't open autochat (autochat setup --harness claude)
+… gemini (pid 5100) in ~/code/z: autochat can't follow gemini yet
+```
+
+**It's detection only.** It can't use an adapter's `observe()`: whatever `observe()` reports goes
+to `controller.adopt()`, and adopted sessions count as running. A process says nothing about
+whether its agent works on its own or with you, so the scan never tracks a session and never puts
+you in the lounge, and it never signals a process (not even signal 0 to check it's alive).
+
+**What counts as an agent:**
+
+- a harness binary, by its exact name (`copilot`, `claude`, `codex`, `gemini`, `opencode`, `pi`), or
+  a script that node or bun runs from the harness's package (`@github/copilot`,
+  `@anthropic-ai/claude-code`, `@openai/codex`, `@google/gemini-cli`, `opencode-ai`,
+  `pi-coding-agent`), or Claude Code's native binary, named after its version under
+  `…/claude/versions/`;
+- only the outermost process of each: a wrapper and the binary it starts (Codex, Copilot CLI) or a
+  CLI that relaunches itself (Gemini CLI) are one agent;
+- not the desktop apps (`Claude`, `Copilot`: names match exactly), not a harness binary running a
+  script (Copilot's extension workers), not `--version`, `--help`, `login`, `update` and the like,
+  and not a harness serving others (`claude mcp serve`, `codex mcp-server`, `codex app-server`,
+  `opencode serve`);
+- your processes only, at most 64. Binaries under paths with spaces in them (inside an app bundle)
+  aren't matched.
+
+Each agent's `hooks` says whether autochat hears from it: `installed` when its harness's
+`hookStatus()` says so, `missing` when the harness has hooks that aren't installed,
+`unsupported` for a harness without them, and for Copilot CLI, `stale` when the process started
+before its hooks were installed (it loads them only at start).
