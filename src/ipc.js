@@ -62,8 +62,8 @@ export function serve (onMessage, { state, command, agents = null, maxSubscriber
 
   const subscribe = (sock, msg) => {
     const name = msg.stream ?? 'lounge'
+    if (typeof name !== 'string' || !Object.hasOwn(streams, name)) return refuse(sock, 'unknown stream')
     const stream = streams[name]
-    if (!stream) return refuse(sock, 'unknown stream')
     if (name === 'agents' && !agents) return refuse(sock, NO_AGENT_ROOM)
     if (!stream.state) return refuse(sock, 'subscriptions not supported')
     if (msg.v !== undefined && msg.v !== PROTOCOL) return refuse(sock, 'unsupported protocol version')
@@ -115,17 +115,23 @@ export function serve (onMessage, { state, command, agents = null, maxSubscriber
         buf = buf.slice(i + 1)
         let msg = null
         try { msg = JSON.parse(line) } catch {}
-        if (agent) { agent.message(msg); continue }
-        if (subscribed) { runCommand(sock, subscribed, msg); continue }
-        if (msg?.type === 'agent-hello') {
-          agent = agentConnection(sock, msg)
-          if (!agent) return
-          continue
-        }
-        if (msg?.type === 'subscribe') {
-          subscribed = subscribe(sock, msg)
-          if (!subscribed) return
-          continue
+        // Lines come from any local process: a surprise here costs that connection, never the core.
+        try {
+          if (agent) { agent.message(msg); continue }
+          if (subscribed) { runCommand(sock, subscribed, msg); continue }
+          if (msg?.type === 'agent-hello') {
+            agent = agentConnection(sock, msg)
+            if (!agent) return
+            continue
+          }
+          if (msg?.type === 'subscribe') {
+            subscribed = subscribe(sock, msg)
+            if (!subscribed) return
+            continue
+          }
+        } catch {
+          sock.destroy()
+          return
         }
         let reply = { ok: !!msg }
         if (msg) {

@@ -52,11 +52,14 @@ const fail = (message, extra) => { throw new AgentError(message, extra) }
 
 const hex = (bytes) => crypto.randomBytes(bytes).toString('hex')
 const isStr = (v) => typeof v === 'string'
+// For error messages about untrusted values: never calls their toString.
+const label = (v) => isStr(v) ? sanitize(v, 40) : typeof v
 const int = (v) => Number.isSafeInteger(v)
 const opt = (v) => v === undefined || v === null
 
 export function normalizeName (s) {
-  return String(s ?? '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/-+/g, '-')
+  if (typeof s !== 'string') return ''
+  return s.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/-+/g, '-')
     .replace(/^-+/, '').slice(0, 32).replace(/-+$/, '')
 }
 
@@ -186,6 +189,7 @@ export class AgentRoom extends EventEmitter {
     if (agent) {
       clearTimeout(agent.awayTimer)
       agent.awayTimer = null
+      this._cancelWait(agent, 'superseded')
       const old = agent.peer
       agent.peer = null
       if (old) old.end()
@@ -417,6 +421,7 @@ export class AgentRoom extends EventEmitter {
     const patch = {}
     if (!opt(msg.summary)) {
       if (!isStr(msg.summary)) fail('summary must be a string')
+      if (msg.summary.length > L.summary * 4 + 256) fail(`summary too long (max ${L.summary} characters)`)
       const summary = sanitize(msg.summary, Infinity)
       if (charCount(summary) > L.summary) fail(`summary too long (max ${L.summary} characters)`)
       this._scan(summary)
@@ -527,6 +532,8 @@ export class AgentRoom extends EventEmitter {
 
   _text (value, max, field = 'text') {
     if (!isStr(value)) fail(`${field} must be a string`)
+    // Escape sequences can make raw text longer than the result, but not by this much.
+    if (value.length > max * 4 + 256) fail(`${field} too long (max ${max} characters)`)
     const text = sanitizeMultiline(value)
     if (!text) fail(`${field} is empty`)
     if (charCount(text) > max) fail(`${field} too long (max ${max} characters)`)
@@ -551,7 +558,7 @@ export class AgentRoom extends EventEmitter {
     if (opt(thread)) return null
     if (!isStr(thread)) fail('thread must be a thread id')
     const t = this.threads.get(thread)
-    if (!t) fail(`unknown thread: ${sanitize(thread, 40)}`)
+    if (!t) fail(`unknown thread: ${label(thread)}`)
     if (t.status !== 'open') fail(`thread ${t.id} is resolved`)
     return t
   }
@@ -607,7 +614,7 @@ export class AgentRoom extends EventEmitter {
   }
 
   _from (agent) {
-    return { name: agent.name, display: this._display(agent), human: this.human, harness: agent.harness, repo: agent.repo }
+    return { name: agent.name, display: this._display(agent), human: this.human, harness: agent.harness, repo: agent.repo, id: agent.id }
   }
 
   _read (agent, msg) {
@@ -618,13 +625,14 @@ export class AgentRoom extends EventEmitter {
     const scope = opt(msg.scope) ? 'inbox' : msg.scope
     if (!['inbox', 'all'].includes(scope)) fail('scope must be inbox or all')
     if (!opt(msg.thread)) {
-      if (!isStr(msg.thread) || !this.threads.has(msg.thread)) fail(`unknown thread: ${sanitize(String(msg.thread), 40)}`)
-      const since = msg.since ?? 0
+      if (!isStr(msg.thread) || !this.threads.has(msg.thread)) fail(`unknown thread: ${label(msg.thread)}`)
+      const since = Math.min(msg.since ?? 0, this.seq)
       const all = this.log.filter(e => e.msg.thread === msg.thread && e.msg.seq > since)
       const page = all.slice(0, limit)
       return { messages: this._deliver(agent, page), cursor: page.length ? page.at(-1).msg.seq : since, hasMore: all.length > page.length }
     }
-    const since = msg.since ?? agent.cursor
+    // A `since` from before a daemon restart can be ahead of this daemon's seq.
+    const since = Math.min(msg.since ?? agent.cursor, this.seq)
     const match = scope === 'all' ? () => true : (e) => e.audience.has(agent.id)
     const all = this.log.filter(e => e.msg.seq > since && match(e))
     const page = all.slice(0, limit)
@@ -641,7 +649,7 @@ export class AgentRoom extends EventEmitter {
     timeoutMs = Math.min(L.waitMaxMs, Math.max(0, Math.round(timeoutMs)))
     let thread = null
     if (!opt(msg.thread)) {
-      if (!isStr(msg.thread) || !this.threads.has(msg.thread)) fail(`unknown thread: ${sanitize(String(msg.thread), 40)}`)
+      if (!isStr(msg.thread) || !this.threads.has(msg.thread)) fail(`unknown thread: ${label(msg.thread)}`)
       thread = msg.thread
     }
     if (agent.wait) this._cancelWait(agent, 'superseded')
@@ -649,11 +657,13 @@ export class AgentRoom extends EventEmitter {
       ? Math.min(this.seq, ...this.log.filter(e => e.msg.thread === thread && agent.unread.has(e.msg.seq)).map(e => e.msg.seq - 1))
       : null
     return new Promise((resolve, reject) => {
-      const w = { thread, since, resolve, reject, timer: null, pending: false }
+      const w = { thread, since, resolve, reject, timer: null, pending: false, peer: agent.peer }
       agent.wait = w
       const done = (timedOut) => {
         clearTimeout(w.timer)
         if (agent.wait === w) agent.wait = null
+        // Only the connection that asked gets (and marks read) the messages.
+        if (agent.peer !== w.peer) return reject(new AgentError('superseded'))
         const entries = this._waitMatches(agent, w)
         const messages = this._deliver(agent, entries)
         let cursor
@@ -706,7 +716,7 @@ export class AgentRoom extends EventEmitter {
         return { thread: this._threadView(t) }
       }
       case 'resolve': {
-        if (!isStr(msg.thread) || !this.threads.has(msg.thread)) fail(`unknown thread: ${sanitize(String(msg.thread ?? ''), 40)}`)
+        if (!isStr(msg.thread) || !this.threads.has(msg.thread)) fail(`unknown thread: ${label(msg.thread)}`)
         const t = this.threads.get(msg.thread)
         if (t.status !== 'open') fail(`thread ${t.id} is already resolved`)
         const outcome = this._text(msg.outcome, this.limits.outcome, 'outcome')
@@ -727,6 +737,7 @@ export class AgentRoom extends EventEmitter {
 
   _title (value) {
     if (!isStr(value)) fail('title must be a string')
+    if (value.length > this.limits.title * 4 + 256) fail(`title too long (max ${this.limits.title} characters)`)
     const title = sanitize(value, Infinity)
     if (!title) fail('title is empty')
     if (charCount(title) > this.limits.title) fail(`title too long (max ${this.limits.title} characters)`)
@@ -905,7 +916,7 @@ export class AgentRoom extends EventEmitter {
         const toIds = this._resolveNames(msg.to)
         const entry = this._append({
           kind: 'human',
-          from: { name: null, display: `${this.human} (human)`, human: this.human, harness: null, repo: null },
+          from: { name: null, display: `${this.human} (human)`, human: this.human, harness: null, repo: null, id: null },
           thread: thread ? thread.id : null,
           to: toIds.map(id => this._nameOf(id)),
           text

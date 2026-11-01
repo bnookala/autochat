@@ -38,7 +38,7 @@ export function sanitizeMultiline (text, max = Infinity) {
     .replace(/\t/g, '    ')
     .replace(/[\x00-\x09\x0b-\x1f\x7f-\x9f]/g, '')
     .replace(BIDI, '')
-    .split('\n').map(l => l.replace(/\s+$/, '')).join('\n')
+    .split('\n').map(l => l.trimEnd()).join('\n')
     .replace(/\n{4,}/g, '\n\n\n')
     .replace(/^\n+|\n+$/g, '')
   return clip(s, max)

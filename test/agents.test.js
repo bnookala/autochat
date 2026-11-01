@@ -201,7 +201,7 @@ test('post/read: inbox vs all, cursors, mentions, replies, and hasMore', async (
   assert.equal(note.message.kind, 'note')
   assert.equal(note.message.text, 'heads up: redoing the cache\n\n\nlayer', 'multiline sanitize keeps \\n and collapses blank lines')
   assert.deepEqual(Object.keys(note.message), ['seq', 'id', 'ts', 'kind', 'from', 'thread', 'to', 'replyTo', 'text', 'intervention'])
-  assert.deepEqual(note.message.from, { name: 'copilot-repo', display: 'stormy-newt-59/copilot-repo', human: 'stormy-newt-59', harness: 'copilot', repo: 'owner/repo' })
+  assert.deepEqual(note.message.from, { name: 'copilot-repo', display: 'stormy-newt-59/copilot-repo', human: 'stormy-newt-59', harness: 'copilot', repo: 'owner/repo', id: a.welcome.agent.id })
   assert.equal(note.thread, undefined)
 
   // A main-stream note to nobody isn't in anyone's inbox, but scope:"all" has it.
@@ -496,7 +496,7 @@ test('human stream: agents snapshot, ack gating agents.say, interventions in eve
   r = await human.cmd('agents.say', { text: 'focus on the tests, @copilot-repo', thread: null, to: [] })
   const said = r.result.message
   assert.deepEqual([said.kind, said.intervention, said.thread], ['human', true, null])
-  assert.deepEqual(said.from, { name: null, display: 'stormy-newt-59 (human)', human: 'stormy-newt-59', harness: null, repo: null })
+  assert.deepEqual(said.from, { name: null, display: 'stormy-newt-59 (human)', human: 'stormy-newt-59', harness: null, repo: null, id: null })
   const inbox = await a.cmd('read')
   assert.deepEqual(texts(ok(inbox).messages), ['focus on the tests, @copilot-repo'])
   assert.equal((await human.cmd('agents.say', { text: 'x', to: ['ghost'] })).error, 'unknown agent: ghost')
@@ -566,4 +566,54 @@ test('no network: the agent room imports no network modules, statically or at ru
     const bad = loaded.filter(u => /node_modules|^node:(?:dgram|net|tls|https?|http2|dns)$/.test(u))
     assert.deepEqual(bad, [])
   }
+})
+
+test('hostile lines never take the core down: odd hello/subscribe values, toString traps, huge whitespace', async (t) => {
+  const { room } = await start(t)
+  const { send } = await import('../src/ipc.js')
+  for (const hello of [{ ...HELLO, harness: { toString: 0 } }, { ...HELLO, name: { toString: 0 } }, { ...HELLO, name: ['x'], harness: 7, repo: { a: 1 }, cwd: 5 }]) {
+    const c = client()
+    c.send(hello)
+    const w = await c.next()
+    assert.equal(w.type, 'agent-welcome', 'malformed fields are dropped, not fatal')
+    c.close()
+  }
+  for (const stream of [{ toString: 0 }, '__proto__', 'constructor', 7]) {
+    const c = client()
+    c.send({ type: 'subscribe', v: 1, stream })
+    assert.equal((await c.next()).error, 'unknown stream')
+  }
+  const a = await agent()
+  assert.equal((await a.cmd('read', { thread: { toString: 0 } })).error, 'unknown thread: object')
+  assert.equal((await a.cmd('wait', { thread: ['x'] })).error, 'unknown thread: object')
+  const t0 = Date.now()
+  const r = await a.cmd('post', { text: 'a' + ' '.repeat(250000) + 'b' })
+  assert.equal(r.error, 'text too long (max 2000 characters)')
+  assert.ok(Date.now() - t0 < 1000, 'rejected before any expensive cleanup')
+  assert.deepEqual(await send({ type: 'ping' }), { ok: true }, 'the socket still serves')
+  assert.ok(room.agents.size >= 4)
+  a.close()
+})
+
+test('a resume replaces the old connection and its wait; a stale `since` cannot park the cursor in the future', async (t) => {
+  const { room } = await start(t)
+  const a = await agent({ harness: 'copilot' })
+  const b = await agent({ harness: 'claude' })
+  const pending = a.cmd('wait', { timeoutMs: 5000 })
+  await sleep(50)
+  // A second connection with the token takes over while the first is still open.
+  const a2 = await agent({ harness: 'copilot', resume: a.welcome.resume })
+  assert.equal(a2.welcome.agent.id, a.welcome.agent.id)
+  await a.closed
+  ok(await b.cmd('post', { kind: 'question', text: 'still there?', to: ['copilot-repo'] }))
+  assert.deepEqual(texts(ok(await a2.cmd('read')).messages), ['still there?'], 'the message reaches the new connection')
+  await assert.rejects(Promise.race([pending, sleep(300).then(() => { throw new Error('no reply on a closed connection') })]))
+
+  // A cursor from before a daemon restart (or a timestamp) as `since`.
+  const r = ok(await a2.cmd('read', { since: 1730400000000 }))
+  assert.equal(r.cursor, room.seq)
+  ok(await b.cmd('post', { text: 'after that, @copilot-repo' }))
+  assert.deepEqual(texts(ok(await a2.cmd('read')).messages), ['after that, @copilot-repo'])
+  a2.close()
+  b.close()
 })
