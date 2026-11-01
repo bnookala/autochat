@@ -46,7 +46,30 @@ test('a question with `to` opens a thread automatically; thread open/resolve →
   assert.deepEqual(texts(caught.inbox), ['agree', decision.text])
   assert.deepEqual(caught.threads.map(x => [x.title, x.status]), [['cache layout', 'open'], ['Should token refresh live in src/auth.js or the client?', 'resolved']])
   assert.equal((await b.cmd('post', { thread: thread.id, text: 'late' })).error, `thread ${thread.id} is resolved`)
-  assert.equal((await b.cmd('thread', { action: 'resolve', thread: thread.id, outcome: 'again' })).error, `thread ${thread.id} is already resolved`)
+  const again = ok(await b.cmd('thread', { action: 'resolve', thread: thread.id, outcome: 'again' }))
+  assert.deepEqual([again.alreadyResolved, again.thread.outcome], [true, 'Refresh lives in the client, behind a lock.'])
   assert.equal((await b.cmd('thread', { action: 'open', title: 'x'.repeat(81) })).error, 'title too long (max 80 characters)')
   for (const x of [a, b, c]) x.close()
 })
+
+test('resolving a resolved thread is ok: the first outcome stands, with one decision', async (t) => {
+  const { room } = await start(t)
+  const a = await agent({ harness: 'copilot' })
+  const b = await agent({ harness: 'claude' })
+  const { thread } = ok(await a.cmd('thread', { action: 'open', title: 'cache layout', with: ['claude-repo'] }))
+  const first = ok(await a.cmd('thread', { action: 'resolve', thread: thread.id, outcome: 'One cache per repo.' }))
+  assert.equal(first.alreadyResolved, undefined)
+  const second = await b.cmd('thread', { action: 'resolve', thread: thread.id, outcome: 'One cache per worktree.' })
+  assert.equal(second.ok, true, second.error)
+  assert.deepEqual(Object.keys(second.result), ['thread', 'alreadyResolved'])
+  assert.equal(second.result.alreadyResolved, true)
+  assert.deepEqual(second.result.thread, first.thread, 'the thread as it was resolved')
+  // Even without an outcome: there is nothing left to decide.
+  assert.equal(ok(await b.cmd('thread', { action: 'resolve', thread: thread.id })).alreadyResolved, true)
+  const msgs = room.snapshot().messages
+  assert.deepEqual(texts(msgs.filter(m => m.kind === 'decision')), ['One cache per repo.'])
+  assert.equal(msgs.filter(m => m.kind === 'sys' && m.text.includes('resolved')).length, 1)
+  assert.equal((await b.cmd('thread', { action: 'resolve', thread: 'nope-00' })).error, 'unknown thread: nope-00')
+  for (const x of [a, b]) x.close()
+})
+

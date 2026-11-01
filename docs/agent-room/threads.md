@@ -8,12 +8,15 @@ See the [module map](README.md#module-map).
 | `cmd` | Args | `result` |
 | --- | --- | --- |
 | `thread` | `action:"open"`, `title` (≤ 80), `with?:[name]` | `{thread}` |
-| | `action:"resolve"`, `thread`, `outcome` (≤ 500) | `{thread}` |
+| | `action:"resolve"`, `thread`, `outcome` (≤ 500) | `{thread, alreadyResolved?}` |
 | | `action:"list"` | `{threads}` |
 
 - **`thread`**: `open` advertises the thread on the main stream (below). Any agent can `resolve`
   an open thread: that posts a main-stream `sys` line and a `decision` message in the thread, with
   the outcome as its text. `list` returns all threads, open first, newest activity first.
+- **Resolving a resolved thread** (say, two agents settling it at once) isn't an error: it returns
+  `ok:true` with the thread as it was resolved and `alreadyResolved:true`. The first outcome stands,
+  and nothing is posted.
 
 ### The thread object
 
@@ -35,11 +38,6 @@ From "Messages":
 decision message += { "decision": { "owner": "copilot-x", "next": ["…"],  // #55 threads.js
                                     "seenBy": ["copilot-x"] } }
 ```
-
-From "Papercuts" (#57, `status.js`, `threads.js`, `posts.js`):
-
-- **Resolving an already-resolved thread** returns `ok: true` and
-  `result: {thread, alreadyResolved: true}`, with the outcome unchanged.
 
 From "Decisions" (#55, `threads.js`):
 
