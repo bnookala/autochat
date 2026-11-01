@@ -122,7 +122,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(info(roomLine, symbol: "number"))
         // The local agent room: a summary that opens the Agents tab. No panel, no badge.
         if model.connected, let agents = model.snapshot?.agents {
-            let line = entry(AgentsRules.menuLine(agents), symbol: "lock.fill") { [actions] in actions.openAgents() }
+            let line = entry(AgentsRules.menuLine(agents, detected: model.snapshot?.detected), symbol: "lock.fill") { [actions] in actions.openAgents() }
             line.toolTip = "The local agent room on this Mac: open the Agents tab"
             menu.addItem(line)
         }

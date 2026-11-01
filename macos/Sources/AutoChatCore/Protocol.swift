@@ -17,6 +17,10 @@ public enum Command: Sendable, Equatable {
     case jumpTo(String)
     /// Drop an attention item from the queue.
     case dismissAttention(String)
+    /// What Connect agents… would do for each harness (issue #65): `result: {plans}`.
+    case agentsSetupPlan
+    /// Connect these harnesses (their ids) to the agent room: `result: {applied, failed}`.
+    case agentsSetup(harnesses: [String])
 
     public var name: String {
         switch self {
@@ -30,12 +34,15 @@ public enum Command: Sendable, Equatable {
         case .agentsSay: "agents.say"
         case .jumpTo: "jumpTo"
         case .dismissAttention: "dismissAttention"
+        case .agentsSetupPlan: "agents.setupPlan"
+        case .agentsSetup: "agents.setup"
         }
     }
 
     /// `{"type":"cmd","id":7,"cmd":"say","text":"lol same"}`, for an intervention
-    /// `{"type":"cmd","id":2,"cmd":"agents.say","text":"…","thread":null,"to":[]}`, and for the
-    /// attention queue `{"type":"cmd","id":3,"cmd":"jumpTo","item":"7"}` (`id` is the command's).
+    /// `{"type":"cmd","id":2,"cmd":"agents.say","text":"…","thread":null,"to":[]}`, for the
+    /// attention queue `{"type":"cmd","id":3,"cmd":"jumpTo","item":"7"}` (`id` is the command's),
+    /// and for Connect agents… `{"type":"cmd","id":4,"cmd":"agents.setup","harnesses":["codex"]}`.
     public func encodedLine(id: Int) -> Data {
         struct Envelope: Encodable {
             let type = "cmd"
@@ -43,6 +50,7 @@ public enum Command: Sendable, Equatable {
             let cmd: String
             let text: String?
             var item: String?
+            var harnesses: [String]?
         }
         struct SayEnvelope: Encodable {
             let id: Int
@@ -74,6 +82,8 @@ public enum Command: Sendable, Equatable {
             data = (try? encoder.encode(Envelope(id: id, cmd: name, text: text))) ?? Data()
         case let .jumpTo(item), let .dismissAttention(item):
             data = (try? encoder.encode(Envelope(id: id, cmd: name, text: nil, item: item))) ?? Data()
+        case let .agentsSetup(harnesses):
+            data = (try? encoder.encode(Envelope(id: id, cmd: name, text: nil, harnesses: harnesses))) ?? Data()
         default:
             data = (try? encoder.encode(Envelope(id: id, cmd: name, text: nil))) ?? Data()
         }
@@ -82,16 +92,65 @@ public enum Command: Sendable, Equatable {
     }
 }
 
-/// `{"type":"reply","id":7,"ok":true}` or `{"type":"reply","id":7,"ok":false,"error":"…"}`.
+/// `{"type":"reply","id":7,"ok":true}` or `{"type":"reply","id":7,"ok":false,"error":"…"}`,
+/// with the command's `result` when it returns one.
 public struct Reply: Sendable, Equatable {
     public var id: Int
     public var ok: Bool
     public var error: String?
+    /// What the command returned (`agents.setupPlan`'s plans, say), to decode with `decode`.
+    public var result: JSONValue?
 
-    public init(id: Int, ok: Bool, error: String? = nil) {
+    public init(id: Int, ok: Bool, error: String? = nil, result: JSONValue? = nil) {
         self.id = id
         self.ok = ok
         self.error = error
+        self.result = result
+    }
+}
+
+/// Any JSON value: a reply's `result`, kept as it came until someone knows what it is.
+public enum JSONValue: Sendable, Equatable, Codable {
+    case null
+    case bool(Bool)
+    case number(Double)
+    case string(String)
+    case array([JSONValue])
+    case object([String: JSONValue])
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if c.decodeNil() {
+            self = .null
+        } else if let b = try? c.decode(Bool.self) {
+            self = .bool(b)
+        } else if let n = try? c.decode(Double.self) {
+            self = .number(n)
+        } else if let s = try? c.decode(String.self) {
+            self = .string(s)
+        } else if let a = try? c.decode([JSONValue].self) {
+            self = .array(a)
+        } else {
+            self = .object(try c.decode([String: JSONValue].self))
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        switch self {
+        case .null: try c.encodeNil()
+        case let .bool(b): try c.encode(b)
+        case let .number(n): try c.encode(n)
+        case let .string(s): try c.encode(s)
+        case let .array(a): try c.encode(a)
+        case let .object(o): try c.encode(o)
+        }
+    }
+
+    /// This value as a `T` (types here decode leniently), or nil.
+    public func decode<T: Decodable>(_ type: T.Type) -> T? {
+        guard let data = try? JSONEncoder().encode(self) else { return nil }
+        return try? JSONDecoder().decode(T.self, from: data)
     }
 }
 
@@ -164,7 +223,8 @@ public enum Inbound: Sendable, Equatable {
             return .agents(snap)
         case "reply":
             guard let id = head.id else { return .invalid }
-            return .reply(Reply(id: id, ok: head.ok ?? (head.error == nil), error: head.error))
+            let result = (try? decoder.decode(ReplyResult.self, from: line))?.result
+            return .reply(Reply(id: id, ok: head.ok ?? (head.error == nil), error: head.error, result: result))
         case nil:
             return .oneShot(ok: head.ok ?? false, error: head.error)
         case "error":
@@ -191,6 +251,18 @@ public enum Inbound: Sendable, Equatable {
         }
         guard let p = try? JSONDecoder().decode(Pong.self, from: line), p.pong == true else { return nil }
         return PingReply(phase: Phase(raw: p.phase), isDaemon: p.daemon ?? false)
+    }
+}
+
+/// A reply's `result`, if any.
+private struct ReplyResult: Decodable {
+    var result: JSONValue?
+
+    enum CodingKeys: String, CodingKey { case result }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        result = c.lenient(JSONValue.self, .result)
     }
 }
 

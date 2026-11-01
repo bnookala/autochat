@@ -124,6 +124,39 @@ struct AgentsNodeMockTests {
         @Sendable func card(_ name: String, in s: AgentsSnapshot?) -> AgentCard? { s?.agents.first { $0.name == name } }
         let (daemon, web, docs) = ("daemon-presence-and-bye", "api-server-fix-session-expiry", "docs-site")
 
+        // Connect agents (#65): the room is empty, but the lounge reports it (so the Agents tab
+        // shows), with the tools that are connected or could be, and three agents running here.
+        #expect(await eventually { lounge.value.first != nil && snapshots.value.first != nil && client.currentState == .connected })
+        let fresh = try #require(lounge.value.first)
+        #expect(fresh.agents == LoungeAgents(present: 0, openThreads: 0, connected: ["claude"], available: ["copilot", "gemini", "codex"]))
+        #expect(AgentsRules.showsTab(connected: true, lounge: fresh))
+        #expect(fresh.detected?.agents.map(\.harness) == [.claude, .copilot, .copilot])
+        #expect(AgentsRules.menuLine(fresh.agents!, detected: fresh.detected) == "Agents: none connected · 3 running here")
+        let empty = try #require(snapshots.value.first)
+        #expect(AgentsRules.isEmptyRoom(empty))
+        #expect(AgentsRules.emptyState(cards: empty.agents, lounge: fresh.agents, detected: fresh.detected)
+            == AgentsEmptyState(title: "No agents connected yet", running: "3 agents running here aren't connected", canConnect: true))
+        // The plan, checked like the sheet checks it, and one success and one failure.
+        let planReply = try await client.send(.agentsSetupPlan)
+        let plans = try #require(planReply.result?.decode(AgentSetupPlans.self)?.plans)
+        #expect(plans.map(\.id) == ["copilot", "claude", "gemini", "opencode", "codex", "pi"])
+        #expect(plans.map(\.action) == [.add, .ok, .manual, .absent, .add, .absent])
+        #expect(plans.first?.location == "~/.copilot/mcp-config.json")
+        var setup = AgentsSetup()
+        setup.begin()
+        setup.loaded(plans)
+        #expect(setup.selection == ["copilot", "codex"])
+        let setupReply = try await client.send(.agentsSetup(harnesses: setup.selection))
+        let result = try #require(setupReply.result?.decode(AgentSetupResult.self))
+        #expect(result.applied == ["copilot"])
+        #expect(result.failed.map(\.id) == ["codex"])
+        #expect(result.failure("codex")?.error?.contains("read-only") == true)
+        #expect(await eventually { lounge.value.last?.agents?.connected == ["copilot", "claude"] })
+        #expect(lounge.value.last?.agents?.available == ["gemini", "codex"])
+        let unknown = try await client.send(.agentsSetup(harnesses: ["cursor"]))
+        #expect(unknown.result?.decode(AgentSetupResult.self)?.failed.first?.id == "cursor")
+
+        // Copilot connected, so the room fills.
         // Presence (#54): a clean exit is left at once, with its sys line in the same snapshot.
         #expect(await eventually(timeout: 15) { card(docs, in: snapshots.value.last)?.presence == .left })
         let bye = try #require(snapshots.value.first { card(docs, in: $0)?.presence == .left })

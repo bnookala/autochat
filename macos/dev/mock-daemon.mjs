@@ -25,7 +25,10 @@
 // for good (left once the window ends). Names (#66): cards carry `title` (a session title,
 // `repo@branch`, or the folder) and `display` is the title with no human/ prefix; a coordinator
 // has two child sessions (`parent`); messages carry `from.title`. Idle sessions (#67): cards carry
-// `active`, false until the agent sets a status or posts, and three sessions never do.
+// `active`, false until the agent sets a status or posts, and three sessions never do. Connect
+// agents (#65): the room starts empty, with `connected` and `available` in the lounge's `agents`
+// and three running agents in `detected`; `agents.setupPlan` and `agents.setup` connect Copilot
+// CLI and fail on Codex, and the room fills once something connects (or after 20 s).
 //
 // `--scenario attention` (issue #37) runs four agents over three harnesses at once: one finishes,
 // two get blocked on you (one with Copilot's question), one fails. Jump to a blocked one and it
@@ -128,6 +131,7 @@ function snapshot () {
     banner: s.banner,
     agents: agentsSummary(),
     attention: attentionList(),
+    ...(room.p1 ? { detected: { scannedAt: Date.now(), agents: P1_DETECTED } } : {}),
     mock: true
   }
 }
@@ -221,7 +225,7 @@ function runScenario (name, delay = 0) {
   const t = (sec, fn) => at(delay + sec, fn)
   if (name === 'lounge') return
   if (name === 'agents') return runAgents(t)
-  if (name === 'agents-p1') return runAgentsP1(t)
+  if (name === 'agents-p1') return runAgentsP1()
   if (name === 'attention') return runAttention(t)
   if (name === 'room' || name === 'request' || name === 'countdown') {
     enterRoom()
@@ -359,6 +363,15 @@ const room = {
 const hex = (n) => Array.from({ length: n }, () => Math.floor(Math.random() * 16).toString(16)).join('')
 
 function agentsSummary () {
+  // P1 (#65): never null while the daemon hosts an agent room, even before anyone connects.
+  if (room.p1) {
+    return {
+      present: [...room.cards.values()].filter(c => c.present).length,
+      openThreads: [...room.threads.values()].filter(t => t.status === 'open').length,
+      connected: P1_HARNESSES.filter(h => h.installed && h.registered).map(h => h.id),
+      available: P1_HARNESSES.filter(h => h.installed && !h.registered).map(h => h.id)
+    }
+  }
   if (!room.seen) return null
   return {
     present: [...room.cards.values()].filter(c => c.present).length,
@@ -627,8 +640,71 @@ const P1 = {
   docs: 'docs-site'
 }
 
-function runAgentsP1 (t) {
+// Connect agents (#65): which tools are installed, and which have autochat registered, in the
+// daemon's adapter order. Connecting Copilot CLI works; Codex fails (a read-only config).
+const P1_HARNESSES = [
+  { id: 'copilot', name: 'Copilot CLI', installed: true, registered: false, where: '~/.copilot/mcp-config.json', detail: 'Adds the autochat MCP server. The Copilot app picks it up at once.' },
+  { id: 'claude', name: 'Claude Code', installed: true, registered: true, where: 'claude mcp (user scope)' },
+  { id: 'gemini', name: 'Gemini CLI', installed: true, registered: false, where: '~/.gemini/settings.json', manual: "~/.gemini/settings.json isn't plain JSON (comments?), so autochat won't rewrite it." },
+  { id: 'opencode', name: 'opencode', installed: false },
+  { id: 'codex', name: 'Codex', installed: true, registered: false, where: '~/.codex/config.toml', detail: 'Adds [mcp_servers.autochat].', fails: '~/.codex/config.toml is read-only (EACCES).' },
+  { id: 'pi', name: 'pi', installed: false }
+]
+// The process scan: three agents running here that don't reach the room yet.
+const P1_DETECTED = [
+  { harness: 'claude', pid: 4200, cwd: '~/code/web', startedAt: Date.now() - 3600e3, hooks: 'installed' },
+  { harness: 'copilot', pid: 5120, cwd: '~/code/autochat', startedAt: Date.now() - 1500e3, hooks: 'installed' },
+  { harness: 'copilot', pid: 5377, cwd: '~/code/api-server', startedAt: Date.now() - 600e3, hooks: 'stale' }
+]
+const P1_FILL_MS = 20000
+let p1Opened = false
+
+function setupPlan (h) {
+  if (!h.installed) return { id: h.id, name: h.name, action: 'absent', where: null, detail: 'Not installed' }
+  const base = { id: h.id, name: h.name, where: h.where }
+  if (h.registered) return { ...base, action: 'ok', detail: 'Already connected' }
+  if (h.manual) return { ...base, action: 'manual', detail: h.manual }
+  return { ...base, action: 'add', detail: h.detail }
+}
+
+function agentsSetup (msg) {
+  const ids = Array.isArray(msg.harnesses) ? [...new Set(msg.harnesses.filter(x => typeof x === 'string' && x))] : []
+  if (!ids.length) return { ok: false, error: 'harnesses: pick at least one' }
+  const applied = []
+  const failed = []
+  for (const id of ids) {
+    const h = P1_HARNESSES.find(x => x.id === id)
+    if (!h) failed.push({ id, error: `unknown harness: ${id}` })
+    else if (!h.installed) failed.push({ id, error: `${h.name} isn't installed` })
+    else if (h.manual) failed.push({ id, error: h.manual })
+    else if (h.fails) failed.push({ id, error: h.fails })
+    else {
+      h.registered = true
+      applied.push(id)
+    }
+  }
+  log(`agents.setup: connected ${applied.join(', ') || 'nothing'}; failed ${failed.map(f => f.id).join(', ') || 'nothing'}`)
+  changed()
+  if (applied.length) openP1Room(`connected ${applied.join(', ')}: their sessions join`)
+  return { ok: true, result: { applied, failed } }
+}
+
+// The room starts empty (agents are running, none connected) and fills once something connects.
+function runAgentsP1 () {
   room.p1 = true
+  log(`agents-p1: no agent is connected yet; Connect agents… in the app (or wait ${P1_FILL_MS / 1000} s) and the room fills`)
+  timers.push(setTimeout(() => openP1Room('nothing was connected; the room fills anyway'), P1_FILL_MS))
+  changed()
+}
+
+function openP1Room (why) {
+  if (p1Opened) return
+  p1Opened = true
+  log(`agents-p1: ${why}`)
+  playP1Room(at)
+}
+
+function playP1Room (t) {
   const { lead, app, daemon, web, docs } = P1
   t(0, () => agentJoin(lead, 'copilot', 'main', {
     title: 'AutoChat P1 agent rooms', repo: P1_REPO, worktree: 'autochat', state: 'editing', summary: 'Coordinating the P1 agent room layers',
@@ -715,6 +791,12 @@ function command (msg, stream = 'lounge') {
         return { ok: true, result: { ack: true } }
       case 'agents.say':
         return agentsSay(msg)
+      case 'agents.setupPlan':
+        if (!room.p1) return { ok: false, error: 'unknown command' }
+        return { ok: true, result: { plans: P1_HARNESSES.map(setupPlan) } }
+      case 'agents.setup':
+        if (!room.p1) return { ok: false, error: 'unknown command' }
+        return agentsSetup(msg)
       default:
         return { ok: false, error: 'unknown command' }
     }

@@ -17,7 +17,7 @@ struct ChatView: View {
                     Divider()
                 }
                 if model.effectiveTab == .agents {
-                    AgentsView(agents: model.agents)
+                    AgentsView(agents: model.agents, lounge: snapshot.agents, detected: snapshot.detected)
                 } else {
                     lounge(snapshot)
                 }

@@ -9,21 +9,45 @@ import SwiftUI
 
 struct AgentsView: View {
     @Bindable var agents: AgentsModel
+    /// The lounge snapshot's view of the room: `connected` and `available` (issue #65).
+    var lounge: LoungeAgents?
+    /// The process scan: agents running here, connected or not.
+    var detected: DetectedAgents?
 
     static let sidebarWidth: CGFloat = 340
 
     var body: some View {
-        if let snapshot = agents.snapshot {
-            HStack(spacing: 0) {
-                AgentsSidebar(agents: agents, snapshot: snapshot)
-                    .frame(width: Self.sidebarWidth)
-                Divider()
-                StreamPane(agents: agents, snapshot: snapshot)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+        Group {
+            if let snapshot = agents.snapshot {
+                if AgentsRules.isEmptyRoom(snapshot), let empty = AgentsRules.emptyState(cards: [], lounge: lounge, detected: detected) {
+                    EmptyRoomView(state: empty, detected: detected, tier: snapshot.tier) { connect() }
+                } else {
+                    HStack(spacing: 0) {
+                        AgentsSidebar(agents: agents, snapshot: snapshot, lounge: lounge, detected: detected) { connect() }
+                            .frame(width: Self.sidebarWidth)
+                        Divider()
+                        StreamPane(agents: agents, snapshot: snapshot)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                }
+            } else {
+                AgentsPlaceholder(connection: agents.connection)
             }
-        } else {
-            AgentsPlaceholder(connection: agents.connection)
         }
+        .sheet(isPresented: setupShown) {
+            AgentsSetupSheet(agents: agents)
+        }
+    }
+
+    private func connect() {
+        Task { await agents.openSetup() }
+    }
+
+    private var setupShown: Binding<Bool> {
+        Binding(
+            get: { agents.setup.isShown },
+            set: { shown in if !shown { agents.closeSetup() } }
+        )
     }
 }
 
@@ -87,6 +111,9 @@ enum AgentsSidebarLayout {
 private struct AgentsSidebar: View {
     let agents: AgentsModel
     let snapshot: AgentsSnapshot
+    let lounge: LoungeAgents?
+    let detected: DetectedAgents?
+    let onConnect: () -> Void
 
     var body: some View {
         ScrollView {
@@ -94,12 +121,8 @@ private struct AgentsSidebar: View {
                 TierBanner(tier: snapshot.tier)
                     .padding(.bottom, 6)
                 SidebarHeader(title: "Agents", detail: AgentsRules.boardCounts(snapshot.agents))
-                if snapshot.agents.isEmpty {
-                    Text("No agents right now. They appear here when a harness with autochat's MCP server starts.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 4)
+                if let empty = AgentsRules.emptyState(cards: snapshot.agents, lounge: lounge, detected: detected) {
+                    EmptyBoardBlock(state: empty, detected: detected, onConnect: onConnect)
                 }
                 // Ticks so "left 4 min ago" stays true between snapshots.
                 TimelineView(.periodic(from: .now, by: 20)) { context in
@@ -120,6 +143,10 @@ private struct AgentsSidebar: View {
                             }
                         }
                     }
+                }
+                // With agents here, connecting more is a quiet row; the empty state above has the button.
+                if AgentsRules.canConnect(lounge), snapshot.agents.contains(where: { $0.presence == .here }) {
+                    ConnectRow(detail: AgentsRules.availableText(lounge), action: onConnect)
                 }
                 SidebarHeader(title: "Streams", detail: nil)
                     .padding(.top, 10)
