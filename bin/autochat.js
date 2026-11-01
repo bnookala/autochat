@@ -53,6 +53,12 @@ function inviteText (room) {
   ].join('\n')
 }
 
+// The running daemon or terminal UI picks up a new room right away (docs/protocol.md: reload).
+async function notifyReload () {
+  const { send } = await import('../src/ipc.js')
+  await send({ type: 'reload' }, 500)
+}
+
 const HELP = `autochat: ephemeral, serverless chat rooms for people whose Copilot CLI is on autopilot
 
   autochat setup              install Copilot CLI hooks (~/.copilot/hooks/autochat.json);
@@ -147,6 +153,7 @@ ${dim('More: ' + APP_INSTALL_URL)}`)
       const name = values.public ?? positionals[0] ?? null
       const room = parseRoom(name ?? generatePrivateCode())
       saveConfig({ room: room.code })
+      await notifyReload()
       const id = loadIdentity()
       console.log(`${bold('room ready:')} ${room.display}  ${room.isPublic ? dim('(public, listed in `autochat rooms`)') : dim('(private, invite only)')}
 You'll host it the next time you're on autopilot (as ${id.handle}). It lives while anyone in it is on autopilot.
@@ -158,11 +165,13 @@ ${inviteText(room)}`)
       if (!rest[0]) throw new Error('usage: autochat join <code>')
       const room = parseRoom(rest[0])
       saveConfig({ room: room.code })
+      await notifyReload()
       console.log(`your room is now ${bold(room.display)}. you'll land there next time you're on autopilot.`)
       return
     }
     case 'leave': {
       saveConfig({ room: DEFAULT_ROOM })
+      await notifyReload()
       console.log(`back to ${bold('#' + DEFAULT_ROOM)}.`)
       return
     }
@@ -254,7 +263,7 @@ async function startCore ({ auto = false, daemon = false }) {
   const { readSpool, releaseLaunchLock } = await import('../src/hook.js')
   const identity = loadIdentity()
   const config = loadConfig()
-  const controller = new Controller({ identity, config, auto, daemon, bootstrap: bootstrap() })
+  const controller = new Controller({ identity, config, loadConfig, auto, daemon, bootstrap: bootstrap() })
   // Only the daemon hosts the local agent room; the terminal UI refuses agent connections.
   let agentRoom = null
   if (daemon) {

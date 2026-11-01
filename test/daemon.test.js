@@ -226,3 +226,46 @@ test('autochat daemon: headless, driven by hooks and subscribers, clean SIGTERM'
   assert.equal(fs.existsSync(sockPath()), false, 'socket removed')
   assert.match(stderr, /SIGTERM, leaving the room/)
 })
+
+test('autochat join/host/leave reach a running daemon: the lounge shows the new room at once', { timeout: 60000 }, async (t) => {
+  const testnet = await createTestnet(3)
+  t.after(() => testnet.destroy())
+  const home = path.join(tmp, 'r')
+  fs.mkdirSync(home, { recursive: true })
+  process.env.AUTOCHAT_HOME = home
+  const env = {
+    ...process.env,
+    AUTOCHAT_HOME: home,
+    AUTOCHAT_BOOTSTRAP: testnet.bootstrap.map(b => `${b.host}:${b.port}`).join(','),
+    AUTOCHAT_NO_NOTIFY: '1',
+    AUTOCHAT_NO_FOCUS: '1'
+  }
+  const daemon = spawn(process.execPath, [BIN, 'daemon'], { env, stdio: ['ignore', 'ignore', 'ignore'] })
+  const exited = new Promise((resolve) => daemon.on('exit', resolve))
+  t.after(() => daemon.kill('SIGKILL'))
+  let pong = null
+  for (let i = 0; i < 100 && !pong; i++) {
+    pong = await send({ type: 'ping' }, 300)
+    if (!pong) await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.equal(pong?.daemon, true)
+
+  const a = client()
+  a.send({ type: 'subscribe', v: 1, client: 'test' })
+  assert.equal((await a.next(isState(), 10000, 'first snapshot')).room.display, '#lobby')
+  const cli = (...args) => {
+    const r = spawnSync(process.execPath, [BIN, ...args], { env, encoding: 'utf8' })
+    assert.equal(r.status, 0, r.stderr)
+  }
+  cli('join', 'lc1-brave-otter-abcd2345efgh')
+  await a.next(isState(s => s.room.display === 'private:brave-otter'), 10000, 'joined room shown')
+  cli('host', 'rustaceans')
+  await a.next(isState(s => s.room.display === '#rustaceans'), 10000, 'hosted room shown')
+  cli('leave')
+  await a.next(isState(s => s.room.display === '#lobby'), 10000, 'back to #lobby')
+  assert.deepEqual(await send({ type: 'reload' }), { ok: true, reloaded: true, room: '#lobby' })
+
+  daemon.kill('SIGTERM')
+  assert.equal(await exited, 0)
+  await a.closed
+})
