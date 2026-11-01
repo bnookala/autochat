@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { agent, start, ok, texts } from './helpers/agents.js'
+import { sleep, agent, start, ok, texts } from './helpers/agents.js'
 
 test('post/read: inbox vs all, cursors, mentions, replies, and hasMore', async (t) => {
   const { room } = await start(t)
@@ -59,4 +59,89 @@ test('post/read: inbox vs all, cursors, mentions, replies, and hasMore', async (
   a.send({ type: 'bogus', id: 99 })
   assert.equal((await a.next(m => m.id === 99)).error, 'unknown message type')
   for (const x of [a, b, c]) x.close()
+})
+
+const until = async (fn, label, ms = 3000) => {
+  const end = Date.now() + ms
+  for (;;) {
+    if (await fn()) return
+    if (Date.now() > end) throw new Error('timed out waiting for ' + label)
+    await sleep(20)
+  }
+}
+
+test('post recipients: here gets it, away gets it if it resumes, left never does; a post only for agents that left is a main-stream handoff', async (t) => {
+  const { room } = await start(t, { limits: { resumeMs: 60000 } })
+  const a = await agent({ harness: 'copilot' })
+  const b = await agent({ harness: 'claude' })
+  const c = await agent({ harness: 'codex' })
+  const d = await agent({ harness: 'gemini' })
+  ok(await b.cmd('status', { state: 'editing' }))
+  ok(await d.cmd('status', { state: 'testing' }))
+  c.close()
+  await c.closed
+  await until(() => !room.agents.get(c.welcome.agent.id).present, 'c away')
+  ok(await d.cmd('bye'))
+
+  // Here, away, left, yourself and a repeat: one entry per agent, in order, without you.
+  const mixed = ok(await a.cmd('post', { text: 'heads up: the cache moves', to: ['claude-repo', '@codex-repo', 'stormy-newt-59/gemini-repo', 'copilot-repo', 'claude-repo'] }))
+  assert.deepEqual(mixed.recipients, [
+    { name: 'claude-repo', presence: 'here', state: 'editing', delivered: true },
+    { name: 'codex-repo', presence: 'away', state: 'idle', delivered: false },
+    { name: 'gemini-repo', presence: 'left', state: 'testing', delivered: false }
+  ])
+  assert.equal(mixed.rerouted, undefined)
+  assert.deepEqual([mixed.message.kind, mixed.message.thread, mixed.message.to], ['note', null, ['claude-repo', 'codex-repo', 'gemini-repo']])
+  assert.deepEqual(Object.keys(mixed), ['message', 'recipients'])
+  assert.deepEqual(texts(ok(await b.cmd('read')).messages), ['heads up: the cache moves'])
+  const c2 = await agent({ harness: 'codex', resume: c.welcome.resume })
+  assert.equal(c2.welcome.agent.id, c.welcome.agent.id)
+  assert.deepEqual(texts(ok(await c2.cmd('read')).messages), ['heads up: the cache moves'], 'away: it waited in their inbox')
+  assert.deepEqual(ok(await a.cmd('post', { text: 'no one in particular' })).recipients, [], 'no `to`: no recipients')
+
+  // A question with here and left recipients opens a thread with those still here.
+  const q = ok(await a.cmd('post', { kind: 'question', text: 'who owns the parser?', to: ['claude-repo', 'gemini-repo'] }))
+  assert.deepEqual([q.message.kind, q.message.to, q.thread.participants], ['question', ['claude-repo', 'gemini-repo'], ['copilot-repo', 'claude-repo']])
+  assert.deepEqual(q.recipients.map(r => [r.name, r.delivered]), [['claude-repo', true], ['gemini-repo', false]])
+
+  // Only for agents that left: the main stream, as a handoff, still addressed to them; a question
+  // opens no thread, and a thread post leaves its thread.
+  const asked = ok(await a.cmd('post', { kind: 'question', text: 'did you finish the parser?', to: ['gemini-repo'] }))
+  assert.equal(asked.rerouted, 'handoff')
+  assert.deepEqual([asked.message.kind, asked.message.thread, asked.message.to], ['handoff', null, ['gemini-repo']])
+  assert.equal(asked.thread, undefined, 'no thread')
+  assert.deepEqual(asked.recipients, [{ name: 'gemini-repo', presence: 'left', state: 'testing', delivered: false }])
+  assert.deepEqual(Object.keys(asked), ['message', 'recipients', 'rerouted'])
+  const moved = ok(await a.cmd('post', { kind: 'reply', thread: q.thread.id, replyTo: q.message.seq, text: 'parser notes for gemini', to: ['gemini-repo', 'copilot-repo'] }))
+  assert.deepEqual([moved.rerouted, moved.message.kind, moved.message.thread, moved.message.replyTo], ['handoff', 'handoff', null, q.message.seq])
+  assert.equal(moved.thread, undefined)
+  assert.equal(ok(await a.cmd('thread', { action: 'list' })).threads[0].messages, 1, 'the thread has only the question')
+  const all = ok(await b.cmd('read', { scope: 'all', since: q.message.seq }))
+  assert.deepEqual(all.messages.map(m => [m.kind, m.text]), [['handoff', 'did you finish the parser?'], ['handoff', 'parser notes for gemini']], 'the room sees them')
+  assert.deepEqual(texts(ok(await b.cmd('catchUp')).recent).slice(-2), ['did you finish the parser?', 'parser notes for gemini'])
+
+  // A new agent may take the name of one that left: then `to` means the new agent.
+  const d2 = await agent({ harness: 'gemini' })
+  assert.equal(d2.name, 'gemini-repo')
+  const fresh = ok(await a.cmd('post', { text: 'welcome back', to: ['gemini-repo'] }))
+  assert.equal(fresh.rerouted, undefined)
+  assert.deepEqual(fresh.recipients, [{ name: 'gemini-repo', presence: 'here', state: 'idle', delivered: true }])
+  assert.deepEqual(texts(ok(await d2.cmd('read')).messages), ['welcome back'])
+  for (const x of [a, b, c2, d2]) x.close()
+})
+
+test('post: no more "left the room": a left card is addressable until it goes, then the name is unknown; `with` still refuses it', async (t) => {
+  await start(t, { limits: { lingerMs: 300 } })
+  const a = await agent({ harness: 'copilot' })
+  const b = await agent({ harness: 'claude' })
+  ok(await b.cmd('bye'))
+  assert.equal(ok(await a.cmd('post', { text: 'are you still there?', to: ['claude-repo'] })).rerouted, 'handoff')
+  assert.equal((await a.cmd('thread', { action: 'open', title: 'x', with: ['claude-repo'] })).error, 'claude-repo left the room')
+  assert.equal((await a.cmd('post', { text: 'x', to: ['claude-repo', 7] })).error, 'to must be a list of agent names')
+  assert.equal((await a.cmd('post', { text: 'x', to: 'claude-repo' })).error, 'to must be a list of agent names')
+  assert.equal((await a.cmd('post', { text: 'x', to: Array(17).fill('claude-repo') })).error, 'to has too many names (max 16)')
+  assert.equal((await a.cmd('post', { text: 'x', to: ['claude-repo', 'nobody'] })).error, 'unknown agent: nobody')
+  await sleep(400)
+  assert.equal((await a.cmd('post', { text: 'x', to: ['claude-repo'] })).error, 'unknown agent: claude-repo', 'its card is gone')
+  a.close()
 })
