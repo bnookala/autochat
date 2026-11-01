@@ -452,6 +452,7 @@ async function sim () {
   r.on('member-status', (m) => log(`~ ${m.handle} is ${m.status}`))
   r.on('member-leave', (m, why) => log(`- ${m.handle} (${why})`))
   r.on('inst', (inst, info) => log(`room instance ${inst.iid} host=${r.hostHandle}${info.created ? ' (me)' : ''}`))
+  r.on('host', (h) => log(h.text))
   r.on('chat', (m) => {
     log(`${m.handle}: ${m.text}`)
     if (!m.self && /\bping\b/i.test(m.text)) r.say('pong')

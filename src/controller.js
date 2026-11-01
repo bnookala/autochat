@@ -303,6 +303,7 @@ export class Controller extends EventEmitter {
       else if (wasHost) this.sys(`found an older room, merging. ${room.hostHandle} is the host`)
       else this.sys(`joined a live room hosted by ${room.hostHandle}`)
     })
+    room.on('host', (h) => { if (room === this.room) this.sys(h.text, h) })
     room.on('member-join', (m) => this.sys(`${m.handle} ${m.status === 'away' ? 'is here (spectating)' : 'joined (their copilot is on autopilot)'}`, m))
     room.on('member-status', (m) => {
       if (m.status === 'needed') this.sys(`${m.handle}'s copilot is asking them something`, m)
