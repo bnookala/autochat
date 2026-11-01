@@ -82,6 +82,20 @@ test('the board shows a card\'s title when its name doesn\'t already spell it (#
   assert.match(lines[3], /^ ○ gemini-docs .* exploring {2}Docs pass$/)
 })
 
+test('idle sessions (#67) collapse into one line, and the header counts them', () => {
+  const snap = structuredClone(fixture)
+  for (const c of snap.agents) c.active = true
+  const idle = (name, present = true) => ({ ...structuredClone(fixture.agents[0]), id: name, name, active: false, present, state: 'idle', summary: null, overlaps: [] })
+  snap.agents.push(idle('what-can-you-do'), idle('autochat-main'), idle('gone-quietly', false))
+  const lines = plainLines(renderAgents(snap, 110, 40).lines)
+  assert.match(lines[0], /· 2 agents \(\+1 away\) · 2 idle · 1 open thread/)
+  assert.equal(lines[4], ' ◌ 2 idle sessions: what-can-you-do, autochat-main', 'one line, without the ones that left')
+  assert.ok(!lines.some(l => /● (what-can-you-do|autochat-main)/.test(l)))
+  const onlyIdle = plainLines(renderAgents({ ...snap, agents: [idle('lonely')] }, 80, 12).lines)
+  assert.match(onlyIdle[0], /· 0 agents · 1 idle · 1 open thread/)
+  assert.equal(onlyIdle[1], ' ◌ 1 idle session: lonely', 'instead of "no agents yet"')
+})
+
 async function host (t, opts = {}) {
   const acks = []
   const room = new AgentRoom({ human: 'stormy-newt-59', onAck: () => acks.push(Date.now()), ...opts })

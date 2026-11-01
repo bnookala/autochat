@@ -109,9 +109,22 @@ export function connectAgents ({ client = 'autochat-agents', timeoutMs = 3000 } 
   })
 }
 
+// Agents that haven't set a status or posted (#67) are collapsed into one line; older snapshots
+// have no `active`, and everyone counts.
+const isIdle = (c) => c.active === false
+
+function idleLine (idle, cols) {
+  const l = new Line(cols).add(' ◌ ', GREY).add(plural(idle.length, 'idle session'), GREY)
+  const names = idle.map(c => clean(c.name, 32)).join(', ')
+  return l.add(fit(': ' + names, Math.max(0, cols - l.used)), DIM).toString()
+}
+
 function boardLines (snap, cols) {
-  const cards = snap.agents || []
+  const all = snap.agents || []
+  const cards = all.filter(c => !isIdle(c))
+  const idle = all.filter(c => isIdle(c) && c.present !== false)
   if (!cards.length) {
+    if (idle.length) return [idleLine(idle, cols)]
     return [new Line(cols).add(' no agents yet: they join through `autochat mcp` (see `autochat setup --agents`)', GREY).toString()]
   }
   const where = (c) => {
@@ -148,7 +161,7 @@ function boardLines (snap, cols) {
     l.add(fit(clean(c.summary ?? '', 140), Math.max(0, cols - l.used - (warnW ? warnW + 2 : 0))))
     if (warn) l.add('  ').add(warn, YELLOW)
     return l.toString()
-  })
+  }).concat(idle.length ? [idleLine(idle, cols)] : [])
 }
 
 function threadLines (snap, cols) {
@@ -204,14 +217,15 @@ export function renderAgents (snap, cols, rows, { scroll = 0, status = null } = 
   cols = Math.max(30, cols)
   const all = rows === 0
   rows = all ? 0 : Math.max(8, rows)
-  const cards = snap.agents || []
+  const cards = (snap.agents || []).filter(c => !isIdle(c))
   const present = cards.filter(c => c.present).length
   const away = cards.length - present
+  const idle = (snap.agents || []).filter(c => isIdle(c) && c.present !== false).length
   const open = (snap.threads || []).filter(t => t.status === 'open').length
   const tier = snap.tier === 'local' ? 'local 🔒' : clean(snap.tier, 20)
 
   const head = new Line(cols).add(' autochat agents ', INV + BOLD).add(` ${tier} `, INV)
-  head.add(`· ${plural(present, 'agent')}${away ? ` (+${away} away)` : ''} · ${plural(open, 'open thread')} `, INV)
+  head.add(`· ${plural(present, 'agent')}${away ? ` (+${away} away)` : ''}${idle ? ` · ${idle} idle` : ''} · ${plural(open, 'open thread')} `, INV)
   const me = snap.human ? ` ${clean(snap.human, 40)} ` : ''
   const fill = cols - head.used - strWidth(me)
   if (fill > 0) head.add(' '.repeat(fill), INV)
