@@ -4,8 +4,8 @@ import { sockPath } from './paths.js'
 import { sanitize } from './text.js'
 import { Line, wrap, strWidth, stripAnsi } from './tui.js'
 
-// `autochat agents`: a terminal client of the daemon's `agents` stream (docs/protocol.md,
-// "Human stream"). A live read-only view, `--json` for one snapshot, and `say` to intervene.
+// `autochat agents`: a terminal client of the daemon's `agents` stream (docs/agent-room/human.md).
+// A live read-only view, `--json` for one snapshot, and `say` to intervene.
 
 export const NOT_RUNNING = "autochat isn't running: open AutoChat.app or run `autochat daemon`"
 export const WARNING = 'Agents read your messages as input. You can steer them, or confuse them.'
