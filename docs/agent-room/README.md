@@ -75,7 +75,7 @@ flat files, `test/agents-<module>.test.js`, with shared helpers in `test/helpers
 | presence | [`presence.js`](../../src/agents/presence.js): close, leave, remove, the live set, the resume window | `agents-presence` | [presence.md](presence.md) | #54 |
 | names | [`names.js`](../../src/agents/names.js): normalize, default, dedupe, display names, renames, `to` and mentions | `agents-hello` | [names.md](names.md) | #66 |
 | board | [`board.js`](../../src/agents/board.js): cards, `catchUp`, the snapshot's cards | `agents-board` | [board.md](board.md) | #67 |
-| status | [`status.js`](../../src/agents/status.js): `status`, focus | `agents-overlap`, `agents-guardrails` | [status.md](status.md) | #57, #53 |
+| status | [`status.js`](../../src/agents/status.js): `status`, focus | `agents-status`, `agents-overlap`, `agents-guardrails` | [status.md](status.md) | #57, #53 |
 | overlap | [`overlap.js`](../../src/agents/overlap.js): paths, overlap computation, notices | `agents-overlap` | [overlap.md](overlap.md) | #56 |
 | posts | [`posts.js`](../../src/agents/posts.js): `post`, recipients | `agents-posts` | [posts.md](posts.md) | #54, #53, #57 |
 | threads | [`threads.js`](../../src/agents/threads.js): `thread`, decisions | `agents-threads` | [threads.md](threads.md) | #55, #57 |

@@ -1,10 +1,22 @@
 import { sanitize, charCount } from '../text.js'
-import { STATES, fail, isStr, int, opt } from './limits.js'
+import { STATES, AgentError, fail, isStr, int, opt } from './limits.js'
 import { normalizeName } from './names.js'
 import { normalizePath } from './overlap.js'
 
-// Status: the `status` command (summary, state, focus, name) and focus validation.
-// See docs/agent-room/status.md.
+// Status: the `status` command (summary, state, focus, name), focus validation, and deferring a
+// status that comes too soon after the last one. See docs/agent-room/status.md.
+
+// The fields a deferred status keeps from earlier calls in the same gap, unless a later call
+// sets them (null means "unchanged" for these). Any other field comes from the latest call only,
+// so a deferred status stays as small as one call.
+const STATUS_FIELDS = ['summary', 'state', 'focus', 'name']
+
+function mergeStatus (prev, msg) {
+  const next = { ...msg }
+  for (const k of STATUS_FIELDS) if (opt(next[k]) && !opt(prev[k])) next[k] = prev[k]
+  if (!opt(prev.focus) && !opt(msg.focus)) next.focus = { ...prev.focus, ...msg.focus }
+  return next
+}
 
 export const methods = {
   _status (agent, msg) {
@@ -32,8 +44,8 @@ export const methods = {
       name = normalizeName(msg.name)
     }
     const now = this.now()
-    if (agent.lastStatusAt !== null && now - agent.lastStatusAt < L.statusGapMs) {
-      fail('rate limited', { retryAfterMs: agent.lastStatusAt + L.statusGapMs - now })
+    if (agent.statusLater || (agent.lastStatusAt !== null && now - agent.lastStatusAt < L.statusGapMs)) {
+      return this._deferStatus(agent, msg, Math.max(0, agent.lastStatusAt + L.statusGapMs - now))
     }
     agent.lastStatusAt = now
     Object.assign(agent, patch)
@@ -44,6 +56,31 @@ export const methods = {
     this._hook('status', agent, msg)
     this._changed()
     return this._contribute('status', { agent, msg })
+  },
+
+  // Within the gap (or while one is waiting): kept, merged into any status already waiting, and
+  // applied when the gap ends. The result is for the card as it is now.
+  _deferStatus (agent, msg, appliesInMs) {
+    const later = agent.statusLater || (agent.statusLater = { msg: {}, timer: null })
+    later.msg = mergeStatus(later.msg, msg)
+    if (!later.timer) {
+      later.timer = setTimeout(() => this._statusLater(agent), appliesInMs)
+      later.timer.unref?.()
+    }
+    return { ...this._contribute('status', { agent, msg }), deferred: true, appliesInMs }
+  },
+
+  _statusLater (agent) {
+    const later = agent.statusLater
+    agent.statusLater = null
+    if (!later || agent.left || this.closed) return
+    agent.lastStatusAt = null // the gap is over
+    try {
+      this._status(agent, later.msg)
+    } catch (err) {
+      // It was valid when it was deferred; only the room can have changed since.
+      if (!(err instanceof AgentError)) this.emit('error-log', err)
+    }
   },
 
   _focus (f, prev) {
@@ -83,6 +120,14 @@ export const methods = {
 
 export function register (r) {
   r.command('status', methods._status)
+  // A status waiting for the end of its gap: {msg, timer}, or null.
+  r.on('join', function (agent, { resumed }) {
+    if (!resumed) agent.statusLater = null
+  })
+  r.on('leave', function (agent) {
+    clearTimeout(agent.statusLater?.timer)
+    agent.statusLater = null
+  })
   r.contribute('card', function ({ agent }) {
     return {
       state: agent.state,
