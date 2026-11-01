@@ -592,7 +592,8 @@ async function doctorHooks (ok, cfg) {
       if (h.hooks.partial) ok(false, `${h.id}: some of autochat's hooks are missing from ${where} (rerun autochat setup --harness ${h.id})`)
       else if (h.hooks.valid === false) ok(false, `${h.id}: hooks run an autochat that no longer exists (rerun autochat setup --harness ${h.id})`)
       else ok(true, `${h.id}: hooks installed (${where})`)
-      if (h.hooks.disabled) ok(false, `${h.id}: disableAllHooks is on in ${where}, so no hooks run`)
+      if (h.hooks.disabled) ok(false, `${h.id}: ${h.hooks.disabledBy || `disableAllHooks is on in ${where}`}, so no hooks run`)
+      if (h.hooks.note) console.log(`… ${h.id}: ${h.hooks.note}`)
     } else if (h.installed) {
       console.log(`… ${h.id}: installed, no autochat hooks (autochat setup --harness ${h.id})`)
       continue
