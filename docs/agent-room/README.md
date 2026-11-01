@@ -30,7 +30,7 @@ inbox messages, and how many of them are direct mentions.
 
 Each module's doc lists its commands, with their arguments and results: `catchUp`
 ([board.md](board.md)), `status` ([status.md](status.md)), `post` ([posts.md](posts.md)), `read`
-and `wait` ([inbox.md](inbox.md)), `thread` ([threads.md](threads.md)), and the agents-stream
+and `wait` ([inbox.md](inbox.md)), `thread` ([threads.md](threads.md)), `bye` ([presence.md](presence.md)), and the agents-stream
 commands ([human.md](human.md)).
 
 Other errors: `unknown command`, `unknown message type` (not a `cmd`), `invalid json` (with
@@ -74,7 +74,7 @@ flat files, `test/agents-<module>.test.js`, with shared helpers in `test/helpers
 | limits | [`limits.js`](../../src/agents/limits.js): constants, `LIMITS`, `AgentError`, `fail` | (all) | [guardrails.md](guardrails.md) | |
 | guardrails | [`guardrails.js`](../../src/agents/guardrails.js): secret scan, text and size checks, budgets | `agents-guardrails` | [guardrails.md](guardrails.md) | |
 | hello | [`hello.js`](../../src/agents/hello.js): `connect`, hello parsing, welcome, resume tokens | `agents-hello` | [hello.md](hello.md) | #66, #52 |
-| presence | [`presence.js`](../../src/agents/presence.js): close, leave, remove, the live set, the resume window | `agents-presence` | [presence.md](presence.md) | #54 |
+| presence | [`presence.js`](../../src/agents/presence.js): here, away and left, close, `bye`, leave, remove, the live set, the resume window | `agents-presence` | [presence.md](presence.md) | #54 |
 | names | [`names.js`](../../src/agents/names.js): titles, normalize, default (a slug of the title), dedupe, display names, renames, parents, `to` and mentions | `agents-hello` | [names.md](names.md) | #66 |
 | board | [`board.js`](../../src/agents/board.js): cards, `catchUp` and its scope, active and idle agents, the caps, the snapshot's cards | `agents-board` | [board.md](board.md) | #67 |
 | status | [`status.js`](../../src/agents/status.js): `status`, focus | `agents-status`, `agents-overlap`, `agents-guardrails` | [status.md](status.md) | #57, #53 |

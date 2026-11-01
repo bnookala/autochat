@@ -1,7 +1,13 @@
-// Presence: a closed connection makes the agent away; after the resume window it has left (a
-// `sys` line), and its card lingers, then goes. See docs/agent-room/presence.md.
+// Presence: an agent is here (connected), away (its connection dropped; it can resume within the
+// resume window) or left (it said `bye`, or the window ended: a `sys` line). A left card lingers,
+// then goes. See docs/agent-room/presence.md.
 
 export const methods = {
+  // here | away | left
+  _presence (agent) {
+    return agent.left ? 'left' : agent.present ? 'here' : 'away'
+  },
+
   _onClose (agent, peer) {
     if (agent.peer !== peer) return
     agent.peer = null
@@ -12,6 +18,20 @@ export const methods = {
     agent.awayTimer.unref?.()
     this.emit('presence', 'away', this.card(agent))
     this._changed()
+  },
+
+  // `bye`: the agent leaves now, rather than after the resume window, and its connection closes.
+  _bye (agent, msg) {
+    const peer = agent.peer
+    // Detached first: nothing else on this connection reaches the room, and its close is no news.
+    agent.peer = null
+    agent.present = false
+    this._cancelWait(agent)
+    this._leave(agent)
+    // The reply is the connection's last line. It can't go the usual way (index.js _onLine),
+    // which only answers the agent's current connection.
+    peer.end({ type: 'reply', id: msg.id ?? null, ok: true, result: {}, inbox: this._inbox(agent) })
+    return {}
   },
 
   _leave (agent) {
@@ -44,7 +64,9 @@ export const methods = {
 }
 
 export function register (r) {
+  r.command('bye', methods._bye)
   r.contribute('card', function ({ agent }) {
-    return { present: agent.present, joinedAt: agent.joinedAt, updatedAt: agent.updatedAt }
+    const presence = this._presence(agent)
+    return { present: presence === 'here', joinedAt: agent.joinedAt, updatedAt: agent.updatedAt, presence, leftAt: agent.leftAt }
   })
 }
