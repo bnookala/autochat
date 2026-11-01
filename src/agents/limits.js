@@ -31,6 +31,8 @@ export const LIMITS = {
   summary: 140,
   title: 80,
   outcome: 500,
+  nextSteps: 5,
+  nextStep: 140,
   component: 40,
   components: 10,
   path: 300,
