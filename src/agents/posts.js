@@ -1,4 +1,3 @@
-import { sanitize } from '../text.js'
 import { POST_KINDS, fail, int, opt } from './limits.js'
 
 // Posts: the `post` command, its recipients, and the question that opens a thread.
@@ -31,8 +30,8 @@ export const methods = {
       if (wait !== null) fail('rate limited', { retryAfterMs: wait })
     }
     if (autoThread) {
+      const title = this._threadTitle(msg.title, text)
       this._spend(agent, 'main')
-      const title = sanitize(text, this.limits.title)
       thread = this._createThread(agent, title, toIds)
     }
     if (thread) {

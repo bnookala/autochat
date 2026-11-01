@@ -1,7 +1,8 @@
+import { sanitize } from '../text.js'
 import { fail, hex, isStr, label, opt } from './limits.js'
 
-// Threads: the `thread` command (open, resolve, list), thread ids, and the decision a resolve
-// posts. See docs/agent-room/threads.md.
+// Threads: the `thread` command (open, resolve, list), thread ids and titles, and the decision a
+// resolve posts. See docs/agent-room/threads.md.
 
 function threadSlug (title) {
   let slug = ''
@@ -10,6 +11,19 @@ function threadSlug (title) {
     slug = slug ? slug + '-' + w : w.slice(0, 24)
   }
   return slug || 'thread'
+}
+
+// The title of a thread a question opens: its first sentence (or line), cut at a word boundary
+// to at most `max` characters, with "…" when cut.
+function firstSentence (text, max = 60) {
+  const line = sanitize(text.split('\n').find(l => l.trim()) || text, Infinity)
+  const end = line.search(/[.?!](?=\s|$)|[。？！]/)
+  const sentence = (end === -1 ? line : line.slice(0, end + 1)).replace(/[\s.]+$/, '') || line
+  const chars = Array.from(sentence)
+  if (chars.length <= max) return sentence
+  const head = chars.slice(0, max - 1).join('')
+  const words = /\s/.test(chars[max - 1]) ? head : head.replace(/\s+\S*$/, '')
+  return (words.trim() ? words : head).replace(/[\s,;:.-]+$/, '') + '…'
 }
 
 export const methods = {
@@ -44,6 +58,11 @@ export const methods = {
       default:
         fail('action must be open, resolve or list')
     }
+  },
+
+  // The title of the thread a question opens: `title` (≤ 80 characters) or its first sentence.
+  _threadTitle (title, text) {
+    return opt(title) ? firstSentence(text) : this._title(title)
   },
 
   // A thread to post in: null, or an open thread.

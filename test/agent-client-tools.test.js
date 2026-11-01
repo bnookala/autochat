@@ -42,3 +42,13 @@ test('every etiquette rule is in at least one tool description, not only in the 
     assert.ok(TOOLS.some(t => re.test(t.description)), `no tool description has the rule "${rule}"`)
   }
 })
+
+// The tools pass on what the daemon takes, leniently, and return what it adds.
+test('tool calls: post passes a title', async () => {
+  const { Tools } = await import('../src/agent-client.js')
+  const calls = []
+  const link = { on () {}, agent: { id: 'a1b2c3d4' }, request: async (cmd, args) => { calls.push({ cmd, args }); return { ok: true, result: { message: null }, inbox: { unread: 0, mentions: 0 } } } }
+  const tools = new Tools({ link, session: { cwd: tmp, top: null } })
+  await tools.call('post', { text: 'Can you keep greet()?', kind: 'question', to: 'claude-web', title: 'greet() stays' })
+  assert.deepEqual(calls.at(-1), { cmd: 'post', args: { text: 'Can you keep greet()?', kind: 'question', to: ['claude-web'], title: 'greet() stays' } })
+})
