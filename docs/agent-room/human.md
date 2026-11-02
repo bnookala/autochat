@@ -18,7 +18,7 @@ one every 100 ms (≤ 10/s):
 ```
 
 - `agents`: every card, oldest first, including agents that left in the last 10 minutes
-  (`present:false`).
+  (`presence:"left"`).
 - `threads`: open first, then resolved, newest activity first.
 - `messages`: the last 300, across the main stream and all threads, oldest first. If a
   snapshot would exceed 256 KiB, the oldest messages are left out, and then long

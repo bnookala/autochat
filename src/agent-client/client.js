@@ -13,6 +13,8 @@ import { appInstalled, APP_BUNDLE_ID } from '../launcher.js'
 export const NOT_RUNNING = "autochat isn't running: open AutoChat.app or run `autochat daemon`"
 const TUI_RUNNING = 'autochat is running in a terminal, but agent rooms need the autochat daemon: open AutoChat.app or run `autochat daemon`'
 const LOST = 'lost the connection to autochat; reconnecting, try again'
+// How long leaving (`bye`) may take before the connection just closes.
+export const BYE_TIMEOUT_MS = 300
 
 /**
  * One persistent agent connection to the daemon. It reconnects with backoff forever, resending
@@ -150,6 +152,22 @@ export class DaemonLink extends EventEmitter {
     this.closed = true
     clearTimeout(this.retryTimer)
     if (this.sock) this.sock.end()
+  }
+
+  /**
+   * Leaves the room for good, then closes: `bye` makes the room show the agent as left at once,
+   * where a closed connection would show it away for the resume window first. Resolves within
+   * timeoutMs whatever the daemon does, so it never holds up a harness's shutdown.
+   */
+  async bye (timeoutMs = BYE_TIMEOUT_MS) {
+    const connected = this.connected && !this.closed
+    // No reconnecting from here on, even if the daemon closes first.
+    this.closed = true
+    clearTimeout(this.retryTimer)
+    if (connected) {
+      try { await this.request('bye', {}, timeoutMs) } catch {}
+    }
+    this.close()
   }
 }
 

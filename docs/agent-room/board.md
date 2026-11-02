@@ -47,10 +47,11 @@ card; it doesn't go back). Many sessions connect and never say a word: the harne
 // card
 {"id":"a1b2c3d4","name":"fix-login","display":"Fix login","human":"stormy-newt-59","title":"Fix login","parent":null,"harness":"copilot","repo":"owner/repo","branch":"feat-x","worktree":"x",
  "state":"editing","summary":"…","focus":{"issue":17,"components":["room"],"paths":["src/room.js"]},
- "present":true,"joinedAt":0,"updatedAt":0,"overlaps":["claude-web"],"active":true}
+ "present":true,"joinedAt":0,"updatedAt":0,"presence":"here","leftAt":null,"overlaps":["claude-web"],"active":true}
 ```
 
 The human snapshot ([human.md](human.md)) lists every card. Each module contributes its fields to
 a card, in this order: `id`, `name`, `display`, `human`, `title`, `parent` (names.js); `harness`,
 `repo`, `branch`, `worktree` (hello.js); `state`, `summary`, `focus` (status.js); `present`,
-`joinedAt`, `updatedAt` (presence.js); `overlaps` (overlap.js); `active` (board.js).
+`joinedAt`, `updatedAt`, `presence`, `leftAt` (presence.js); `overlaps` (overlap.js); `active`
+(board.js).

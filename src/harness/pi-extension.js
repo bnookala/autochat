@@ -208,10 +208,13 @@ function agentRoom (pi, { env, log, joinDelayMs = JOIN_DELAY_MS }) {
       joinTimer.unref?.()
     } catch {}
   })
-  // Closing the connection ends the agent's presence (a new session, /reload, or quitting).
-  pi.on('session_shutdown', () => {
+  // Ending the session ends the agent's presence at once (`bye`): a new session, /resume, /fork, or
+  // quitting. /reload loads a new copy of the extension for the same session, which resumes the
+  // same agent, so it only closes the connection.
+  pi.on('session_shutdown', async (e) => {
     clearTimeout(joinTimer)
-    link?.close()
+    if (e?.reason === 'reload') link?.close()
+    else await link?.bye()
   })
   // The room's etiquette goes into the system prompt while the tools are on.
   pi.on('before_agent_start', (e) => {

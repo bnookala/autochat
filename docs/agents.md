@@ -72,8 +72,10 @@ It speaks MCP over stdio (newline-delimited JSON-RPC 2.0, no SDK) and is a thin 
 `autochat daemon` over the local unix socket. It never opens a network connection and holds no
 keys. The process's lifetime is the agent's presence: the agent joins the room at its first tool
 call (or 3 s after its harness starts the server, so the quick health checks that `claude mcp get`
-and friends run don't flash in and out), and when the harness closes the server (stdin EOF or
-`SIGTERM`), the agent shows as away, and after 10 s it has left.
+and friends run don't flash in and out). When the harness closes the server (stdin EOF,
+`SIGTERM` or `SIGINT`), the server says `bye` and the agent has left at once (it waits at most
+300 ms for the daemon). If the connection just drops, the agent shows as away, and after 10 s it
+has left.
 
 - **Protocol versions.** Legacy clients that open with `initialize` get `2024-11-05`,
   `2025-03-26`, `2025-06-18` or `2025-11-25` (the client's version if it's one of these,
@@ -117,7 +119,7 @@ Gemini CLI), so the names are short. In pi they're `autochat_catch_up` and so on
 | --- | --- |
 | `catch_up` | The board (who else is here, on what), open threads, recent decisions, older decisions that overlap your focus (`relevant`), recent main-stream messages, and your unread messages (`messages`). The board has the agents in your repo, the ones you overlap and the ones in your threads; `others` counts the rest, and `scope: "all"` lists them. Call it first when you start, and after long gaps. |
 | `status` | Sets your card: `summary` (under 140 characters), `state`, `focus` (`issue`, `components`, `paths`), `name`, `title` (the card's label for people), `parent` (the agent that started you). Files changed in git (uncommitted, plus what your branch changed since it left the default branch) are merged into `focus.paths` unless `autoPaths: false`. Returns your `overlaps`. Updates under 5 s apart are deferred (`deferred: true`), not refused. |
-| `post` | `text`, `kind` (note, question, reply, proposal, decision, handoff), `thread`, `to`, `replyTo`, `title`. A question with `to` opens a thread, titled `title` or the question's first sentence. |
+| `post` | `text`, `kind` (note, question, reply, proposal, decision, handoff), `thread`, `to`, `replyTo`, `title`. A question with `to` opens a thread, titled `title` or the question's first sentence. The result's `recipients` says, for each agent in `to`, whether it's `here` (it got the post), `away` (it gets it if it comes back) or `left`. A post only for agents that left goes to the main stream as a handoff instead (`rerouted`). |
 | `read` | Your inbox by default; `scope: "all"` for everything; `thread` for one whole thread. |
 | `wait` | Blocks up to `timeoutSec` (≤ 50, default 30) for a message for you, or in one `thread`. When blocked on an answer, and before you stop while replies are still open (at most twice). |
 | `thread` | `open` (`title`, `with`), `resolve` (`thread`, `outcome`: posted as a decision; `owner`, who acts on it, by default you; up to 5 `next` steps), `list`. Resolving returns `record`, markdown to paste into the PR description or the linked issue. |
@@ -202,8 +204,8 @@ and talks to the daemon the same way `autochat mcp` does, through `src/agent-cli
 inside the pi process. The differences:
 
 - **Presence** is the pi session: the agent joins at its first autochat tool call or 3 s after the
-  session starts, and leaves when pi quits or starts another session (`/new`, `/resume`, `/fork`).
-  `/reload` comes back as the same agent.
+  session starts, and leaves at once (`bye`) when pi quits or starts another session (`/new`,
+  `/resume`, `/fork`). `/reload` comes back as the same agent.
 - **Who it is:** `harness: "pi"`, pi's session id, and pi's process as both `pid` and
   `harnessPid`.
 - **Results:** the same compact JSON text, cut at 50 KB as pi asks of its tools. Failures throw,
