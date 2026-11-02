@@ -1,11 +1,40 @@
 {
-  "codex": "rust-v0.166.0",
-  "how": "codex in a terminal (approval policy on-request): an approval, a question, an interrupted turn, then /quit",
-  "note": "Built from the Codex hooks documentation (developers.openai.com/codex/hooks: the common and per-event input fields, and the SessionEnd example) and the generated hook input schemas of Codex rust-v0.166.0 (codex-rs/hooks/schema/generated), not recorded from a live Codex. permission_mode is what hook_permission_mode() in codex-rs/core/src/hook_runtime.rs reports: bypassPermissions for approval policy never (the default of codex exec), default otherwise. The test writes each rollout (transcript_path, under a temp $CODEX_HOME) with the session_meta first line Codex writes: source and originator as below.",
+  "codex": "codex-cli 0.166.0",
+  "how": "codex in a terminal (the TUI, through the shared app-server daemon; approval policy on-request): an approved command, request_user_input in Default mode (Codex refuses it) and in Plan mode (answered), a turn interrupted with Esc, then /quit; the daemon ends the session a minute later",
+  "note": "Recorded from Codex 0.166.0 (macOS) by a capture hook next to autochat's, against a local stand-in for the Responses API, in a throwaway CODEX_HOME; paths scrubbed. The test writes each rollout (transcript_path, under a temp $CODEX_HOME) as Codex wrote it, in brief: its session_meta first line (source, originator), then a turn_context line per turn (collaboration mode, approvals reviewer, approval policy).",
   "rollouts": {
-    "$CODEX_HOME/sessions/2026/10/31/rollout-2026-10-31T17-20-00-019a3f30-0d4f-7c61-b8a5-2e7d9c1f3a22.jsonl": {
-      "source": "cli",
-      "originator": "codex_cli_rs"
+    "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-50-48-01a19805-55cd-72f1-860f-19e8e3899f5b.jsonl": {
+      "source": "vscode",
+      "originator": "codex-tui",
+      "thread_source": "user",
+      "cli_version": "0.166.0",
+      "turns": {
+        "01a19806-10e2-7fe1-8bd1-9abbd4492040": {
+          "mode": "default",
+          "reviewer": "user",
+          "approval_policy": "on-request"
+        },
+        "01a19806-86a4-7af1-aa84-7368fb18e7f8": {
+          "mode": "default",
+          "reviewer": "user",
+          "approval_policy": "on-request"
+        },
+        "01a19807-0698-7632-94f2-6b429a2eae84": {
+          "mode": "default",
+          "reviewer": "user",
+          "approval_policy": "on-request"
+        },
+        "01a19807-6b49-7ad2-b342-0af042bad6ff": {
+          "mode": "plan",
+          "reviewer": "user",
+          "approval_policy": "on-request"
+        },
+        "01a19808-942e-7c23-9999-c328839519b3": {
+          "mode": "default",
+          "reviewer": "user",
+          "approval_policy": "on-request"
+        }
+      }
     }
   },
   "events": [
@@ -13,11 +42,11 @@
       "event": "SessionStart",
       "env": {},
       "payload": {
-        "session_id": "019a3f30-0d4f-7c61-b8a5-2e7d9c1f3a22",
-        "transcript_path": "$CODEX_HOME/sessions/2026/10/31/rollout-2026-10-31T17-20-00-019a3f30-0d4f-7c61-b8a5-2e7d9c1f3a22.jsonl",
+        "session_id": "01a19805-55cd-72f1-860f-19e8e3899f5b",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-50-48-01a19805-55cd-72f1-860f-19e8e3899f5b.jsonl",
         "cwd": "/Users/me/code/demo",
         "hook_event_name": "SessionStart",
-        "model": "gpt-5.1-codex",
+        "model": "gpt-5.5",
         "permission_mode": "default",
         "source": "startup"
       }
@@ -26,31 +55,115 @@
       "event": "UserPromptSubmit",
       "env": {},
       "payload": {
-        "session_id": "019a3f30-0d4f-7c61-b8a5-2e7d9c1f3a22",
-        "transcript_path": "$CODEX_HOME/sessions/2026/10/31/rollout-2026-10-31T17-20-00-019a3f30-0d4f-7c61-b8a5-2e7d9c1f3a22.jsonl",
+        "session_id": "01a19805-55cd-72f1-860f-19e8e3899f5b",
+        "turn_id": "01a19806-10e2-7fe1-8bd1-9abbd4492040",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-50-48-01a19805-55cd-72f1-860f-19e8e3899f5b.jsonl",
         "cwd": "/Users/me/code/demo",
         "hook_event_name": "UserPromptSubmit",
-        "model": "gpt-5.1-codex",
+        "model": "gpt-5.5",
         "permission_mode": "default",
-        "turn_id": "1",
-        "prompt": "add left-pad and use it"
+        "prompt": "SCENARIO:shell run something"
+      }
+    },
+    {
+      "event": "PreToolUse",
+      "env": {},
+      "payload": {
+        "session_id": "01a19805-55cd-72f1-860f-19e8e3899f5b",
+        "turn_id": "01a19806-10e2-7fe1-8bd1-9abbd4492040",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-50-48-01a19805-55cd-72f1-860f-19e8e3899f5b.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "PreToolUse",
+        "model": "gpt-5.5",
+        "permission_mode": "default",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "echo hello from codex"
+        },
+        "tool_use_id": "call_28"
+      }
+    },
+    {
+      "event": "PostToolUse",
+      "env": {},
+      "payload": {
+        "session_id": "01a19805-55cd-72f1-860f-19e8e3899f5b",
+        "turn_id": "01a19806-10e2-7fe1-8bd1-9abbd4492040",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-50-48-01a19805-55cd-72f1-860f-19e8e3899f5b.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "PostToolUse",
+        "model": "gpt-5.5",
+        "permission_mode": "default",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "echo hello from codex"
+        },
+        "tool_response": "hello from codex\n",
+        "tool_use_id": "call_28"
+      }
+    },
+    {
+      "event": "Stop",
+      "env": {},
+      "payload": {
+        "session_id": "01a19805-55cd-72f1-860f-19e8e3899f5b",
+        "turn_id": "01a19806-10e2-7fe1-8bd1-9abbd4492040",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-50-48-01a19805-55cd-72f1-860f-19e8e3899f5b.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "Stop",
+        "model": "gpt-5.5",
+        "permission_mode": "default",
+        "stop_hook_active": false,
+        "last_assistant_message": "Done with shell: Chunk ID: de4a6c Wall time: 0.0000 seconds Process exited with code 0 Original token count: 5 Output: hello from codex "
+      }
+    },
+    {
+      "event": "UserPromptSubmit",
+      "env": {},
+      "payload": {
+        "session_id": "01a19805-55cd-72f1-860f-19e8e3899f5b",
+        "turn_id": "01a19806-86a4-7af1-aa84-7368fb18e7f8",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-50-48-01a19805-55cd-72f1-860f-19e8e3899f5b.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "UserPromptSubmit",
+        "model": "gpt-5.5",
+        "permission_mode": "default",
+        "prompt": "SCENARIO:permask please"
+      }
+    },
+    {
+      "event": "PreToolUse",
+      "env": {},
+      "payload": {
+        "session_id": "01a19805-55cd-72f1-860f-19e8e3899f5b",
+        "turn_id": "01a19806-86a4-7af1-aa84-7368fb18e7f8",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-50-48-01a19805-55cd-72f1-860f-19e8e3899f5b.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "PreToolUse",
+        "model": "gpt-5.5",
+        "permission_mode": "default",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "echo needs approval"
+        },
+        "tool_use_id": "call_31"
       }
     },
     {
       "event": "PermissionRequest",
       "env": {},
       "payload": {
-        "session_id": "019a3f30-0d4f-7c61-b8a5-2e7d9c1f3a22",
-        "transcript_path": "$CODEX_HOME/sessions/2026/10/31/rollout-2026-10-31T17-20-00-019a3f30-0d4f-7c61-b8a5-2e7d9c1f3a22.jsonl",
+        "session_id": "01a19805-55cd-72f1-860f-19e8e3899f5b",
+        "turn_id": "01a19806-86a4-7af1-aa84-7368fb18e7f8",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-50-48-01a19805-55cd-72f1-860f-19e8e3899f5b.jsonl",
         "cwd": "/Users/me/code/demo",
         "hook_event_name": "PermissionRequest",
-        "model": "gpt-5.1-codex",
+        "model": "gpt-5.5",
         "permission_mode": "default",
-        "turn_id": "1",
         "tool_name": "Bash",
         "tool_input": {
-          "command": "npm install left-pad",
-          "description": "Install the dependency the change needs"
+          "command": "echo needs approval",
+          "description": "Just checking approvals"
         }
       }
     },
@@ -58,34 +171,62 @@
       "event": "PostToolUse",
       "env": {},
       "payload": {
-        "session_id": "019a3f30-0d4f-7c61-b8a5-2e7d9c1f3a22",
-        "transcript_path": "$CODEX_HOME/sessions/2026/10/31/rollout-2026-10-31T17-20-00-019a3f30-0d4f-7c61-b8a5-2e7d9c1f3a22.jsonl",
+        "session_id": "01a19805-55cd-72f1-860f-19e8e3899f5b",
+        "turn_id": "01a19806-86a4-7af1-aa84-7368fb18e7f8",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-50-48-01a19805-55cd-72f1-860f-19e8e3899f5b.jsonl",
         "cwd": "/Users/me/code/demo",
         "hook_event_name": "PostToolUse",
-        "model": "gpt-5.1-codex",
+        "model": "gpt-5.5",
         "permission_mode": "default",
-        "turn_id": "1",
         "tool_name": "Bash",
-        "tool_use_id": "call_bash_1",
         "tool_input": {
-          "command": "npm install left-pad"
+          "command": "echo needs approval"
         },
-        "tool_response": "added 1 package"
+        "tool_response": "needs approval\n",
+        "tool_use_id": "call_31"
+      }
+    },
+    {
+      "event": "Stop",
+      "env": {},
+      "payload": {
+        "session_id": "01a19805-55cd-72f1-860f-19e8e3899f5b",
+        "turn_id": "01a19806-86a4-7af1-aa84-7368fb18e7f8",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-50-48-01a19805-55cd-72f1-860f-19e8e3899f5b.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "Stop",
+        "model": "gpt-5.5",
+        "permission_mode": "default",
+        "stop_hook_active": false,
+        "last_assistant_message": "Done with permask: Chunk ID: c366a3 Wall time: 0.0000 seconds Process exited with code 0 Original token count: 4 Output: needs approval "
+      }
+    },
+    {
+      "event": "UserPromptSubmit",
+      "env": {},
+      "payload": {
+        "session_id": "01a19805-55cd-72f1-860f-19e8e3899f5b",
+        "turn_id": "01a19807-0698-7632-94f2-6b429a2eae84",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-50-48-01a19805-55cd-72f1-860f-19e8e3899f5b.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "UserPromptSubmit",
+        "model": "gpt-5.5",
+        "permission_mode": "default",
+        "prompt": "SCENARIO:ask in default mode"
       }
     },
     {
       "event": "PreToolUse",
       "env": {},
       "payload": {
-        "session_id": "019a3f30-0d4f-7c61-b8a5-2e7d9c1f3a22",
-        "transcript_path": "$CODEX_HOME/sessions/2026/10/31/rollout-2026-10-31T17-20-00-019a3f30-0d4f-7c61-b8a5-2e7d9c1f3a22.jsonl",
+        "session_id": "01a19805-55cd-72f1-860f-19e8e3899f5b",
+        "turn_id": "01a19807-0698-7632-94f2-6b429a2eae84",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-50-48-01a19805-55cd-72f1-860f-19e8e3899f5b.jsonl",
         "cwd": "/Users/me/code/demo",
         "hook_event_name": "PreToolUse",
-        "model": "gpt-5.1-codex",
+        "model": "gpt-5.5",
         "permission_mode": "default",
-        "turn_id": "1",
         "tool_name": "request_user_input",
-        "tool_use_id": "call_ask_2",
         "tool_input": {
           "questions": [
             {
@@ -94,67 +235,221 @@
               "question": "Which color should the button be?",
               "options": [
                 {
-                  "label": "Red",
-                  "description": "A red button"
+                  "label": "Red (Recommended)",
+                  "description": "Matches the brand"
                 },
                 {
                   "label": "Blue",
-                  "description": "A blue button"
+                  "description": "Calmer"
                 }
               ]
             }
           ]
-        }
+        },
+        "tool_use_id": "call_34"
       }
     },
     {
       "event": "Stop",
       "env": {},
       "payload": {
-        "session_id": "019a3f30-0d4f-7c61-b8a5-2e7d9c1f3a22",
-        "transcript_path": "$CODEX_HOME/sessions/2026/10/31/rollout-2026-10-31T17-20-00-019a3f30-0d4f-7c61-b8a5-2e7d9c1f3a22.jsonl",
+        "session_id": "01a19805-55cd-72f1-860f-19e8e3899f5b",
+        "turn_id": "01a19807-0698-7632-94f2-6b429a2eae84",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-50-48-01a19805-55cd-72f1-860f-19e8e3899f5b.jsonl",
         "cwd": "/Users/me/code/demo",
         "hook_event_name": "Stop",
-        "model": "gpt-5.1-codex",
+        "model": "gpt-5.5",
         "permission_mode": "default",
-        "turn_id": "1",
         "stop_hook_active": false,
-        "last_assistant_message": "Done: left-pad is in, the button is blue."
+        "last_assistant_message": "Done with ask: request_user_input is unavailable in Default mode"
       }
     },
     {
       "event": "UserPromptSubmit",
       "env": {},
       "payload": {
-        "session_id": "019a3f30-0d4f-7c61-b8a5-2e7d9c1f3a22",
-        "transcript_path": "$CODEX_HOME/sessions/2026/10/31/rollout-2026-10-31T17-20-00-019a3f30-0d4f-7c61-b8a5-2e7d9c1f3a22.jsonl",
+        "session_id": "01a19805-55cd-72f1-860f-19e8e3899f5b",
+        "turn_id": "01a19807-6b49-7ad2-b342-0af042bad6ff",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-50-48-01a19805-55cd-72f1-860f-19e8e3899f5b.jsonl",
         "cwd": "/Users/me/code/demo",
         "hook_event_name": "UserPromptSubmit",
-        "model": "gpt-5.1-codex",
+        "model": "gpt-5.5",
         "permission_mode": "default",
-        "turn_id": "2",
-        "prompt": "now refactor everything"
+        "prompt": "SCENARIO:askshell in plan mode"
+      }
+    },
+    {
+      "event": "PreToolUse",
+      "env": {},
+      "payload": {
+        "session_id": "01a19805-55cd-72f1-860f-19e8e3899f5b",
+        "turn_id": "01a19807-6b49-7ad2-b342-0af042bad6ff",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-50-48-01a19805-55cd-72f1-860f-19e8e3899f5b.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "PreToolUse",
+        "model": "gpt-5.5",
+        "permission_mode": "default",
+        "tool_name": "request_user_input",
+        "tool_input": {
+          "questions": [
+            {
+              "id": "color",
+              "header": "Color",
+              "question": "Which color should the button be?",
+              "options": [
+                {
+                  "label": "Red (Recommended)",
+                  "description": "Matches the brand"
+                },
+                {
+                  "label": "Blue",
+                  "description": "Calmer"
+                }
+              ]
+            }
+          ]
+        },
+        "tool_use_id": "call_37"
+      }
+    },
+    {
+      "event": "PostToolUse",
+      "env": {},
+      "payload": {
+        "session_id": "01a19805-55cd-72f1-860f-19e8e3899f5b",
+        "turn_id": "01a19807-6b49-7ad2-b342-0af042bad6ff",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-50-48-01a19805-55cd-72f1-860f-19e8e3899f5b.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "PostToolUse",
+        "model": "gpt-5.5",
+        "permission_mode": "default",
+        "tool_name": "request_user_input",
+        "tool_input": {
+          "questions": [
+            {
+              "id": "color",
+              "header": "Color",
+              "question": "Which color should the button be?",
+              "options": [
+                {
+                  "label": "Red (Recommended)",
+                  "description": "Matches the brand"
+                },
+                {
+                  "label": "Blue",
+                  "description": "Calmer"
+                }
+              ]
+            }
+          ]
+        },
+        "tool_response": "{\"answers\":{\"color\":{\"answers\":[\"Red (Recommended)\"]}}}",
+        "tool_use_id": "call_37"
+      }
+    },
+    {
+      "event": "PreToolUse",
+      "env": {},
+      "payload": {
+        "session_id": "01a19805-55cd-72f1-860f-19e8e3899f5b",
+        "turn_id": "01a19807-6b49-7ad2-b342-0af042bad6ff",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-50-48-01a19805-55cd-72f1-860f-19e8e3899f5b.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "PreToolUse",
+        "model": "gpt-5.5",
+        "permission_mode": "default",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "echo answered"
+        },
+        "tool_use_id": "call_38"
+      }
+    },
+    {
+      "event": "PostToolUse",
+      "env": {},
+      "payload": {
+        "session_id": "01a19805-55cd-72f1-860f-19e8e3899f5b",
+        "turn_id": "01a19807-6b49-7ad2-b342-0af042bad6ff",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-50-48-01a19805-55cd-72f1-860f-19e8e3899f5b.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "PostToolUse",
+        "model": "gpt-5.5",
+        "permission_mode": "default",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "echo answered"
+        },
+        "tool_response": "answered\n",
+        "tool_use_id": "call_38"
+      }
+    },
+    {
+      "event": "Stop",
+      "env": {},
+      "payload": {
+        "session_id": "01a19805-55cd-72f1-860f-19e8e3899f5b",
+        "turn_id": "01a19807-6b49-7ad2-b342-0af042bad6ff",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-50-48-01a19805-55cd-72f1-860f-19e8e3899f5b.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "Stop",
+        "model": "gpt-5.5",
+        "permission_mode": "default",
+        "stop_hook_active": false,
+        "last_assistant_message": "Done with askshell: {\"answers\":{\"color\":{\"answers\":[\"Red (Recommended)\"]}}} | Chunk ID: bd4aac Wall time: 0.0000 seconds Process exited with code 0 Original token count: 3 Output: answered "
+      }
+    },
+    {
+      "event": "UserPromptSubmit",
+      "env": {},
+      "payload": {
+        "session_id": "01a19805-55cd-72f1-860f-19e8e3899f5b",
+        "turn_id": "01a19808-942e-7c23-9999-c328839519b3",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-50-48-01a19805-55cd-72f1-860f-19e8e3899f5b.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "UserPromptSubmit",
+        "model": "gpt-5.5",
+        "permission_mode": "default",
+        "prompt": "SCENARIO:sleep then get interrupted"
+      }
+    },
+    {
+      "event": "PreToolUse",
+      "env": {},
+      "payload": {
+        "session_id": "01a19805-55cd-72f1-860f-19e8e3899f5b",
+        "turn_id": "01a19808-942e-7c23-9999-c328839519b3",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-50-48-01a19805-55cd-72f1-860f-19e8e3899f5b.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "PreToolUse",
+        "model": "gpt-5.5",
+        "permission_mode": "default",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "sleep 60"
+        },
+        "tool_use_id": "call_41"
       }
     },
     {
       "event": "Interrupt",
       "env": {},
       "payload": {
-        "session_id": "019a3f30-0d4f-7c61-b8a5-2e7d9c1f3a22",
-        "transcript_path": "$CODEX_HOME/sessions/2026/10/31/rollout-2026-10-31T17-20-00-019a3f30-0d4f-7c61-b8a5-2e7d9c1f3a22.jsonl",
+        "session_id": "01a19805-55cd-72f1-860f-19e8e3899f5b",
+        "turn_id": "01a19808-942e-7c23-9999-c328839519b3",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-50-48-01a19805-55cd-72f1-860f-19e8e3899f5b.jsonl",
         "cwd": "/Users/me/code/demo",
         "hook_event_name": "Interrupt",
-        "model": "gpt-5.1-codex",
-        "permission_mode": "default",
-        "turn_id": "2"
+        "model": "gpt-5.5",
+        "permission_mode": "default"
       }
     },
     {
       "event": "SessionEnd",
       "env": {},
       "payload": {
-        "session_id": "019a3f30-0d4f-7c61-b8a5-2e7d9c1f3a22",
-        "transcript_path": "$CODEX_HOME/sessions/2026/10/31/rollout-2026-10-31T17-20-00-019a3f30-0d4f-7c61-b8a5-2e7d9c1f3a22.jsonl",
+        "session_id": "01a19805-55cd-72f1-860f-19e8e3899f5b",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-50-48-01a19805-55cd-72f1-860f-19e8e3899f5b.jsonl",
         "cwd": "/Users/me/code/demo",
         "hook_event_name": "SessionEnd",
         "reason": "other"

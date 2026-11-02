@@ -1,22 +1,43 @@
 {
-  "codex": "rust-v0.166.0",
-  "how": "codex exec \"…\": the model spawns a subagent, whose tool calls carry the parent's session_id, agent_id, and its own rollout",
-  "note": "Built from the Codex hooks documentation (developers.openai.com/codex/hooks: the common and per-event input fields, and the SessionEnd example) and the generated hook input schemas of Codex rust-v0.166.0 (codex-rs/hooks/schema/generated), not recorded from a live Codex. permission_mode is what hook_permission_mode() in codex-rs/core/src/hook_runtime.rs reports: bypassPermissions for approval policy never (the default of codex exec), default otherwise. The test writes each rollout (transcript_path, under a temp $CODEX_HOME) with the session_meta first line Codex writes: source and originator as below.",
+  "codex": "codex-cli 0.166.0",
+  "how": "codex exec \"…\" with a model that spawns a subagent (spawn_agent, then wait_agent): the subagent's hooks carry the parent's session_id, agent_id and agent_type, and its own rollout",
+  "note": "Recorded from Codex 0.166.0 (macOS) by a capture hook next to autochat's, against a local stand-in for the Responses API, in a throwaway CODEX_HOME; paths scrubbed. The test writes each rollout (transcript_path, under a temp $CODEX_HOME) as Codex wrote it, in brief: its session_meta first line (source, originator), then a turn_context line per turn (collaboration mode, approvals reviewer, approval policy).",
   "rollouts": {
-    "$CODEX_HOME/sessions/2026/10/31/rollout-2026-10-31T17-30-00-019a3f33-2f7a-7a95-8d16-6b3e1f9c7d46.jsonl": {
+    "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-48-15-01a19802-fc9b-7d43-bc43-533134e9827a.jsonl": {
       "source": "exec",
-      "originator": "codex_exec"
+      "originator": "codex_exec",
+      "thread_source": "user",
+      "cli_version": "0.166.0",
+      "turns": {
+        "01a19802-fcc1-7803-8101-a6bfdf81944d": {
+          "mode": "default",
+          "reviewer": "user",
+          "approval_policy": "never"
+        }
+      }
     },
-    "$CODEX_HOME/sessions/2026/10/31/rollout-2026-10-31T17-30-20-019a3f33-5e8d-7b07-9a28-8c4f2a0d9e58.jsonl": {
+    "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-48-15-01a19802-ff10-70f0-b670-59417e39bc1f.jsonl": {
       "source": {
         "subagent": {
           "thread_spawn": {
-            "parent_thread_id": "019a3f33-2f7a-7a95-8d16-6b3e1f9c7d46",
-            "depth": 1
+            "parent_thread_id": "01a19802-fc9b-7d43-bc43-533134e9827a",
+            "depth": 1,
+            "agent_path": null,
+            "agent_nickname": "Hume",
+            "agent_role": null
           }
         }
       },
-      "originator": "codex_exec"
+      "originator": "codex_exec",
+      "thread_source": "subagent",
+      "cli_version": "0.166.0",
+      "turns": {
+        "01a19802-ff2c-7ac3-84c0-d9095d2ad7c7": {
+          "mode": "default",
+          "reviewer": "user",
+          "approval_policy": "never"
+        }
+      }
     }
   },
   "events": [
@@ -24,11 +45,11 @@
       "event": "SessionStart",
       "env": {},
       "payload": {
-        "session_id": "019a3f33-2f7a-7a95-8d16-6b3e1f9c7d46",
-        "transcript_path": "$CODEX_HOME/sessions/2026/10/31/rollout-2026-10-31T17-30-00-019a3f33-2f7a-7a95-8d16-6b3e1f9c7d46.jsonl",
+        "session_id": "01a19802-fc9b-7d43-bc43-533134e9827a",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-48-15-01a19802-fc9b-7d43-bc43-533134e9827a.jsonl",
         "cwd": "/Users/me/code/demo",
         "hook_event_name": "SessionStart",
-        "model": "gpt-5.1-codex",
+        "model": "mock-model",
         "permission_mode": "bypassPermissions",
         "source": "startup"
       }
@@ -37,97 +58,174 @@
       "event": "UserPromptSubmit",
       "env": {},
       "payload": {
-        "session_id": "019a3f33-2f7a-7a95-8d16-6b3e1f9c7d46",
-        "transcript_path": "$CODEX_HOME/sessions/2026/10/31/rollout-2026-10-31T17-30-00-019a3f33-2f7a-7a95-8d16-6b3e1f9c7d46.jsonl",
+        "session_id": "01a19802-fc9b-7d43-bc43-533134e9827a",
+        "turn_id": "01a19802-fcc1-7803-8101-a6bfdf81944d",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-48-15-01a19802-fc9b-7d43-bc43-533134e9827a.jsonl",
         "cwd": "/Users/me/code/demo",
         "hook_event_name": "UserPromptSubmit",
-        "model": "gpt-5.1-codex",
+        "model": "mock-model",
         "permission_mode": "bypassPermissions",
-        "turn_id": "1",
-        "prompt": "find where greet is used"
+        "prompt": "SCENARIO:spawn delegate it"
       }
     },
     {
       "event": "PreToolUse",
       "env": {},
       "payload": {
-        "session_id": "019a3f33-2f7a-7a95-8d16-6b3e1f9c7d46",
-        "transcript_path": "$CODEX_HOME/sessions/2026/10/31/rollout-2026-10-31T17-30-00-019a3f33-2f7a-7a95-8d16-6b3e1f9c7d46.jsonl",
+        "session_id": "01a19802-fc9b-7d43-bc43-533134e9827a",
+        "turn_id": "01a19802-fcc1-7803-8101-a6bfdf81944d",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-48-15-01a19802-fc9b-7d43-bc43-533134e9827a.jsonl",
         "cwd": "/Users/me/code/demo",
         "hook_event_name": "PreToolUse",
-        "model": "gpt-5.1-codex",
+        "model": "mock-model",
         "permission_mode": "bypassPermissions",
-        "turn_id": "1",
         "tool_name": "spawn_agent",
-        "tool_use_id": "call_spawn_1",
         "tool_input": {
-          "message": "find the callers of greet",
-          "agent_type": "explorer"
-        }
-      }
-    },
-    {
-      "event": "PreToolUse",
-      "env": {},
-      "payload": {
-        "session_id": "019a3f33-2f7a-7a95-8d16-6b3e1f9c7d46",
-        "transcript_path": "$CODEX_HOME/sessions/2026/10/31/rollout-2026-10-31T17-30-20-019a3f33-5e8d-7b07-9a28-8c4f2a0d9e58.jsonl",
-        "cwd": "/Users/me/code/demo",
-        "hook_event_name": "PreToolUse",
-        "model": "gpt-5.1-codex",
-        "permission_mode": "bypassPermissions",
-        "agent_id": "019a3f33-5e8d-7b07-9a28-8c4f2a0d9e58",
-        "agent_type": "explorer",
-        "turn_id": "1",
-        "tool_name": "Bash",
-        "tool_use_id": "call_rg_1",
-        "tool_input": {
-          "command": "rg -n greet"
-        }
+          "message": "SCENARIO:sub Run one command and report back."
+        },
+        "tool_use_id": "call_13"
       }
     },
     {
       "event": "PostToolUse",
       "env": {},
       "payload": {
-        "session_id": "019a3f33-2f7a-7a95-8d16-6b3e1f9c7d46",
-        "transcript_path": "$CODEX_HOME/sessions/2026/10/31/rollout-2026-10-31T17-30-20-019a3f33-5e8d-7b07-9a28-8c4f2a0d9e58.jsonl",
+        "session_id": "01a19802-fc9b-7d43-bc43-533134e9827a",
+        "turn_id": "01a19802-fcc1-7803-8101-a6bfdf81944d",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-48-15-01a19802-fc9b-7d43-bc43-533134e9827a.jsonl",
         "cwd": "/Users/me/code/demo",
         "hook_event_name": "PostToolUse",
-        "model": "gpt-5.1-codex",
+        "model": "mock-model",
         "permission_mode": "bypassPermissions",
-        "agent_id": "019a3f33-5e8d-7b07-9a28-8c4f2a0d9e58",
-        "agent_type": "explorer",
-        "turn_id": "1",
-        "tool_name": "Bash",
-        "tool_use_id": "call_rg_1",
+        "tool_name": "spawn_agent",
         "tool_input": {
-          "command": "rg -n greet"
+          "message": "SCENARIO:sub Run one command and report back."
         },
-        "tool_response": "src/app.js:3:greet()"
+        "tool_response": "{\"agent_id\":\"01a19802-ff10-70f0-b670-59417e39bc1f\",\"nickname\":\"Hume\"}",
+        "tool_use_id": "call_13"
+      }
+    },
+    {
+      "event": "UserPromptSubmit",
+      "env": {},
+      "payload": {
+        "session_id": "01a19802-fc9b-7d43-bc43-533134e9827a",
+        "turn_id": "01a19802-ff2c-7ac3-84c0-d9095d2ad7c7",
+        "agent_id": "01a19802-ff10-70f0-b670-59417e39bc1f",
+        "agent_type": "default",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-48-15-01a19802-ff10-70f0-b670-59417e39bc1f.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "UserPromptSubmit",
+        "model": "mock-model",
+        "permission_mode": "bypassPermissions",
+        "prompt": "SCENARIO:sub Run one command and report back."
+      }
+    },
+    {
+      "event": "PreToolUse",
+      "env": {},
+      "payload": {
+        "session_id": "01a19802-fc9b-7d43-bc43-533134e9827a",
+        "turn_id": "01a19802-fcc1-7803-8101-a6bfdf81944d",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-48-15-01a19802-fc9b-7d43-bc43-533134e9827a.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "PreToolUse",
+        "model": "mock-model",
+        "permission_mode": "bypassPermissions",
+        "tool_name": "multi_agent_v1wait_agent",
+        "tool_input": {
+          "targets": [
+            "01a19802-ff10-70f0-b670-59417e39bc1f"
+          ],
+          "timeout_ms": 30000
+        },
+        "tool_use_id": "call_14"
+      }
+    },
+    {
+      "event": "PreToolUse",
+      "env": {},
+      "payload": {
+        "session_id": "01a19802-fc9b-7d43-bc43-533134e9827a",
+        "turn_id": "01a19802-ff2c-7ac3-84c0-d9095d2ad7c7",
+        "agent_id": "01a19802-ff10-70f0-b670-59417e39bc1f",
+        "agent_type": "default",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-48-15-01a19802-ff10-70f0-b670-59417e39bc1f.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "PreToolUse",
+        "model": "mock-model",
+        "permission_mode": "bypassPermissions",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "echo from the subagent"
+        },
+        "tool_use_id": "call_15"
+      }
+    },
+    {
+      "event": "PostToolUse",
+      "env": {},
+      "payload": {
+        "session_id": "01a19802-fc9b-7d43-bc43-533134e9827a",
+        "turn_id": "01a19802-ff2c-7ac3-84c0-d9095d2ad7c7",
+        "agent_id": "01a19802-ff10-70f0-b670-59417e39bc1f",
+        "agent_type": "default",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-48-15-01a19802-ff10-70f0-b670-59417e39bc1f.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "PostToolUse",
+        "model": "mock-model",
+        "permission_mode": "bypassPermissions",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "echo from the subagent"
+        },
+        "tool_response": "from the subagent\n",
+        "tool_use_id": "call_15"
+      }
+    },
+    {
+      "event": "PostToolUse",
+      "env": {},
+      "payload": {
+        "session_id": "01a19802-fc9b-7d43-bc43-533134e9827a",
+        "turn_id": "01a19802-fcc1-7803-8101-a6bfdf81944d",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-48-15-01a19802-fc9b-7d43-bc43-533134e9827a.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "PostToolUse",
+        "model": "mock-model",
+        "permission_mode": "bypassPermissions",
+        "tool_name": "multi_agent_v1wait_agent",
+        "tool_input": {
+          "targets": [
+            "01a19802-ff10-70f0-b670-59417e39bc1f"
+          ],
+          "timeout_ms": 30000
+        },
+        "tool_response": "{\"status\":{\"01a19802-ff10-70f0-b670-59417e39bc1f\":{\"completed\":\"Done with sub: Chunk ID: e7b152 Wall time: 0.0000 seconds Process exited with code 0 Original token count: 5 Output: from the subagent \"}},\"timed_out\":false}",
+        "tool_use_id": "call_14"
       }
     },
     {
       "event": "Stop",
       "env": {},
       "payload": {
-        "session_id": "019a3f33-2f7a-7a95-8d16-6b3e1f9c7d46",
-        "transcript_path": "$CODEX_HOME/sessions/2026/10/31/rollout-2026-10-31T17-30-00-019a3f33-2f7a-7a95-8d16-6b3e1f9c7d46.jsonl",
+        "session_id": "01a19802-fc9b-7d43-bc43-533134e9827a",
+        "turn_id": "01a19802-fcc1-7803-8101-a6bfdf81944d",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-48-15-01a19802-fc9b-7d43-bc43-533134e9827a.jsonl",
         "cwd": "/Users/me/code/demo",
         "hook_event_name": "Stop",
-        "model": "gpt-5.1-codex",
+        "model": "mock-model",
         "permission_mode": "bypassPermissions",
-        "turn_id": "1",
         "stop_hook_active": false,
-        "last_assistant_message": "greet is called once, in src/app.js."
+        "last_assistant_message": "Done with spawn: {\"agent_id\":\"01a19802-ff10-70f0-b670-59417e39bc1f\",\"nickname\":\"Hume\"} | {\"status\":{\"01a19802-ff10-70f0-b670-59417e39bc1f\":{\"completed\":\"Done with sub: Chunk ID: e7b152 Wall time: 0.0000 second"
       }
     },
     {
       "event": "SessionEnd",
       "env": {},
       "payload": {
-        "session_id": "019a3f33-2f7a-7a95-8d16-6b3e1f9c7d46",
-        "transcript_path": "$CODEX_HOME/sessions/2026/10/31/rollout-2026-10-31T17-30-00-019a3f33-2f7a-7a95-8d16-6b3e1f9c7d46.jsonl",
+        "session_id": "01a19802-fc9b-7d43-bc43-533134e9827a",
+        "transcript_path": "$CODEX_HOME/sessions/2026/11/01/rollout-2026-11-01T08-48-15-01a19802-fc9b-7d43-bc43-533134e9827a.jsonl",
         "cwd": "/Users/me/code/demo",
         "hook_event_name": "SessionEnd",
         "reason": "other"
