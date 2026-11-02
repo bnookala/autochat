@@ -1,0 +1,154 @@
+{
+  "claude": "2.1.273",
+  "how": "claude -p \"Run `curl -sI https://example.com` …\" --permission-mode auto, with an autoMode soft_deny rule in the --settings file that forbids requests to example.com: the classifier refuses the call (PermissionDenied) and the agent stops",
+  "note": "Recorded from the real Claude Code 2.1.273, logged in with a claude.ai subscription, talking to the real API, with these hooks loaded via --settings and --setting-sources project,local and --strict-mcp-config. Paths scrubbed; env trimmed to what Claude Code sets for its hooks.",
+  "events": [
+    {
+      "event": "SessionStart",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "01855fad-3165-449d-a958-5d17c8a2f497",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "23160"
+      },
+      "payload": {
+        "session_id": "01855fad-3165-449d-a958-5d17c8a2f497",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/01855fad-3165-449d-a958-5d17c8a2f497.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "SessionStart",
+        "source": "startup"
+      }
+    },
+    {
+      "event": "UserPromptSubmit",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "01855fad-3165-449d-a958-5d17c8a2f497",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "23160"
+      },
+      "payload": {
+        "session_id": "01855fad-3165-449d-a958-5d17c8a2f497",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/01855fad-3165-449d-a958-5d17c8a2f497.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "2c2101e0-0117-4d22-b16a-f0e2c12a8b8b",
+        "permission_mode": "auto",
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "Run `curl -sI https://example.com` in Bash and tell me the HTTP status in one sentence. Use only Bash."
+      }
+    },
+    {
+      "event": "PreToolUse",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "01855fad-3165-449d-a958-5d17c8a2f497",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_EFFORT": "low",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "23160"
+      },
+      "payload": {
+        "session_id": "01855fad-3165-449d-a958-5d17c8a2f497",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/01855fad-3165-449d-a958-5d17c8a2f497.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "2c2101e0-0117-4d22-b16a-f0e2c12a8b8b",
+        "permission_mode": "auto",
+        "effort": {
+          "level": "low"
+        },
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "curl -sI https://example.com"
+        },
+        "tool_use_id": "toolu_01Gu219175US4V9kHQsGhgNS"
+      }
+    },
+    {
+      "event": "PermissionDenied",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "01855fad-3165-449d-a958-5d17c8a2f497",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_EFFORT": "low",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "23160"
+      },
+      "payload": {
+        "session_id": "01855fad-3165-449d-a958-5d17c8a2f497",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/01855fad-3165-449d-a958-5d17c8a2f497.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "2c2101e0-0117-4d22-b16a-f0e2c12a8b8b",
+        "permission_mode": "auto",
+        "effort": {
+          "level": "low"
+        },
+        "hook_event_name": "PermissionDenied",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "curl -sI https://example.com"
+        },
+        "tool_use_id": "toolu_01Gu219175US4V9kHQsGhgNS",
+        "reason": "Blocked by classifier"
+      }
+    },
+    {
+      "event": "Stop",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "01855fad-3165-449d-a958-5d17c8a2f497",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_EFFORT": "low",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "23160"
+      },
+      "payload": {
+        "session_id": "01855fad-3165-449d-a958-5d17c8a2f497",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/01855fad-3165-449d-a958-5d17c8a2f497.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "2c2101e0-0117-4d22-b16a-f0e2c12a8b8b",
+        "permission_mode": "auto",
+        "effort": {
+          "level": "low"
+        },
+        "hook_event_name": "Stop",
+        "stop_hook_active": false,
+        "last_assistant_message": "The curl command was blocked by the auto mode classifier (network requests aren't permitted here), so I can't get the HTTP status. You could run `curl -sI https://example.com` yourself, or grant Bash permission for network commands if you want me to run it.",
+        "background_tasks": [],
+        "session_crons": []
+      }
+    },
+    {
+      "event": "SessionEnd",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "01855fad-3165-449d-a958-5d17c8a2f497",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "23160"
+      },
+      "payload": {
+        "session_id": "01855fad-3165-449d-a958-5d17c8a2f497",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/01855fad-3165-449d-a958-5d17c8a2f497.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "2c2101e0-0117-4d22-b16a-f0e2c12a8b8b",
+        "hook_event_name": "SessionEnd",
+        "reason": "other"
+      }
+    }
+  ]
+}

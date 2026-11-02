@@ -1,7 +1,7 @@
 {
   "claude": "2.1.273",
-  "how": "claude \"…\" --permission-mode manual in a terminal: a permission prompt, approved; then idle at the prompt for a minute; ctrl-c",
-  "note": "Recorded from the real Claude Code with these hooks loaded via --settings and --setting-sources project,local, against a local stand-in for the Messages API. Paths scrubbed; env trimmed to what autochat reads.",
+  "how": "claude --permission-mode manual in a terminal: \"Use Bash to run `touch manual-ok.txt`…\", the permission prompt approved, a minute idle at the prompt, then Ctrl+C twice. In a pseudo-terminal, with IS_DEMO=1 and CLAUDE_CODE_SANDBOXED=1 so the first-run onboarding and the workspace trust dialog stay out of the way (neither changes the hooks).",
+  "note": "Recorded from the real Claude Code 2.1.273, logged in with a claude.ai subscription, talking to the real API, with these hooks loaded via --settings and --setting-sources project,local and --strict-mcp-config. Paths scrubbed; env trimmed to what Claude Code sets for its hooks.",
   "events": [
     {
       "event": "SessionStart",
@@ -9,17 +9,19 @@
         "CLAUDECODE": "1",
         "CLAUDE_CODE_ENTRYPOINT": "cli",
         "CLAUDE_CODE_SESSION_ATTENDED": "1",
-        "CLAUDE_CODE_SESSION_ID": "8b3b127f-cf80-4ff5-8962-ce23e1b76a48",
+        "CLAUDE_CODE_SESSION_ID": "87afb6fe-b726-4ab9-998a-4765a8741872",
         "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
-        "CLAUDE_CODE_CHILD_SESSION": "1"
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "38146"
       },
       "payload": {
-        "session_id": "8b3b127f-cf80-4ff5-8962-ce23e1b76a48",
-        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/8b3b127f-cf80-4ff5-8962-ce23e1b76a48.jsonl",
+        "session_id": "87afb6fe-b726-4ab9-998a-4765a8741872",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/87afb6fe-b726-4ab9-998a-4765a8741872.jsonl",
         "cwd": "/Users/me/code/demo",
+        "scratchpad_dir": "/private/tmp/claude-501/-Users-me-code-demo/87afb6fe-b726-4ab9-998a-4765a8741872/scratchpad",
         "hook_event_name": "SessionStart",
         "source": "startup",
-        "model": "claude-opus-5[1m]"
+        "model": "claude-sonnet-5"
       }
     },
     {
@@ -28,18 +30,20 @@
         "CLAUDECODE": "1",
         "CLAUDE_CODE_ENTRYPOINT": "cli",
         "CLAUDE_CODE_SESSION_ATTENDED": "1",
-        "CLAUDE_CODE_SESSION_ID": "8b3b127f-cf80-4ff5-8962-ce23e1b76a48",
+        "CLAUDE_CODE_SESSION_ID": "87afb6fe-b726-4ab9-998a-4765a8741872",
         "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
-        "CLAUDE_CODE_CHILD_SESSION": "1"
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "38146"
       },
       "payload": {
-        "session_id": "8b3b127f-cf80-4ff5-8962-ce23e1b76a48",
-        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/8b3b127f-cf80-4ff5-8962-ce23e1b76a48.jsonl",
+        "session_id": "87afb6fe-b726-4ab9-998a-4765a8741872",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/87afb6fe-b726-4ab9-998a-4765a8741872.jsonl",
         "cwd": "/Users/me/code/demo",
-        "prompt_id": "9241044b-0057-4cb3-89d8-547ae2113941",
+        "scratchpad_dir": "/private/tmp/claude-501/-Users-me-code-demo/87afb6fe-b726-4ab9-998a-4765a8741872/scratchpad",
+        "prompt_id": "860c70f0-3fb5-479b-9804-ab0d9195499b",
         "permission_mode": "default",
         "hook_event_name": "UserPromptSubmit",
-        "prompt": "SCENARIO:perm make a file"
+        "prompt": "Use Bash to run `touch manual-ok.txt`, then reply with just: done"
       }
     },
     {
@@ -48,27 +52,29 @@
         "CLAUDECODE": "1",
         "CLAUDE_CODE_ENTRYPOINT": "cli",
         "CLAUDE_CODE_SESSION_ATTENDED": "1",
-        "CLAUDE_CODE_SESSION_ID": "8b3b127f-cf80-4ff5-8962-ce23e1b76a48",
+        "CLAUDE_CODE_SESSION_ID": "87afb6fe-b726-4ab9-998a-4765a8741872",
         "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
-        "CLAUDE_EFFORT": "high",
-        "CLAUDE_CODE_CHILD_SESSION": "1"
+        "CLAUDE_EFFORT": "low",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "38146"
       },
       "payload": {
-        "session_id": "8b3b127f-cf80-4ff5-8962-ce23e1b76a48",
-        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/8b3b127f-cf80-4ff5-8962-ce23e1b76a48.jsonl",
+        "session_id": "87afb6fe-b726-4ab9-998a-4765a8741872",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/87afb6fe-b726-4ab9-998a-4765a8741872.jsonl",
         "cwd": "/Users/me/code/demo",
-        "prompt_id": "9241044b-0057-4cb3-89d8-547ae2113941",
+        "scratchpad_dir": "/private/tmp/claude-501/-Users-me-code-demo/87afb6fe-b726-4ab9-998a-4765a8741872/scratchpad",
+        "prompt_id": "860c70f0-3fb5-479b-9804-ab0d9195499b",
         "permission_mode": "default",
         "effort": {
-          "level": "high"
+          "level": "low"
         },
         "hook_event_name": "PreToolUse",
         "tool_name": "Bash",
         "tool_input": {
-          "command": "touch perm-test.txt",
-          "description": "Create a file"
+          "command": "touch manual-ok.txt",
+          "description": "Create manual-ok.txt file"
         },
-        "tool_use_id": "toolu_mock_14"
+        "tool_use_id": "toolu_01JkgWQ19UTYgHEhQ7kj4y8d"
       }
     },
     {
@@ -77,25 +83,27 @@
         "CLAUDECODE": "1",
         "CLAUDE_CODE_ENTRYPOINT": "cli",
         "CLAUDE_CODE_SESSION_ATTENDED": "1",
-        "CLAUDE_CODE_SESSION_ID": "8b3b127f-cf80-4ff5-8962-ce23e1b76a48",
+        "CLAUDE_CODE_SESSION_ID": "87afb6fe-b726-4ab9-998a-4765a8741872",
         "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
-        "CLAUDE_EFFORT": "high",
-        "CLAUDE_CODE_CHILD_SESSION": "1"
+        "CLAUDE_EFFORT": "low",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "38146"
       },
       "payload": {
-        "session_id": "8b3b127f-cf80-4ff5-8962-ce23e1b76a48",
-        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/8b3b127f-cf80-4ff5-8962-ce23e1b76a48.jsonl",
+        "session_id": "87afb6fe-b726-4ab9-998a-4765a8741872",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/87afb6fe-b726-4ab9-998a-4765a8741872.jsonl",
         "cwd": "/Users/me/code/demo",
-        "prompt_id": "9241044b-0057-4cb3-89d8-547ae2113941",
+        "scratchpad_dir": "/private/tmp/claude-501/-Users-me-code-demo/87afb6fe-b726-4ab9-998a-4765a8741872/scratchpad",
+        "prompt_id": "860c70f0-3fb5-479b-9804-ab0d9195499b",
         "permission_mode": "default",
         "effort": {
-          "level": "high"
+          "level": "low"
         },
         "hook_event_name": "PermissionRequest",
         "tool_name": "Bash",
         "tool_input": {
-          "command": "touch perm-test.txt",
-          "description": "Create a file"
+          "command": "touch manual-ok.txt",
+          "description": "Create manual-ok.txt file"
         },
         "permission_suggestions": [
           {
@@ -119,15 +127,17 @@
         "CLAUDECODE": "1",
         "CLAUDE_CODE_ENTRYPOINT": "cli",
         "CLAUDE_CODE_SESSION_ATTENDED": "1",
-        "CLAUDE_CODE_SESSION_ID": "8b3b127f-cf80-4ff5-8962-ce23e1b76a48",
+        "CLAUDE_CODE_SESSION_ID": "87afb6fe-b726-4ab9-998a-4765a8741872",
         "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
-        "CLAUDE_CODE_CHILD_SESSION": "1"
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "38146"
       },
       "payload": {
-        "session_id": "8b3b127f-cf80-4ff5-8962-ce23e1b76a48",
-        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/8b3b127f-cf80-4ff5-8962-ce23e1b76a48.jsonl",
+        "session_id": "87afb6fe-b726-4ab9-998a-4765a8741872",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/87afb6fe-b726-4ab9-998a-4765a8741872.jsonl",
         "cwd": "/Users/me/code/demo",
-        "prompt_id": "9241044b-0057-4cb3-89d8-547ae2113941",
+        "scratchpad_dir": "/private/tmp/claude-501/-Users-me-code-demo/87afb6fe-b726-4ab9-998a-4765a8741872/scratchpad",
+        "prompt_id": "860c70f0-3fb5-479b-9804-ab0d9195499b",
         "hook_event_name": "Notification",
         "message": "Claude needs your permission",
         "notification_type": "permission_prompt"
@@ -139,25 +149,27 @@
         "CLAUDECODE": "1",
         "CLAUDE_CODE_ENTRYPOINT": "cli",
         "CLAUDE_CODE_SESSION_ATTENDED": "1",
-        "CLAUDE_CODE_SESSION_ID": "8b3b127f-cf80-4ff5-8962-ce23e1b76a48",
+        "CLAUDE_CODE_SESSION_ID": "87afb6fe-b726-4ab9-998a-4765a8741872",
         "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
-        "CLAUDE_EFFORT": "high",
-        "CLAUDE_CODE_CHILD_SESSION": "1"
+        "CLAUDE_EFFORT": "low",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "38146"
       },
       "payload": {
-        "session_id": "8b3b127f-cf80-4ff5-8962-ce23e1b76a48",
-        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/8b3b127f-cf80-4ff5-8962-ce23e1b76a48.jsonl",
+        "session_id": "87afb6fe-b726-4ab9-998a-4765a8741872",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/87afb6fe-b726-4ab9-998a-4765a8741872.jsonl",
         "cwd": "/Users/me/code/demo",
-        "prompt_id": "9241044b-0057-4cb3-89d8-547ae2113941",
+        "scratchpad_dir": "/private/tmp/claude-501/-Users-me-code-demo/87afb6fe-b726-4ab9-998a-4765a8741872/scratchpad",
+        "prompt_id": "860c70f0-3fb5-479b-9804-ab0d9195499b",
         "permission_mode": "default",
         "effort": {
-          "level": "high"
+          "level": "low"
         },
         "hook_event_name": "PostToolUse",
         "tool_name": "Bash",
         "tool_input": {
-          "command": "touch perm-test.txt",
-          "description": "Create a file"
+          "command": "touch manual-ok.txt",
+          "description": "Create manual-ok.txt file"
         },
         "tool_response": {
           "stdout": "",
@@ -166,8 +178,8 @@
           "isImage": false,
           "noOutputExpected": true
         },
-        "tool_use_id": "toolu_mock_14",
-        "duration_ms": 76
+        "tool_use_id": "toolu_01JkgWQ19UTYgHEhQ7kj4y8d",
+        "duration_ms": 1772
       }
     },
     {
@@ -176,23 +188,25 @@
         "CLAUDECODE": "1",
         "CLAUDE_CODE_ENTRYPOINT": "cli",
         "CLAUDE_CODE_SESSION_ATTENDED": "1",
-        "CLAUDE_CODE_SESSION_ID": "8b3b127f-cf80-4ff5-8962-ce23e1b76a48",
+        "CLAUDE_CODE_SESSION_ID": "87afb6fe-b726-4ab9-998a-4765a8741872",
         "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
-        "CLAUDE_EFFORT": "high",
-        "CLAUDE_CODE_CHILD_SESSION": "1"
+        "CLAUDE_EFFORT": "low",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "38146"
       },
       "payload": {
-        "session_id": "8b3b127f-cf80-4ff5-8962-ce23e1b76a48",
-        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/8b3b127f-cf80-4ff5-8962-ce23e1b76a48.jsonl",
+        "session_id": "87afb6fe-b726-4ab9-998a-4765a8741872",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/87afb6fe-b726-4ab9-998a-4765a8741872.jsonl",
         "cwd": "/Users/me/code/demo",
-        "prompt_id": "9241044b-0057-4cb3-89d8-547ae2113941",
+        "scratchpad_dir": "/private/tmp/claude-501/-Users-me-code-demo/87afb6fe-b726-4ab9-998a-4765a8741872/scratchpad",
+        "prompt_id": "860c70f0-3fb5-479b-9804-ab0d9195499b",
         "permission_mode": "default",
         "effort": {
-          "level": "high"
+          "level": "low"
         },
         "hook_event_name": "Stop",
         "stop_hook_active": false,
-        "last_assistant_message": "Done with perm.",
+        "last_assistant_message": "done",
         "background_tasks": [],
         "session_crons": []
       }
@@ -203,18 +217,41 @@
         "CLAUDECODE": "1",
         "CLAUDE_CODE_ENTRYPOINT": "cli",
         "CLAUDE_CODE_SESSION_ATTENDED": "1",
-        "CLAUDE_CODE_SESSION_ID": "8b3b127f-cf80-4ff5-8962-ce23e1b76a48",
+        "CLAUDE_CODE_SESSION_ID": "87afb6fe-b726-4ab9-998a-4765a8741872",
         "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
-        "CLAUDE_CODE_CHILD_SESSION": "1"
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "38146"
       },
       "payload": {
-        "session_id": "8b3b127f-cf80-4ff5-8962-ce23e1b76a48",
-        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/8b3b127f-cf80-4ff5-8962-ce23e1b76a48.jsonl",
+        "session_id": "87afb6fe-b726-4ab9-998a-4765a8741872",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/87afb6fe-b726-4ab9-998a-4765a8741872.jsonl",
         "cwd": "/Users/me/code/demo",
-        "prompt_id": "9241044b-0057-4cb3-89d8-547ae2113941",
+        "scratchpad_dir": "/private/tmp/claude-501/-Users-me-code-demo/87afb6fe-b726-4ab9-998a-4765a8741872/scratchpad",
+        "prompt_id": "860c70f0-3fb5-479b-9804-ab0d9195499b",
         "hook_event_name": "Notification",
         "message": "Claude is waiting for your input",
         "notification_type": "idle_prompt"
+      }
+    },
+    {
+      "event": "SessionEnd",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "1",
+        "CLAUDE_CODE_SESSION_ID": "87afb6fe-b726-4ab9-998a-4765a8741872",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "38146"
+      },
+      "payload": {
+        "session_id": "87afb6fe-b726-4ab9-998a-4765a8741872",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/87afb6fe-b726-4ab9-998a-4765a8741872.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "scratchpad_dir": "/private/tmp/claude-501/-Users-me-code-demo/87afb6fe-b726-4ab9-998a-4765a8741872/scratchpad",
+        "prompt_id": "860c70f0-3fb5-479b-9804-ab0d9195499b",
+        "hook_event_name": "SessionEnd",
+        "reason": "prompt_input_exit"
       }
     }
   ]

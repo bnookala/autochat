@@ -196,7 +196,7 @@ event happened (`ts` is when it was sent). Messages without `harness` (or
 | Harness | Hooks | Autonomy signal | Fallback observer | MCP |
 | --- | --- | --- | --- | --- |
 | Copilot CLI | `$COPILOT_HOME/hooks/autochat.json` (a file of our own) | `autopilot`, from `session-state/<id>/events.jsonl` | the session-state scan | `mcp-config.json` |
-| Claude Code | `$CLAUDE_CONFIG_DIR/settings.json`, merged ([below](#claude-code)) | `auto` (`permission_mode`); headless: `CLAUDE_CODE_SESSION_ATTENDED=0` | none needed: running sessions pick up new hooks | `claude mcp add` |
+| Claude Code | `$CLAUDE_CONFIG_DIR/settings.json`, merged ([below](#claude-code)) | `auto` (`permission_mode`); headless: `CLAUDE_CODE_SESSION_ATTENDED=0` | none needed: running sessions pick up new hooks, and `CLAUDE_PID` ends a session whose process is gone | `claude mcp add` |
 | Gemini CLI | not yet | | | `~/.gemini/settings.json` |
 | opencode | a plugin of our own, `$XDG_CONFIG_HOME/opencode/plugin/autochat.js` ([below](#opencode)) | headless: `opencode run` (the plugin's `process.argv`), or a server's session that denies the question tool (`run --attach`); never the TUI; the agent is the mode | none yet: opencode processes started before setup don't have the plugin | `opencode.json`, and the etiquette file under `instructions` |
 | Codex | `$CODEX_HOME/hooks.json`, merged ([below](#codex)); Codex runs them once you trust them | `headless`: `codex exec`, from the session's rollout; `bypassPermissions` for approval policy `never` | none yet | `config.toml` |
@@ -204,39 +204,52 @@ event happened (`ts` is when it was sent). Messages without `harness` (or
 
 ## Claude Code
 
-`src/harness/claude.js`, verified against Claude Code 2.1.273. The fixtures in
-`test/fixtures/claude/` are payloads recorded from the real binary, with the hooks loaded from a
-temp file (`--settings <file> --setting-sources project,local`), in a throwaway `HOME` and
-`CLAUDE_CONFIG_DIR`, against a local stand-in for the Messages API: `claude -p` in several
-permission modes, a session in a terminal (driven through a pseudo-terminal), and `claude --bg`.
+`src/harness/claude.js`, verified live against Claude Code 2.1.273, logged in with a claude.ai
+subscription. The fixtures in `test/fixtures/claude/` are payloads recorded from those sessions,
+with the hooks loaded from a temp file (`--settings <file> --setting-sources project,local`,
+`--strict-mcp-config`): `claude -p` in every permission mode, auto mode's classifier refusing a
+call, an API error, and sessions in a terminal (driven through a pseudo-terminal). Two are from
+an earlier check of the same binary against a local stand-in for the Messages API:
+`background.json` (`claude --bg`) and `headless-accept-edits.json`.
 
 **Hooks** go in the user settings, `$CLAUDE_CONFIG_DIR/settings.json` (`~/.claude/settings.json`):
 one matcher group of ours per event, appended after the user's own, each running
 `… hook --harness claude <Event> || true` with a 10 s timeout. `Notification` only matches
 `permission_prompt|idle_prompt|elicitation_dialog`. Claude Code picks up changes to that file in
-running sessions too, so there's no fallback observer. Hooks don't run under `--bare`, or with
-`disableAllHooks` (doctor says so).
+running sessions too, so there's no fallback observer. It skips hook events it doesn't know and
+runs the rest. Hooks don't run under `--bare`, or with `disableAllHooks` (doctor says so). Each
+call takes about 80 ms, 50 of them starting node, and a tool call waits for two (`PreToolUse`,
+`PostToolUse`).
 
 | Event | Kind | Notes |
 | --- | --- | --- |
-| `SessionStart` | `start` | `source`, and `model` in a terminal; no `permission_mode` |
+| `SessionStart` | `start` | `source` (`startup`, `clear`, …), and `model` in a terminal; no `permission_mode` |
 | `UserPromptSubmit` | `activity` | |
 | `PreToolUse` | `activity`; `request` for `AskUserQuestion` | `files` for Write, Edit, MultiEdit, NotebookEdit |
-| `PostToolUse` | `activity` | `files` as above |
-| `PermissionRequest` | `request` | fires whenever a dialog would ask (`AskUserQuestion` too, and in `-p`) |
-| `Notification` | `request` (`permission_prompt`, `elicitation_dialog`), `waiting` (`idle_prompt`) | no `permission_mode`. `permission_prompt` comes about 6 s after the PermissionRequest with only "Claude needs your permission", so the request keeps the PermissionRequest's text. `idle_prompt` comes after a minute at the prompt |
+| `PostToolUse` | `activity` | `files` as above. A tool call that fails sends `PostToolUseFailure` instead, which autochat doesn't need |
+| `PermissionRequest` | `request` | fires whenever a dialog would ask, `AskUserQuestion` too. In `claude -p` nobody answers it: the call is denied right away, and the item goes when the agent carries on or the run ends |
+| `PermissionDenied` | `failed` | only in auto mode, when its classifier refuses a call; the agent carries on. `reason` `permission_denied`, summary `Auto mode refused Bash: …` |
+| `Notification` | `request` (`permission_prompt`, `elicitation_dialog`), `waiting` (`idle_prompt`) | no `permission_mode`. `permission_prompt` comes about 6 s after the PermissionRequest with only "Claude needs your permission", so the request keeps the PermissionRequest's text. `idle_prompt` comes a minute after `Stop` |
 | `Stop` | `idle` | `last_assistant_message` becomes the summary |
-| `SessionEnd` | `end` | `reason`: `prompt_input_exit` (/exit), `other` (end of `-p`), … |
+| `StopFailure` | `failed`, `stopped` | an API error ended the turn. `reason` is its `error` (`rate_limit`, `overloaded`, `model_not_found`, …), the summary the message Claude Code showed. No `permission_mode` |
+| `SessionEnd` | `end` | `reason`: `prompt_input_exit` (/exit, Ctrl+C twice), `clear` (/clear: a `SessionStart` with a new session id follows), `other` (the end of `-p`, SIGTERM, SIGHUP), `resume`, `logout` |
+
+Every hook's environment has `CLAUDE_PID`, the Claude Code process, which autochat sends as `pid`:
+the session ends once that process is gone, `SessionEnd` or not. `claude -p` stopped by an API
+error kills the `StopFailure` hook on its way out and may exit without a `SessionEnd`, and a
+killed process sends nothing at all.
 
 **Autonomy.** `permission_mode` is in the payloads of `UserPromptSubmit`, `PreToolUse`,
-`PostToolUse`, `PermissionRequest` and `Stop`. Manual mode arrives as `default`, which autochat
-calls `manual`, as `--permission-mode` does; the others are `acceptEdits`, `plan`, `auto`,
-`dontAsk` and `bypassPermissions`. For headless, Claude Code sets `CLAUDE_CODE_SESSION_ATTENDED` in
-its hooks' environment: `0` for `claude -p` and `claude --bg` sessions, `1` in a terminal. A
-`--bg` session you attach to still says `0`. `CLAUDE_CODE_ENTRYPOINT` (`sdk-cli` for `-p`, `cli`
+`PostToolUse`, `PermissionRequest`, `PermissionDenied` and `Stop`. `--permission-mode` takes
+`manual`, `acceptEdits`, `plan`, `auto`, `dontAsk` and `bypassPermissions`, and `default` still
+works for `manual`. Manual mode arrives as `default`, which autochat calls `manual`; the others
+arrive by their names. For headless, Claude Code sets `CLAUDE_CODE_SESSION_ATTENDED` in its
+hooks' environment: `0` for `claude -p` and `claude --bg` sessions, `1` in a terminal. A `--bg`
+session you attach to still says `0`. `CLAUDE_CODE_ENTRYPOINT` (`sdk-cli` for `-p`, `cli`
 otherwise, `--bg` included) is the fallback for versions without it. When neither is there, a
 mode that doesn't count by itself leaves the session `unknown`. By default `auto` and `headless`
-count.
+count: `claude -p`, or auto mode in a terminal, puts you in the lounge, and manual mode in a
+terminal doesn't.
 
 ## pi
 

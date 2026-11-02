@@ -324,9 +324,10 @@ whether or not you're in a room:
   replaces its question, and so on (a new item gets a new `id`).
 - **Where they come from:** `blocked` from a `request` (the same one `request` shows);
   `finished` when its run ends (`complete`, `idle`, `end`); `failed` from Copilot's abort
-  and from `failed` session events (Claude Code's `StopFailure` and `PermissionDenied`, once
-  its adapter sends them; see [harnesses.md](harnesses.md#sessionevent)). Switching an agent
-  out of autopilot means you took over: its item goes.
+  and from `failed` session events: Claude Code's `StopFailure` (an API error ended its
+  turn, so its run is over) and `PermissionDenied` (auto mode refused a tool call, and the
+  agent carries on); see [harnesses.md](harnesses.md#sessionevent). Switching an agent out
+  of autopilot means you took over: its item goes.
 - **Handled:** a `blocked` item goes when the agent carries on; a `finished` or `failed` one
   when the agent works again or you chat with it, when you `jumpTo` it, or when the pull-back
   focuses it. A failure the agent works past (a refused tool call) stays until you dismiss it

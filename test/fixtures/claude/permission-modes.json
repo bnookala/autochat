@@ -1,94 +1,161 @@
 {
   "claude": "2.1.273",
-  "how": "claude -p \"…\" with --permission-mode dontAsk, then plan, then --dangerously-skip-permissions (PreToolUse of each)",
-  "note": "Recorded from the real Claude Code with these hooks loaded via --settings and --setting-sources project,local, against a local stand-in for the Messages API. Paths scrubbed; env trimmed to what autochat reads.",
+  "how": "claude -p \"probe\" --permission-mode <each of manual, default, acceptEdits, plan, auto, dontAsk, bypassPermissions>: the UserPromptSubmit of each, which a hook of the recorder's blocked (exit 2), so no model call was made",
+  "note": "Recorded from the real Claude Code 2.1.273, logged in with a claude.ai subscription, talking to the real API, with these hooks loaded via --settings and --setting-sources project,local and --strict-mcp-config. Paths scrubbed; env trimmed to what Claude Code sets for its hooks.",
   "events": [
     {
-      "event": "PreToolUse",
+      "event": "UserPromptSubmit",
       "env": {
         "CLAUDECODE": "1",
         "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
         "CLAUDE_CODE_SESSION_ATTENDED": "0",
-        "CLAUDE_CODE_SESSION_ID": "b22c923b-7c20-46d4-9b8b-9adf12bd6a4e",
+        "CLAUDE_CODE_SESSION_ID": "a073624b-07b3-4d18-95c3-15b7812f5c43",
         "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
-        "CLAUDE_EFFORT": "high",
-        "CLAUDE_CODE_CHILD_SESSION": "1"
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "93903"
       },
       "payload": {
-        "session_id": "b22c923b-7c20-46d4-9b8b-9adf12bd6a4e",
-        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/b22c923b-7c20-46d4-9b8b-9adf12bd6a4e.jsonl",
+        "session_id": "a073624b-07b3-4d18-95c3-15b7812f5c43",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/a073624b-07b3-4d18-95c3-15b7812f5c43.jsonl",
         "cwd": "/Users/me/code/demo",
-        "prompt_id": "d42a7cbd-a870-45d0-881f-335fe52af4b7",
-        "permission_mode": "dontAsk",
-        "effort": {
-          "level": "high"
-        },
-        "hook_event_name": "PreToolUse",
-        "tool_name": "Bash",
-        "tool_input": {
-          "command": "echo hi",
-          "description": "Say hi"
-        },
-        "tool_use_id": "toolu_mock_7"
-      }
+        "prompt_id": "a676000b-56c9-4dd3-abc5-db43ae319c2f",
+        "permission_mode": "default",
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "probe"
+      },
+      "how": "--permission-mode manual"
     },
     {
-      "event": "PreToolUse",
+      "event": "UserPromptSubmit",
       "env": {
         "CLAUDECODE": "1",
         "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
         "CLAUDE_CODE_SESSION_ATTENDED": "0",
-        "CLAUDE_CODE_SESSION_ID": "cbae804e-5c6a-492a-96ab-8e4020b3d843",
+        "CLAUDE_CODE_SESSION_ID": "849e6b6d-ac2d-447c-ba3a-3f8fbe6bcaca",
         "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
-        "CLAUDE_EFFORT": "high",
-        "CLAUDE_CODE_CHILD_SESSION": "1"
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "94045"
       },
       "payload": {
-        "session_id": "cbae804e-5c6a-492a-96ab-8e4020b3d843",
-        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/cbae804e-5c6a-492a-96ab-8e4020b3d843.jsonl",
+        "session_id": "849e6b6d-ac2d-447c-ba3a-3f8fbe6bcaca",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/849e6b6d-ac2d-447c-ba3a-3f8fbe6bcaca.jsonl",
         "cwd": "/Users/me/code/demo",
-        "prompt_id": "21edc8f7-fb98-4807-a376-ab7999b6a8ce",
+        "prompt_id": "470ff543-1274-4a4e-9d6b-d189b343f235",
+        "permission_mode": "default",
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "probe"
+      },
+      "how": "--permission-mode default"
+    },
+    {
+      "event": "UserPromptSubmit",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "357b7e3d-67cf-4910-a064-07012148e2c1",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "94082"
+      },
+      "payload": {
+        "session_id": "357b7e3d-67cf-4910-a064-07012148e2c1",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/357b7e3d-67cf-4910-a064-07012148e2c1.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "2e171651-d298-4289-abb5-3a0d6d5b38a8",
+        "permission_mode": "acceptEdits",
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "probe"
+      },
+      "how": "--permission-mode acceptEdits"
+    },
+    {
+      "event": "UserPromptSubmit",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "55bfef46-3a15-40a9-bbd9-b14b8e5b45b4",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "94170"
+      },
+      "payload": {
+        "session_id": "55bfef46-3a15-40a9-bbd9-b14b8e5b45b4",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/55bfef46-3a15-40a9-bbd9-b14b8e5b45b4.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "93a6df51-01bb-4ed0-8133-5195de8db1f9",
         "permission_mode": "plan",
-        "effort": {
-          "level": "high"
-        },
-        "hook_event_name": "PreToolUse",
-        "tool_name": "Bash",
-        "tool_input": {
-          "command": "echo hi",
-          "description": "Say hi"
-        },
-        "tool_use_id": "toolu_mock_9"
-      }
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "probe"
+      },
+      "how": "--permission-mode plan"
     },
     {
-      "event": "PreToolUse",
+      "event": "UserPromptSubmit",
       "env": {
         "CLAUDECODE": "1",
         "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
         "CLAUDE_CODE_SESSION_ATTENDED": "0",
-        "CLAUDE_CODE_SESSION_ID": "4a19b2e3-b2f6-4cb5-9a9f-21dc2a0bc315",
+        "CLAUDE_CODE_SESSION_ID": "61cd9f14-d03b-4042-a192-9d1079d71010",
         "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
-        "CLAUDE_EFFORT": "high",
-        "CLAUDE_CODE_CHILD_SESSION": "1"
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "94208"
       },
       "payload": {
-        "session_id": "4a19b2e3-b2f6-4cb5-9a9f-21dc2a0bc315",
-        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/4a19b2e3-b2f6-4cb5-9a9f-21dc2a0bc315.jsonl",
+        "session_id": "61cd9f14-d03b-4042-a192-9d1079d71010",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/61cd9f14-d03b-4042-a192-9d1079d71010.jsonl",
         "cwd": "/Users/me/code/demo",
-        "prompt_id": "a5d9a1ec-e193-49f2-aa54-cfbbaa144840",
+        "prompt_id": "d3ce2c35-3ff9-4572-a122-e1c074b43411",
+        "permission_mode": "auto",
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "probe"
+      },
+      "how": "--permission-mode auto"
+    },
+    {
+      "event": "UserPromptSubmit",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "c4fbd016-8325-48e6-a8d6-b02ae1ed88ef",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "94397"
+      },
+      "payload": {
+        "session_id": "c4fbd016-8325-48e6-a8d6-b02ae1ed88ef",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/c4fbd016-8325-48e6-a8d6-b02ae1ed88ef.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "cc583ae1-7dad-4384-a588-88962f829ea6",
+        "permission_mode": "dontAsk",
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "probe"
+      },
+      "how": "--permission-mode dontAsk"
+    },
+    {
+      "event": "UserPromptSubmit",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "3bd6857d-7812-4a13-ab1d-01dfc89e1659",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "94433"
+      },
+      "payload": {
+        "session_id": "3bd6857d-7812-4a13-ab1d-01dfc89e1659",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/3bd6857d-7812-4a13-ab1d-01dfc89e1659.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "927c0857-dece-4dce-bfc9-c950c8f1072d",
         "permission_mode": "bypassPermissions",
-        "effort": {
-          "level": "high"
-        },
-        "hook_event_name": "PreToolUse",
-        "tool_name": "Bash",
-        "tool_input": {
-          "command": "echo hi",
-          "description": "Say hi"
-        },
-        "tool_use_id": "toolu_mock_11"
-      }
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "probe"
+      },
+      "how": "--permission-mode bypassPermissions"
     }
   ]
 }

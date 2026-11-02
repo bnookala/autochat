@@ -1,0 +1,182 @@
+{
+  "claude": "2.1.273",
+  "how": "Two sessions with --model claude-nonexistent-model-0, so the API answers model_not_found: first `claude -p \"hi\"` (its StopFailure hook is killed as -p exits, before it can deliver; SessionEnd follows here, but not always), then `claude --permission-mode auto` in a terminal, \"hi\", then /exit. In a pseudo-terminal, with IS_DEMO=1 and CLAUDE_CODE_SANDBOXED=1 so the first-run onboarding and the workspace trust dialog stay out of the way (neither changes the hooks).",
+  "note": "Recorded from the real Claude Code 2.1.273, logged in with a claude.ai subscription, talking to the real API, with these hooks loaded via --settings and --setting-sources project,local and --strict-mcp-config. Paths scrubbed; env trimmed to what Claude Code sets for its hooks.",
+  "events": [
+    {
+      "event": "SessionStart",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "12d34577-8a5c-4563-b531-568fde164dc4",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "13348"
+      },
+      "payload": {
+        "session_id": "12d34577-8a5c-4563-b531-568fde164dc4",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/12d34577-8a5c-4563-b531-568fde164dc4.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "hook_event_name": "SessionStart",
+        "source": "startup"
+      }
+    },
+    {
+      "event": "UserPromptSubmit",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "12d34577-8a5c-4563-b531-568fde164dc4",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "13348"
+      },
+      "payload": {
+        "session_id": "12d34577-8a5c-4563-b531-568fde164dc4",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/12d34577-8a5c-4563-b531-568fde164dc4.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "0719ca81-d873-4165-8ba3-bdbd674d9fa5",
+        "permission_mode": "default",
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "hi"
+      }
+    },
+    {
+      "event": "StopFailure",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "12d34577-8a5c-4563-b531-568fde164dc4",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_EFFORT": "high",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "13348"
+      },
+      "payload": {
+        "session_id": "12d34577-8a5c-4563-b531-568fde164dc4",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/12d34577-8a5c-4563-b531-568fde164dc4.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "0719ca81-d873-4165-8ba3-bdbd674d9fa5",
+        "effort": {
+          "level": "high"
+        },
+        "hook_event_name": "StopFailure",
+        "error": "model_not_found",
+        "last_assistant_message": "There's an issue with the selected model (claude-nonexistent-model-0). It may not exist or you may not have access to it. Run --model to pick a different model."
+      }
+    },
+    {
+      "event": "SessionEnd",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "0",
+        "CLAUDE_CODE_SESSION_ID": "12d34577-8a5c-4563-b531-568fde164dc4",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "13348"
+      },
+      "payload": {
+        "session_id": "12d34577-8a5c-4563-b531-568fde164dc4",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/12d34577-8a5c-4563-b531-568fde164dc4.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "prompt_id": "0719ca81-d873-4165-8ba3-bdbd674d9fa5",
+        "hook_event_name": "SessionEnd",
+        "reason": "other"
+      }
+    },
+    {
+      "event": "SessionStart",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "1",
+        "CLAUDE_CODE_SESSION_ID": "c41acf9d-1088-4082-ae79-4c8b53e6aebb",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "48050"
+      },
+      "payload": {
+        "session_id": "c41acf9d-1088-4082-ae79-4c8b53e6aebb",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/c41acf9d-1088-4082-ae79-4c8b53e6aebb.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "scratchpad_dir": "/private/tmp/claude-501/-Users-me-code-demo/c41acf9d-1088-4082-ae79-4c8b53e6aebb/scratchpad",
+        "hook_event_name": "SessionStart",
+        "source": "startup",
+        "model": "claude-nonexistent-model-0"
+      }
+    },
+    {
+      "event": "UserPromptSubmit",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "1",
+        "CLAUDE_CODE_SESSION_ID": "c41acf9d-1088-4082-ae79-4c8b53e6aebb",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "48050"
+      },
+      "payload": {
+        "session_id": "c41acf9d-1088-4082-ae79-4c8b53e6aebb",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/c41acf9d-1088-4082-ae79-4c8b53e6aebb.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "scratchpad_dir": "/private/tmp/claude-501/-Users-me-code-demo/c41acf9d-1088-4082-ae79-4c8b53e6aebb/scratchpad",
+        "prompt_id": "2de203be-71ae-4f84-b7d3-0e4021f033df",
+        "permission_mode": "auto",
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "hi"
+      }
+    },
+    {
+      "event": "StopFailure",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "1",
+        "CLAUDE_CODE_SESSION_ID": "c41acf9d-1088-4082-ae79-4c8b53e6aebb",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_EFFORT": "high",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "48050"
+      },
+      "payload": {
+        "session_id": "c41acf9d-1088-4082-ae79-4c8b53e6aebb",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/c41acf9d-1088-4082-ae79-4c8b53e6aebb.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "scratchpad_dir": "/private/tmp/claude-501/-Users-me-code-demo/c41acf9d-1088-4082-ae79-4c8b53e6aebb/scratchpad",
+        "prompt_id": "2de203be-71ae-4f84-b7d3-0e4021f033df",
+        "effort": {
+          "level": "high"
+        },
+        "hook_event_name": "StopFailure",
+        "error": "model_not_found",
+        "last_assistant_message": "There's an issue with the selected model (claude-nonexistent-model-0). It may not exist or you may not have access to it. Run /model to pick a different model."
+      }
+    },
+    {
+      "event": "SessionEnd",
+      "env": {
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_ENTRYPOINT": "cli",
+        "CLAUDE_CODE_SESSION_ATTENDED": "1",
+        "CLAUDE_CODE_SESSION_ID": "c41acf9d-1088-4082-ae79-4c8b53e6aebb",
+        "CLAUDE_PROJECT_DIR": "/Users/me/code/demo",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "48050"
+      },
+      "payload": {
+        "session_id": "c41acf9d-1088-4082-ae79-4c8b53e6aebb",
+        "transcript_path": "/Users/me/.claude/projects/-Users-me-code-demo/c41acf9d-1088-4082-ae79-4c8b53e6aebb.jsonl",
+        "cwd": "/Users/me/code/demo",
+        "scratchpad_dir": "/private/tmp/claude-501/-Users-me-code-demo/c41acf9d-1088-4082-ae79-4c8b53e6aebb/scratchpad",
+        "prompt_id": "392ff2f6-d26e-4718-ac47-45635d05940e",
+        "hook_event_name": "SessionEnd",
+        "reason": "prompt_input_exit"
+      }
+    }
+  ]
+}

@@ -9,20 +9,28 @@ import { byTrigger, modesOf, originFrom } from './event.js'
 // Claude Code. Hooks: command hooks in its user settings, $CLAUDE_CONFIG_DIR/settings.json
 // (~/.claude/settings.json), next to the user's own. MCP registration goes through its CLI.
 //
-// Verified against Claude Code 2.1.273 (test/fixtures/claude/, recorded from the real binary):
+// Verified live against Claude Code 2.1.273 on a claude.ai subscription (test/fixtures/claude/):
 // - Every payload has session_id, transcript_path, cwd and hook_event_name. permission_mode comes
-//   with UserPromptSubmit, PreToolUse, PostToolUse, PermissionRequest and Stop, not with
-//   SessionStart, Notification or SessionEnd. Manual mode arrives as "default".
-// - PermissionRequest fires whenever a dialog would ask, AskUserQuestion included (and in -p).
-//   Notification permission_prompt follows about 6 s later with only "Claude needs your
-//   permission"; idle_prompt comes after a minute at the prompt.
-// - Stop carries last_assistant_message. SessionEnd's reason is prompt_input_exit (/exit) or other.
+//   with UserPromptSubmit, PreToolUse, PostToolUse, PermissionRequest, PermissionDenied and Stop,
+//   not with SessionStart, Notification, StopFailure or SessionEnd. Manual mode arrives as
+//   "default", whether it was asked for as `--permission-mode manual` or `default`.
+// - PermissionRequest fires whenever a dialog would ask, AskUserQuestion included. In `claude -p`
+//   nobody answers it: the call is denied right away. Notification permission_prompt follows about
+//   6 s later with only "Claude needs your permission"; idle_prompt comes a minute after Stop.
+// - PermissionDenied fires only when auto mode's classifier refuses a tool call. StopFailure fires
+//   when an API error ends the turn (error: rate_limit, overloaded, model_not_found, …).
+// - Stop carries last_assistant_message. SessionEnd's reason is prompt_input_exit (/exit, Ctrl+C
+//   twice), clear (/clear: a SessionStart with a new session_id follows), other (the end of -p,
+//   SIGTERM, SIGHUP), resume or logout.
+// - `claude -p` can exit without a SessionEnd when an API error stops it, and kills the StopFailure
+//   hook on its way out; a killed process sends nothing. Hooks get CLAUDE_PID: the session ends
+//   once that process is gone.
 // - Hooks inherit CLAUDE_CODE_SESSION_ATTENDED: 0 for `claude -p` and `claude --bg` sessions
 //   (even once you attach to one), 1 in a terminal. CLAUDE_CODE_ENTRYPOINT is sdk-cli for -p,
 //   cli otherwise (--bg included).
 // - Running sessions pick up changes to settings.json, hooks included.
 
-export const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PermissionRequest', 'Notification', 'Stop', 'SessionEnd']
+export const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PermissionRequest', 'PermissionDenied', 'Notification', 'Stop', 'StopFailure', 'SessionEnd']
 const MATCHERS = { Notification: 'permission_prompt|idle_prompt|elicitation_dialog' }
 // What the hooks call a mode, as Claude Code names it today (`--permission-mode manual`).
 const MODE_NAMES = { default: 'manual' }
@@ -174,6 +182,7 @@ export function normalize (event, p, env) {
   const name = str(p.hook_event_name) || event
   const tool = str(p.tool_name)
   const mode = str(p.permission_mode) || null
+  const pid = Number(env.CLAUDE_PID)
   const ev = {
     harness: 'claude',
     sid: p.session_id,
@@ -181,7 +190,9 @@ export function normalize (event, p, env) {
     mode: mode && (MODE_NAMES[mode] ?? mode),
     headless: headless(env),
     cwd: typeof p.cwd === 'string' ? sanitize(p.cwd, 300) : undefined,
-    origin: originFrom(env)
+    origin: originFrom(env),
+    // The Claude Code process. It can go without a SessionEnd (`claude -p` on an API error, a kill).
+    pid: Number.isInteger(pid) && pid > 0 ? pid : undefined
   }
   switch (name) {
     case 'SessionStart':
@@ -218,9 +229,22 @@ export function normalize (event, p, env) {
         ev.kind = 'waiting'
       }
       break
+    case 'PermissionDenied':
+      // Auto mode's classifier refused a tool call. The agent carries on without it.
+      ev.kind = 'failed'
+      ev.reason = 'permission_denied'
+      ev.summary = sanitize(`Auto mode refused ${describeTool(tool || 'a tool', p.tool_input)}${str(p.reason) ? ` (${p.reason})` : ''}`, 2000)
+      break
     case 'Stop':
       ev.kind = 'idle'
       if (str(p.last_assistant_message)) ev.summary = sanitize(p.last_assistant_message, 2000)
+      break
+    case 'StopFailure':
+      // An API error ended its turn: error is rate_limit, overloaded, model_not_found, …
+      ev.kind = 'failed'
+      ev.stopped = true
+      ev.reason = sanitize(str(p.error) || 'unknown', 32)
+      ev.summary = sanitize(str(p.last_assistant_message) || str(p.error_details) || ev.reason, 2000)
       break
     case 'SessionEnd':
       ev.kind = 'end'
@@ -228,6 +252,7 @@ export function normalize (event, p, env) {
       break
   }
   if (!ev.files) delete ev.files
+  if (!ev.pid) delete ev.pid
   return ev
 }
 
