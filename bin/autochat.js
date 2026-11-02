@@ -81,10 +81,13 @@ const HELP = `autochat: ephemeral, serverless chat rooms for people whose Copilo
                               on macOS, hooks wake AutoChat.app if it's installed (launch=app)
   autochat setup --harness H[,H…] [--dry-run]
                               install the hooks of these harnesses (docs/harnesses.md)
-  autochat setup --agents [--dry-run]
-                              connect your coding agents (Copilot CLI, Claude Code, Gemini CLI,
-                              opencode, Codex, pi) to the agent room (autochat mcp)
+  autochat setup --agents [--harness H[,H…]] [--dry-run]
+                              connect your coding agents to the agent room (autochat mcp):
+                              Copilot CLI, Claude Code, opencode, Codex and pi, or only these
+                              harnesses (Gemini CLI is opt-in: --harness gemini)
   autochat uninstall          remove the hooks and the agents' autochat MCP server
+  autochat uninstall --agents [--harness H[,H…]]
+                              remove only the agents' autochat MCP server (of these harnesses)
   autochat                    open the lounge; drops into the room when autopilot runs
   autochat whoami             your anonymous, stable handle
   autochat host [name]        make a new room: private invite code, or public #name
@@ -120,8 +123,8 @@ async function main () {
     case 'setup': {
       const { values: opts } = parseArgs({ args: rest, options: { agents: { type: 'boolean' }, harness: { type: 'string', multiple: true }, 'dry-run': { type: 'boolean' } } })
       if (opts.agents) {
-        const { setupAgents } = await import('../src/harness/index.js')
-        const r = setupAgents({ dryRun: !!opts['dry-run'] })
+        const { setupAgents, agentIds } = await import('../src/harness/index.js')
+        const r = setupAgents({ ids: opts.harness ? agentIds(opts.harness) : undefined, dryRun: !!opts['dry-run'] })
         if (r.failed.length) process.exitCode = 1
         return
       }
@@ -174,7 +177,14 @@ ${dim('More: ' + APP_INSTALL_URL)}`)
       return offerAgents()
     }
     case 'uninstall': {
-      const { removeHooks, removeAgents } = await import('../src/harness/index.js')
+      const { values: opts } = parseArgs({ args: rest, options: { agents: { type: 'boolean' }, harness: { type: 'string', multiple: true } } })
+      const { removeHooks, removeAgents, agentIds, ADAPTERS } = await import('../src/harness/index.js')
+      if (opts.harness && !opts.agents) throw new Error('usage: autochat uninstall [--agents [--harness H[,H…]]]')
+      // --agents: the MCP registrations only (of these harnesses), never the hooks.
+      if (opts.agents) {
+        removeAgents({ ids: opts.harness ? agentIds(opts.harness) : ADAPTERS.map(a => a.id) })
+        return
+      }
       removeHooks()
       removeAgents()
       return
@@ -314,14 +324,16 @@ async function offerHooks () {
   }
 }
 
-// End of `autochat setup`: offer to connect the agents too, but only when someone can answer.
+// End of `autochat setup`: offer to connect the agents too (not the opt-in ones), but only when
+// someone can answer.
 async function offerAgents () {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     console.log(`\nConnect your coding agents to the agent room (preview): ${bold('autochat setup --agents')}`)
     return
   }
-  const { planAgents, setupAgents } = await import('../src/harness/index.js')
-  const plans = planAgents()
+  const { harnessContext, planAgents, setupAgents, DEFAULT_AGENTS } = await import('../src/harness/index.js')
+  const ctx = harnessContext()
+  const plans = planAgents(ctx, { ids: DEFAULT_AGENTS })
   const connected = plans.filter(p => p.action === 'none').map(p => p.id)
   if (!plans.some(p => p.apply)) {
     if (connected.length) console.log(`\nagents    connected: ${connected.join(', ')}`)
@@ -332,7 +344,7 @@ async function offerAgents () {
     console.log(`Later: ${bold('autochat setup --agents')}`)
     return
   }
-  setupAgents({ plans })
+  setupAgents({ ctx, plans })
 }
 
 const runningIn = (info) => info?.daemon ? `the menu bar app (autochat daemon, pid ${info.pid})` : 'another terminal'

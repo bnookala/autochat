@@ -4,13 +4,14 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'autochat.js')
+const JOBS = pathToFileURL(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'harness-jobs.js')).href
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'autochat-harnesses-'))
 process.env.AUTOCHAT_HOME = path.join(tmp, 'ac')
 const { harnessContext, planAgents, setupAgents, removeAgents, agentsStatus, describePlan } = await import('../src/harnesses.js')
-const { describeAgentStatus } = await import('../src/harness/index.js')
+const { describeAgentStatus, agentIds, DEFAULT_AGENTS } = await import('../src/harness/index.js')
 const { etiquetteSource } = await import('../src/harness/opencode.js')
 const { instructions, TOOLS } = await import('../src/agent-client.js')
 
@@ -97,7 +98,9 @@ test('Gemini CLI and opencode: their formats, the file indentation is kept, comm
   const u = user({ bins: ['gemini', 'opencode'] })
   fs.mkdirSync(u.file('.gemini'), { recursive: true })
   fs.writeFileSync(u.file('.gemini', 'settings.json'), '{\n\t"theme": "Dracula",\n\t"mcpServers": {\n\t\t"other": {\n\t\t\t"command": "x"\n\t\t}\n\t}\n}\n')
-  const r = setupAgents({ ctx: u.ctx, ...quiet })
+  // Gemini CLI is opt-in: setup connects it only when it's named.
+  const ids = ['gemini', 'opencode']
+  const r = setupAgents({ ctx: u.ctx, ids, ...quiet })
   assert.deepEqual(r.applied, ['gemini', 'opencode'])
   const gemini = read(u.file('.gemini', 'settings.json'))
   assert.match(gemini, /^\{\n\t"theme": "Dracula",\n\t"mcpServers": \{\n\t\t"other"/, 'tabs stay tabs')
@@ -109,7 +112,7 @@ test('Gemini CLI and opencode: their formats, the file indentation is kept, comm
     instructions: [u.file('.config', 'opencode', 'autochat.md')]
   })
   assert.equal(fs.existsSync(u.file('.config', 'opencode', 'opencode.json.autochat.bak')), false, 'nothing to back up for a new file')
-  assert.deepEqual(setupAgents({ ctx: u.ctx, ...quiet }).applied, [], 'idempotent')
+  assert.deepEqual(setupAgents({ ctx: u.ctx, ids, ...quiet }).applied, [], 'idempotent')
 
   // An entry the user extended keeps their extra settings when it's updated.
   const g = JSON.parse(read(u.file('.gemini', 'settings.json')))
@@ -123,11 +126,11 @@ test('Gemini CLI and opencode: their formats, the file indentation is kept, comm
   // JSON with comments isn't rewritten: setup says what to add by hand.
   const jsonc = '{\n  // my settings\n  "theme": "x",\n}\n'
   fs.writeFileSync(u.file('.gemini', 'settings.json'), jsonc)
-  const manual = planAgents(u.ctx).find(p => p.id === 'gemini')
+  const manual = planAgents(u.ctx, { ids: ['gemini'] }).find(p => p.id === 'gemini')
   assert.equal(manual.action, 'manual')
   assert.equal(manual.apply, undefined)
   assert.match(describePlan(manual, u.ctx).join('\n'), /~\/\.gemini\/settings\.json isn't plain JSON \(comments\?\), so autochat won't rewrite it\. Add this yourself:\n\s+\{\n\s+"autochat": \{/)
-  setupAgents({ ctx: u.ctx, ...quiet })
+  setupAgents({ ctx: u.ctx, ids, ...quiet })
   assert.equal(read(u.file('.gemini', 'settings.json')), jsonc)
 
   removeAgents({ ctx: u.ctx, ...quiet })
@@ -191,8 +194,11 @@ test('detection: missing harnesses are skipped, pi gets its extension, nothing f
   const none = user()
   const lines = []
   const r = setupAgents({ ctx: none.ctx, out: (l) => lines.push(l) })
-  assert.deepEqual(r.plans.map(p => [p.id, p.action]), [['copilot', 'absent'], ['claude', 'absent'], ['gemini', 'absent'], ['opencode', 'absent'], ['codex', 'absent'], ['pi', 'absent']])
-  assert.match(lines.at(-1), /No agent harnesses found/)
+  assert.deepEqual(r.plans.map(p => [p.id, p.action]), [['copilot', 'absent'], ['claude', 'absent'], ['opencode', 'absent'], ['codex', 'absent'], ['pi', 'absent']], 'Gemini CLI is opt-in')
+  assert.equal(lines.at(-1), 'No agent harnesses found (Copilot CLI, Claude Code, opencode, Codex, pi).')
+  const asked = []
+  setupAgents({ ctx: none.ctx, ids: ['gemini'], out: (l) => asked.push(l) })
+  assert.deepEqual(asked.slice(1), ['  gemini   not installed', 'No agent harnesses found (Gemini CLI).'])
   assert.deepEqual(none.calls, [], 'no claude binary, no claude calls')
   const pi = user({ bins: ['pi'] })
   const out = []
@@ -202,24 +208,51 @@ test('detection: missing harnesses are skipped, pi gets its extension, nothing f
   assert.deepEqual(fs.readdirSync(path.join(pi.home, '.pi', 'agent', 'extensions')), ['autochat.ts'], 'pi has no MCP: its tools come with the autochat extension')
 })
 
-test('CLI: setup --agents --dry-run changes nothing; setup --agents, rerun, uninstall; plain setup only hints', () => {
+// The environment of this fake user's processes: its homes, and none of the parent's.
+function envAs (u) {
+  const env = { ...process.env, ...u.env, AUTOCHAT_HOME: path.join(u.root, 'ac'), COPILOT_HOME: u.file('.copilot'), XDG_CONFIG_HOME: u.file('.config'), CODEX_HOME: u.file('.codex'), AUTOCHAT_APP_DIRS: path.join(u.root, 'no-apps') }
+  for (const k of ['CLAUDE_CONFIG_DIR', 'PI_CODING_AGENT_DIR']) delete env[k]
+  return env
+}
+// The CLI as this fake user.
+const cliAs = (u) => (...args) => spawnSync(process.execPath, [BIN, ...args], { env: envAs(u), encoding: 'utf8' })
+// The harnesses a run of setup --agents showed a plan for, from its "  <id>  …" lines.
+const shown = (stdout) => [...stdout.matchAll(/^ {2}(\w+) /gm)].map(m => m[1])
+// Every file under a directory, with its contents.
+function files (dir, out = {}) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name)
+    if (e.isDirectory()) files(p, out)
+    else if (e.isFile()) out[p] = read(p)
+  }
+  return out
+}
+
+test('CLI: setup --agents leaves Gemini CLI out; --harness gemini connects it (--dry-run changes nothing); uninstall puts the file back; plain setup only hints', () => {
   const u = user({ bins: ['gemini'] })
   fs.mkdirSync(u.file('.gemini'), { recursive: true })
   fs.writeFileSync(u.file('.gemini', 'settings.json'), '{"theme":"x"}\n')
-  const env = { ...process.env, ...u.env, AUTOCHAT_HOME: path.join(u.root, 'ac'), COPILOT_HOME: u.file('.copilot'), XDG_CONFIG_HOME: u.file('.config'), CODEX_HOME: u.file('.codex'), AUTOCHAT_APP_DIRS: path.join(u.root, 'no-apps') }
-  const cli = (...args) => spawnSync(process.execPath, [BIN, ...args], { env, encoding: 'utf8' })
+  const cli = cliAs(u)
 
-  const dry = cli('setup', '--agents', '--dry-run')
+  const skipped = cli('setup', '--agents')
+  assert.equal(skipped.status, 0, skipped.stderr)
+  assert.deepEqual(shown(skipped.stdout), ['copilot', 'claude', 'opencode', 'codex', 'pi'], 'Gemini CLI is opt-in')
+  assert.match(skipped.stdout, /No agent harnesses found \(Copilot CLI, Claude Code, opencode, Codex, pi\)\.\n$/)
+  assert.equal(read(u.file('.gemini', 'settings.json')), '{"theme":"x"}\n')
+
+  const dry = cli('setup', '--agents', '--harness', 'gemini', '--dry-run')
   assert.equal(dry.status, 0, dry.stderr)
+  assert.deepEqual(shown(dry.stdout), ['gemini'])
   assert.match(dry.stdout, /gemini {3}add to ~\/\.gemini\/settings\.json\n {11}\+ "autochat": \{"command":/)
   assert.match(dry.stdout, /Dry run: nothing changed\./)
   assert.equal(read(u.file('.gemini', 'settings.json')), '{"theme":"x"}\n')
 
-  const real = cli('setup', '--agents')
+  const real = cli('setup', '--agents', '--harness', 'gemini')
   assert.equal(real.status, 0, real.stderr)
   assert.match(real.stdout, /✔ gemini connected/)
   assert.equal(JSON.parse(read(u.file('.gemini', 'settings.json'))).mcpServers.autochat.args.at(-1), 'gemini')
-  assert.match(cli('setup', '--agents').stdout, /gemini {3}already connected[^\n]*\n[\s\S]*Nothing to change\./)
+  assert.match(cli('setup', '--agents', '--harness=gemini').stdout, /gemini {3}already connected[^\n]*\n[\s\S]*Nothing to change\./)
+  assert.deepEqual(shown(cli('setup', '--agents').stdout), ['copilot', 'claude', 'opencode', 'codex', 'pi'], 'connected or not, a plain run leaves it alone')
 
   // Plain setup without a terminal never prompts or touches harness configs.
   const plain = cli('setup')
@@ -230,14 +263,226 @@ test('CLI: setup --agents --dry-run changes nothing; setup --agents, rerun, unin
   const un = cli('uninstall')
   assert.equal(un.status, 0, un.stderr)
   assert.match(un.stdout, /^hooks removed\.\nremoved the autochat MCP server from Gemini CLI \(~\/\.gemini\/settings\.json\)\n$/)
-  assert.deepEqual(JSON.parse(read(u.file('.gemini', 'settings.json'))), { theme: 'x', mcpServers: {} })
+  assert.equal(read(u.file('.gemini', 'settings.json')), '{"theme":"x"}\n', 'byte for byte, from the backup')
+})
+
+test('--harness for setup and uninstall --agents: ids, comma-separated or repeated; all; an unknown one is an error that lists them', () => {
+  assert.deepEqual(DEFAULT_AGENTS, ['copilot', 'claude', 'opencode', 'codex', 'pi'])
+  assert.deepEqual(agentIds(['gemini']), ['gemini'])
+  assert.deepEqual(agentIds(['codex,claude', ' gemini ', 'codex']), ['codex', 'claude', 'gemini'])
+  assert.deepEqual(agentIds(['all']), ['copilot', 'claude', 'gemini', 'opencode', 'codex', 'pi'], 'Gemini CLI included')
+  assert.throws(() => agentIds(['copilot,nope']), { message: 'unknown harness: nope (copilot, claude, gemini, opencode, codex, pi, or all)' })
+  assert.throws(() => agentIds(['nope', 'gemeni']), { message: 'unknown harnesses: nope, gemeni (copilot, claude, gemini, opencode, codex, pi, or all)' })
+  assert.throws(() => agentIds(['', ',']), { message: '--harness needs harness ids (copilot, claude, gemini, opencode, codex, pi, or all)' })
+})
+
+test('CLI: setup --agents --harness touches only those harnesses; an unknown id changes nothing', () => {
+  const u = user({ bins: ['copilot', 'gemini', 'opencode'] })
+  fs.mkdirSync(u.file('.gemini'), { recursive: true })
+  const gemini = u.file('.gemini', 'settings.json')
+  const geminiBefore = '{\n  "security": {\n    "auth": {\n      "selectedType": "oauth-personal"\n    }\n  }\n}\n'
+  fs.writeFileSync(gemini, geminiBefore)
+  const cli = cliAs(u)
+  const before = files(u.home)
+
+  for (const args of [['--harness', 'copilot,nope'], ['--harness', 'opencode', '--harness', 'nope'], ['--harness', 'nope', '--dry-run']]) {
+    const bad = cli('setup', '--agents', ...args)
+    assert.equal(bad.status, 1, args.join(' '))
+    assert.equal(bad.stdout, '')
+    assert.equal(bad.stderr, 'autochat: unknown harness: nope (copilot, claude, gemini, opencode, codex, pi, or all)\n')
+  }
+  assert.deepEqual(files(u.home), before, 'nothing changed, not even for the ids that were fine')
+
+  const dry = cli('setup', '--agents', '--harness', 'opencode', '--dry-run')
+  assert.equal(dry.status, 0, dry.stderr)
+  assert.deepEqual(shown(dry.stdout), ['opencode'])
+  assert.deepEqual(files(u.home), before)
+
+  const one = cli('setup', '--agents', '--harness', 'opencode')
+  assert.equal(one.status, 0, one.stderr)
+  assert.deepEqual(shown(one.stdout), ['opencode'])
+  assert.match(one.stdout, /✔ opencode connected\n/)
+  assert.equal(fs.existsSync(u.file('.copilot', 'mcp-config.json')), false, 'Copilot CLI left alone')
+  assert.equal(read(gemini), geminiBefore, 'Gemini CLI left alone')
+
+  const two = cli('setup', '--agents', '--harness', 'gemini', '--harness', 'copilot,opencode')
+  assert.equal(two.status, 0, two.stderr)
+  assert.deepEqual(shown(two.stdout), ['copilot', 'gemini', 'opencode'])
+  assert.match(two.stdout, /✔ copilot connected\n✔ gemini connected\n/)
+  assert.match(two.stdout, /opencode already connected/)
+})
+
+test('CLI: uninstall --agents --harness gemini takes autochat out of Gemini CLI alone, byte for byte; the hooks and the other harnesses stay', () => {
+  const u = user({ bins: ['copilot', 'gemini', 'opencode'] })
+  fs.mkdirSync(u.file('.gemini'), { recursive: true })
+  const gemini = u.file('.gemini', 'settings.json')
+  const geminiBefore = '{\n  "security": {"auth": {"selectedType": "oauth-personal"}},\n  "mcpServers": {}\n}'
+  fs.writeFileSync(gemini, geminiBefore)
+  const cli = cliAs(u)
+  assert.equal(cli('setup').status, 0)
+  const all = cli('setup', '--agents', '--harness', 'all')
+  assert.match(all.stdout, /✔ copilot connected\n✔ gemini connected\n✔ opencode connected\n/)
+  assert.notEqual(read(gemini), geminiBefore, 'rewritten in its own indentation')
+  const hooks = u.file('.copilot', 'hooks', 'autochat.json')
+  const others = [u.file('.copilot', 'mcp-config.json'), u.file('.config', 'opencode', 'opencode.json'), u.file('.config', 'opencode', 'autochat.md'), hooks]
+  const kept = others.map(read)
+
+  const un = cli('uninstall', '--agents', '--harness', 'gemini')
+  assert.equal(un.status, 0, un.stderr)
+  assert.equal(un.stdout, 'removed the autochat MCP server from Gemini CLI (~/.gemini/settings.json)\n')
+  assert.equal(read(gemini), geminiBefore, 'the backup, byte for byte')
+  assert.deepEqual(others.map(read), kept, 'the hooks and the other registrations stay')
+  assert.equal(cli('uninstall', '--agents', '--harness', 'gemini').stdout, "Nothing to remove: autochat isn't connected to Gemini CLI.\n")
+
+  // --harness without --agents, or an id that isn't a harness: an error, and nothing changes.
+  const hooksOnly = cli('uninstall', '--harness', 'gemini')
+  assert.deepEqual([hooksOnly.status, hooksOnly.stdout, hooksOnly.stderr], [1, '', 'autochat: usage: autochat uninstall [--agents [--harness H[,H…]]]\n'])
+  const bad = cli('uninstall', '--agents', '--harness', 'gemini,nope')
+  assert.deepEqual([bad.status, bad.stdout, bad.stderr], [1, '', 'autochat: unknown harness: nope (copilot, claude, gemini, opencode, codex, pi, or all)\n'])
+  assert.deepEqual(others.map(read), kept)
+
+  // --agents alone: every registration, still not the hooks. The mcp-config.json autochat made goes.
+  const rest = cli('uninstall', '--agents')
+  assert.equal(rest.stdout, "removed the autochat MCP server from Copilot CLI (~/.copilot/mcp-config.json)\nremoved the autochat MCP server and autochat's etiquette from opencode (~/.config/opencode/opencode.json, ~/.config/opencode/autochat.md)\n")
+  assert.deepEqual([fs.existsSync(u.file('.copilot', 'mcp-config.json')), fs.existsSync(u.file('.config', 'opencode', 'opencode.json'))], [false, false])
+  assert.equal(read(hooks), kept.at(-1))
+  assert.equal(cli('uninstall', '--agents').stdout, "Nothing to remove: autochat isn't connected to Copilot CLI, Claude Code, Gemini CLI, opencode, Codex, pi.\n")
+  assert.equal(read(gemini), geminiBefore)
+})
+
+test('uninstall undoes setup\'s edit: the backup\'s bytes when nothing else changed since; otherwise only autochat\'s entry goes, and the file keeps its layout', () => {
+  const u = user({ bins: ['gemini', 'copilot'] })
+  const ids = ['gemini']
+  const file = u.file('.gemini', 'settings.json')
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  // A layout setup's rewrite doesn't keep: one line, no final newline.
+  const before = '{"theme": "Dracula", "mcpServers": {"other": {"command": "x"}}}'
+  fs.writeFileSync(file, before)
+  setupAgents({ ctx: u.ctx, ids, ...quiet })
+  assert.equal(read(file + '.autochat.bak'), before)
+  assert.deepEqual(removeAgents({ ctx: u.ctx, ids, ...quiet }), ['gemini'])
+  assert.equal(read(file), before, 'untouched since: the backup, byte for byte')
+
+  // Changed since: the change stays, laid out as it was, and so does everything else but our entry.
+  setupAgents({ ctx: u.ctx, ids, ...quiet })
+  const edited = read(file).replace('"theme": "Dracula",', '"theme": "Dracula",\n  "ui": {"hideBanner": true},')
+  fs.writeFileSync(file, edited)
+  removeAgents({ ctx: u.ctx, ids, ...quiet })
+  assert.equal(read(file), '{\n  "theme": "Dracula",\n  "ui": {"hideBanner": true},\n  "mcpServers": {\n    "other": {\n      "command": "x"\n    }\n  }\n}')
+  assert.equal(read(file + '.autochat.bak'), before, 'the backup is never overwritten')
+
+  // No settings.json before: autochat's goes. One with something added since stays, without the
+  // "mcpServers" autochat added.
+  fs.rmSync(file)
+  fs.rmSync(file + '.autochat.bak')
+  setupAgents({ ctx: u.ctx, ids, ...quiet })
+  removeAgents({ ctx: u.ctx, ids, ...quiet })
+  assert.deepEqual(fs.readdirSync(path.dirname(file)), [])
+  setupAgents({ ctx: u.ctx, ids, ...quiet })
+  fs.writeFileSync(file, read(file).replace('{\n', '{\n  "theme": "x",\n'))
+  removeAgents({ ctx: u.ctx, ids, ...quiet })
+  assert.equal(read(file), '{\n  "theme": "x"\n}\n')
+  assert.deepEqual(fs.readdirSync(path.dirname(file)), ['settings.json'], 'and no backup holding our entry')
+
+  // Copilot CLI's mcp-config.json the same way, and only the harnesses asked for.
+  const copilot = u.file('.copilot', 'mcp-config.json')
+  fs.mkdirSync(path.dirname(copilot), { recursive: true })
+  const mine = '{\r\n    "mcpServers": {\r\n        "github": {"type": "http", "url": "https://api.githubcopilot.com/mcp/"}\r\n    }\r\n}\r\n'
+  fs.writeFileSync(copilot, mine)
+  setupAgents({ ctx: u.ctx, ids: ['copilot', 'gemini'], ...quiet })
+  assert.deepEqual(removeAgents({ ctx: u.ctx, ids: ['copilot'], ...quiet }), ['copilot'])
+  assert.equal(read(copilot), mine)
+  assert.equal(agentsStatus(u.ctx).find(h => h.id === 'gemini').registered, true)
+})
+
+test('Codex: uninstall gives back the config.toml bytes setup found, blank lines and missing final newline too', () => {
+  const u = user()
+  const file = u.file('.codex', 'config.toml')
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const before = 'model = "o3"\n\n\n# fast\n[profiles.fast]\nmodel = "o4-mini"'
+  fs.writeFileSync(file, before)
+  setupAgents({ ctx: u.ctx, ids: ['codex'], ...quiet })
+  removeAgents({ ctx: u.ctx, ids: ['codex'], ...quiet })
+  assert.equal(read(file), before)
+
+  // Changed since: only our table goes.
+  setupAgents({ ctx: u.ctx, ids: ['codex'], ...quiet })
+  fs.writeFileSync(file, read(file).replace('model = "o3"', 'model = "gpt-5"'))
+  removeAgents({ ctx: u.ctx, ids: ['codex'], ...quiet })
+  assert.equal(read(file), 'model = "gpt-5"\n\n# fast\n[profiles.fast]\nmodel = "o4-mini"\n')
+
+  // A config.toml autochat made goes.
+  const v = user()
+  fs.mkdirSync(v.file('.codex'), { recursive: true })
+  setupAgents({ ctx: v.ctx, ids: ['codex'], ...quiet })
+  assert.ok(fs.existsSync(v.file('.codex', 'config.toml')))
+  removeAgents({ ctx: v.ctx, ids: ['codex'], ...quiet })
+  assert.deepEqual(fs.readdirSync(v.file('.codex')), [])
+})
+
+test('planAgents: Gemini CLI, opt-in, is manual until it\'s named or connected, saying how to opt in', () => {
+  const u = user({ bins: ['gemini'] })
+  const gemini = (opts, ctx = u.ctx) => planAgents(ctx, opts).find(p => p.id === 'gemini')
+  const optIn = gemini()
+  assert.deepEqual(optIn, { id: 'gemini', name: 'Gemini CLI', where: '~/.gemini/settings.json', action: 'manual', reason: 'opt-in: autochat setup --agents --harness gemini' })
+  assert.equal(optIn.apply, undefined)
+  assert.deepEqual(describePlan(optIn, u.ctx), ['gemini   opt-in: autochat setup --agents --harness gemini'])
+  assert.equal(gemini({ ids: ['gemini'] }).action, 'add', 'named, it\'s a plan like any other')
+  assert.equal(gemini({ ids: agentIds(['all']) }).action, 'add', 'all names it too')
+  assert.equal(gemini({ ids: ['gemini'] }).apply !== undefined, true)
+
+  // A settings.json with comments: opt-in still comes first. Named, setup says what to add by hand.
+  fs.mkdirSync(u.file('.gemini'), { recursive: true })
+  fs.writeFileSync(u.file('.gemini', 'settings.json'), '{\n  // mine\n}\n')
+  assert.equal(gemini().reason, 'opt-in: autochat setup --agents --harness gemini')
+  assert.match(gemini({ ids: ['gemini'] }).reason, /isn't plain JSON/)
+  fs.rmSync(u.file('.gemini', 'settings.json'))
+
+  // Connected: what it is, so Connect agents… shows it as connected, or offers the update.
+  setupAgents({ ctx: u.ctx, ids: ['gemini'], ...quiet })
+  assert.equal(gemini().action, 'none')
+  assert.equal(gemini({}, harnessContext({ env: u.env, node: u.node, bin: path.join(u.root, 'new', 'autochat.js'), run: u.ctx.run })).action, 'update')
+})
+
+test('Connect agents… (agents.setupPlan, from src/harness-jobs.js): Gemini CLI comes as manual, which the app never checks; agents.setup with it says how to opt in', () => {
+  const u = user({ bins: ['gemini', 'copilot'] })
+  const job = (code) => {
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', `const { harnessJobs } = await import(${JSON.stringify(JOBS)}); const jobs = harnessJobs(); console.log(JSON.stringify(await ${code}))`], { env: envAs(u), encoding: 'utf8' })
+    assert.equal(r.status, 0, r.stderr)
+    return JSON.parse(r.stdout)
+  }
+  const plans = job('jobs.planAgents()')
+  assert.deepEqual(plans.map(p => [p.id, p.action]), [['copilot', 'add'], ['claude', 'absent'], ['gemini', 'manual'], ['opencode', 'absent'], ['codex', 'absent'], ['pi', 'absent']])
+  assert.deepEqual(plans.find(p => p.id === 'gemini'), { id: 'gemini', name: 'Gemini CLI', action: 'manual', where: '~/.gemini/settings.json', reason: 'opt-in: autochat setup --agents --harness gemini', detail: ['opt-in: autochat setup --agents --harness gemini'] })
+  const r = job("jobs.setupAgents({ ids: ['copilot', 'gemini'] })")
+  assert.deepEqual([r.applied, r.failed], [['copilot'], []])
+  assert.equal(r.plans.find(p => p.id === 'gemini').action, 'manual', 'the daemon reports its reason as the error')
+  assert.equal(fs.existsSync(u.file('.gemini', 'settings.json')), false)
+})
+
+test('doctor: Gemini CLI is opt-in, so it\'s never suggested; a registration there is ✔, with how to disconnect it', () => {
+  const u = user({ bins: ['gemini', 'copilot'] })
+  const status = (id, ctx = u.ctx) => describeAgentStatus(agentsStatus(ctx).find(h => h.id === id))
+  assert.deepEqual(status('gemini'), [], 'installed, not connected: not a word')
+  assert.deepEqual(describeAgentStatus({ id: 'gemini', name: 'Gemini CLI', installed: false, registered: false }), [], 'nor "not installed"')
+  assert.deepEqual(status('copilot'), [[null, 'copilot: installed, not connected to the agent room (autochat setup --agents)']], 'the others still are')
+
+  setupAgents({ ctx: u.ctx, ids: ['gemini'], ...quiet })
+  assert.deepEqual(status('gemini'), [[true, 'gemini: connected to the agent room (~/.gemini/settings.json). Gemini CLI is opt-in; to disconnect it: autochat uninstall --agents --harness gemini']])
+
+  // Its command is gone: a plain setup --agents wouldn't fix it, so doctor says what would.
+  const gone = path.join(u.root, 'gone', 'autochat.js')
+  setupAgents({ ctx: harnessContext({ env: u.env, node: u.node, bin: gone, run: u.ctx.run }), ids: ['gemini'], ...quiet })
+  assert.deepEqual(status('gemini'), [[false, `gemini: registered, but its command no longer exists: ${u.node} ${gone} mcp --harness gemini (run autochat setup --agents --harness gemini, or disconnect it: autochat uninstall --agents --harness gemini)`]])
+  removeAgents({ ctx: u.ctx, ids: ['gemini'], ...quiet })
+  assert.deepEqual(status('gemini'), [])
 })
 
 test('changes made between showing the plan and applying it are kept; symlinked configs stay symlinks', () => {
   const u = user({ bins: ['gemini'] })
   fs.mkdirSync(u.file('.gemini'), { recursive: true })
   fs.writeFileSync(u.file('.gemini', 'settings.json'), '{"theme":"x"}\n')
-  const plan = planAgents(u.ctx).find(p => p.id === 'gemini')
+  const plan = planAgents(u.ctx, { ids: ['gemini'] }).find(p => p.id === 'gemini')
   // Meanwhile (say, while the [Y/n] prompt waits), something else adds a server.
   fs.writeFileSync(u.file('.gemini', 'settings.json'), '{"theme":"x","mcpServers":{"added":{"command":"y"}}}\n')
   plan.apply()

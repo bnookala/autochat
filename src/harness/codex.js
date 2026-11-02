@@ -106,6 +106,9 @@ const mcp = {
     return { id: 'codex', action: main ? 'update' : 'add', file: f, entry: `[mcp_servers.autochat]\n${block.join('\n')}`, write: () => writeFileSafely(f, next) }
   },
   unplan (ctx) { return planned((c) => this.uncompute(c), ctx) },
+  // Our table and its sub-tables go, and the blank lines setup added. When what's left is what the
+  // file held before autochat first wrote to it (its .autochat.bak), give or take blank lines, those
+  // exact bytes go back; a file autochat made goes, once nothing else is in it.
   uncompute (ctx) {
     const f = this.file(ctx)
     const { lines, ranges } = this.read(ctx)
@@ -113,7 +116,13 @@ const mcp = {
     const drop = new Set()
     for (const r of ranges) for (let i = r.start; i < r.end; i++) drop.add(i)
     const next = lines.filter((_, i) => !drop.has(i)).join('\n').replace(/\n{3,}/g, '\n\n').replace(/\n+$/, '\n')
-    return { id: 'codex', action: 'remove', file: f, write: () => writeFileSafely(f, next) }
+    const before = readText(f + '.autochat.bak')
+    const blanks = (t) => t.replace(/\n{3,}/g, '\n\n').replace(/\n*$/, '\n')
+    // No backup now: one taken here would hold our table, not what the file had before it.
+    const write = before !== null && blanks(before) === blanks(next)
+      ? () => writeFileSafely(f, before, { backup: false })
+      : before === null && !next.trim() ? () => fs.rmSync(f, { force: true }) : () => writeFileSafely(f, next, { backup: false })
+    return { id: 'codex', action: 'remove', file: f, write }
   }
 }
 

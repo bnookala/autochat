@@ -5,7 +5,7 @@ import { copilotHome, sessionEventsPath, sessionDir, cacheDir, ensureDir, isVali
 import { sanitize } from '../protocol.js'
 import { focusOrigin } from '../launcher.js'
 import { harnessContext, readText, planned, scanEvents, pidAlive, shq, psq } from './util.js'
-import { jsonServer, detectBy, child, argsFor, SERVER } from './mcp-config.js'
+import { jsonServer, detectBy, argsFor, SERVER } from './mcp-config.js'
 import { byTrigger, defaultAutonomy, originFrom } from './event.js'
 
 // Copilot CLI. Hooks: $COPILOT_HOME/hooks/autochat.json, a file of our own. Its mode (autopilot,
@@ -383,7 +383,7 @@ export function liveSessions ({ idleMs = 45000, windowMs = 30 * 60 * 1000, now =
 const server = jsonServer({
   id: 'copilot',
   file: (ctx) => path.join(ctx.copilotHome, 'mcp-config.json'),
-  servers: (root, create) => child(root, 'mcpServers', create),
+  keys: ['mcpServers'],
   entry: (ctx) => ({ type: 'local', command: ctx.node, args: argsFor('copilot', ctx), tools: ['*'] })
 })
 

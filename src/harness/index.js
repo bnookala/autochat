@@ -17,6 +17,11 @@ export const ADAPTERS = [copilot, claude, gemini, opencode, codex, pi]
 export const adapter = (id) => ADAPTERS.find(a => a.id === id) ?? null
 // What `autochat setup` installs hooks for without asking.
 export const DEFAULT_HOOKS = ['copilot']
+// Harnesses that `autochat setup --agents` connects only when named (`--harness gemini`), and that
+// doctor doesn't suggest: Gemini CLI won't get an adapter (#36), only its MCP registration.
+export const OPT_IN_AGENTS = ['gemini']
+// What a plain `autochat setup --agents` connects: every other harness.
+export const DEFAULT_AGENTS = ADAPTERS.map(a => a.id).filter(id => !OPT_IN_AGENTS.includes(id))
 
 export { harnessContext, tilde }
 
@@ -104,10 +109,25 @@ export const hooksStatus = (ctx = harnessContext()) => ADAPTERS.filter(a => a.ho
 /** When a harness starts running new hooks (adapter.hooksNote). */
 export const hooksNote = (id) => adapter(id)?.hooksNote || 'New sessions pick up the hooks.'
 
+const listed = (values) => [values].flat().flatMap(v => String(v).split(',')).map(v => v.trim()).filter(Boolean)
+
 /** `--harness a,b --harness c` → ['a', 'b', 'c']; `all` is every adapter with hooks. */
 export function hookIds (values) {
-  const ids = [values].flat().flatMap(v => String(v).split(',')).map(v => v.trim()).filter(Boolean)
-  return [...new Set(ids.flatMap(id => id === 'all' ? ADAPTERS.filter(a => a.planHooks).map(a => a.id) : [id]))]
+  return [...new Set(listed(values).flatMap(id => id === 'all' ? ADAPTERS.filter(a => a.planHooks).map(a => a.id) : [id]))]
+}
+
+/**
+ * `setup --agents` and `uninstall --agents` with `--harness a,b --harness c` → ['a', 'b', 'c'];
+ * `all` is every harness, opt-in ones included. An id that isn't a harness throws, listing them.
+ */
+export function agentIds (values) {
+  const known = ADAPTERS.map(a => a.id)
+  const ids = listed(values)
+  const unknown = ids.filter(id => id !== 'all' && !known.includes(id))
+  const valid = `${known.join(', ')}, or all`
+  if (unknown.length) throw new Error(`unknown harness${unknown.length > 1 ? 'es' : ''}: ${unknown.join(', ')} (${valid})`)
+  if (!ids.length) throw new Error(`--harness needs harness ids (${valid})`)
+  return [...new Set(ids.flatMap(id => id === 'all' ? known : [id]))]
 }
 
 /** `autochat setup --harness <ids>`: show each change, then make it (or only show, with dryRun). */
@@ -177,18 +197,26 @@ export function describeHookPlan (p, ctx) {
 
 // --- MCP registration: `autochat setup --agents` ----------------------------------------------------
 
-/** What `setup --agents` would do for each harness: installed ones get a plan. */
-export function planAgents (ctx = harnessContext()) {
-  return ADAPTERS.map((h) => {
+const only = (ids) => ADAPTERS.filter(h => !ids || ids.includes(h.id))
+
+/**
+ * What `setup --agents` would do for each harness (`ids`: these only): installed ones get a plan.
+ * An opt-in harness that isn't connected is `manual`, saying how to opt in, unless `ids` names it:
+ * so Connect agents… in AutoChat.app (every harness, no ids) never checks it for you.
+ */
+export function planAgents (ctx = harnessContext(), { ids = null } = {}) {
+  return only(ids).map((h) => {
     const det = h.detect(ctx)
     if (!det.installed) return { id: h.id, name: h.name, action: 'absent' }
-    return { name: h.name, where: h.mcp.where(ctx), ...h.mcp.plan(ctx) }
+    const p = { name: h.name, where: h.mcp.where(ctx), ...h.mcp.plan(ctx) }
+    if (!OPT_IN_AGENTS.includes(h.id) || ids?.includes(h.id) || ['none', 'update'].includes(p.action)) return p
+    return { id: h.id, name: h.name, where: p.where, action: 'manual', reason: `opt-in: autochat setup --agents --harness ${h.id}` }
   })
 }
 
-/** What `uninstall` would remove: every registration we find, installed or not. */
-export function unplanAgents (ctx = harnessContext()) {
-  return ADAPTERS.map(h => ({ name: h.name, where: h.mcp.where(ctx), ...h.mcp.unplan(ctx) }))
+/** What `uninstall` would remove (`ids`: from these only): every registration we find, installed or not. */
+export function unplanAgents (ctx = harnessContext(), { ids = null } = {}) {
+  return only(ids).map(h => ({ name: h.name, where: h.mcp.where(ctx), ...h.mcp.unplan(ctx) }))
 }
 
 /** Per harness, for `autochat doctor`: installed, registered, command still valid, etiquette. */
@@ -203,14 +231,18 @@ export function agentsStatus (ctx = harnessContext()) {
 /**
  * What doctor says about one harness from agentsStatus(): [ok, text] lines, where ok is true (✔),
  * false (✘) or null (… a note). `etiquette` ({shown, note}) says how the room's etiquette reaches
- * the model, where the harness doesn't simply show it the server's instructions.
+ * the model, where the harness doesn't simply show it the server's instructions. An opt-in harness
+ * (OPT_IN_AGENTS) is never suggested: doctor speaks of it only once autochat is registered there,
+ * and then says how to take it out.
  */
 export function describeAgentStatus (h) {
-  if (h.unsupported) return h.installed ? [[null, `${h.id}: installed, but it has no MCP support yet`]] : []
-  if (!h.registered) return [[null, h.installed ? `${h.id}: installed, not connected to the agent room (autochat setup --agents)` : `${h.id}: not installed`]]
+  const optIn = OPT_IN_AGENTS.includes(h.id)
+  const disconnect = `autochat uninstall --agents --harness ${h.id}`
+  if (h.unsupported) return h.installed && !optIn ? [[null, `${h.id}: installed, but it has no MCP support yet`]] : []
+  if (!h.registered) return optIn ? [] : [[null, h.installed ? `${h.id}: installed, not connected to the agent room (autochat setup --agents)` : `${h.id}: not installed`]]
   const lines = [h.valid
-    ? [true, `${h.id}: connected to the agent room (${h.where})`]
-    : [false, `${h.id}: registered, but its command no longer exists: ${h.command} (run autochat setup --agents)`]]
+    ? [true, `${h.id}: connected to the agent room (${h.where})${optIn ? `. ${h.name || h.id} is opt-in; to disconnect it: ${disconnect}` : ''}`]
+    : [false, `${h.id}: registered, but its command no longer exists: ${h.command} (run autochat setup --agents${optIn ? ` --harness ${h.id}, or disconnect it: ${disconnect}` : ''})`]]
   if (h.etiquette) lines.push([h.etiquette.shown, `${h.id}: ${h.etiquette.note}`])
   return lines
 }
@@ -224,7 +256,7 @@ export function describePlan (p, ctx) {
     case 'absent': return [`${label}not installed`]
     case 'unsupported': return [`${label}${p.reason}`]
     case 'none': return [`${label}${p.file || p.id === 'claude' ? 'already connected' : 'nothing to do'}${p.where ? ` (${p.where})` : ''}`]
-    case 'manual': return [`${label}${p.reason}. Add this yourself:`, ...String(typeof p.snippet === 'string' ? p.snippet : JSON.stringify(p.snippet, null, 2)).split('\n').map(l => ' '.repeat(9) + l), ...(p.after ? [' '.repeat(9) + p.after] : [])]
+    case 'manual': return p.snippet === undefined ? [`${label}${p.reason}`] : [`${label}${p.reason}. Add this yourself:`, ...String(typeof p.snippet === 'string' ? p.snippet : JSON.stringify(p.snippet, null, 2)).split('\n').map(l => ' '.repeat(9) + l), ...(p.after ? [' '.repeat(9) + p.after] : [])]
     case 'add':
     case 'update':
     case 'remove': {
@@ -242,10 +274,11 @@ export function describePlan (p, ctx) {
 }
 
 /**
- * `autochat setup --agents`: show every change, then make it (or only show, with dryRun).
- * Pass `plans` from planAgents() to reuse them.
+ * `autochat setup --agents [--harness <ids>]`: show every change, then make it (or only show, with
+ * dryRun). `ids` are the harnesses to connect, by default DEFAULT_AGENTS (every one but the opt-in
+ * ones). Pass `plans` from planAgents() to reuse them.
  */
-export function setupAgents ({ ctx = harnessContext(), dryRun = false, out = console.log, plans = planAgents(ctx) } = {}) {
+export function setupAgents ({ ctx = harnessContext(), ids = DEFAULT_AGENTS, dryRun = false, out = console.log, plans = planAgents(ctx, { ids }) } = {}) {
   out(`Connecting your agents to the agent room: ${short(`${ctx.node} ${ctx.bin} mcp --harness <id>`, ctx)}`)
   for (const p of plans) for (const l of describePlan(p, ctx)) out('  ' + l)
   const todo = plans.filter(p => p.apply)
@@ -267,14 +300,19 @@ export function setupAgents ({ ctx = harnessContext(), dryRun = false, out = con
   }
   if (applied.length) out('New agent sessions get the autochat tools; restart running ones to pick them up.')
   else if (!failed.length && plans.some(p => p.action === 'none')) out('Nothing to change.')
-  else if (!failed.length && !plans.some(p => ['none', 'manual'].includes(p.action))) out('No agent harnesses found (Copilot CLI, Claude Code, Gemini CLI, opencode, Codex, pi).')
+  else if (!failed.length && !plans.some(p => ['none', 'manual'].includes(p.action))) out(`No agent harnesses found (${plans.map(p => p.name).join(', ')}).`)
   return { plans, applied, failed }
 }
 
-/** `autochat uninstall`: remove every registration, and say what's left to take out by hand. */
-export function removeAgents ({ ctx = harnessContext(), out = console.log } = {}) {
+/**
+ * `autochat uninstall`: remove every registration (`ids`: of these harnesses only, for
+ * `uninstall --agents`, which also says when there was nothing to remove), and say what's left to
+ * take out by hand.
+ */
+export function removeAgents ({ ctx = harnessContext(), ids = null, out = console.log } = {}) {
   const removed = []
-  for (const p of unplanAgents(ctx)) {
+  const plans = unplanAgents(ctx, { ids })
+  for (const p of plans) {
     if (p.action === 'manual') out(`${p.name}: ${p.reason}`)
     if (!p.apply) continue
     try {
@@ -286,5 +324,6 @@ export function removeAgents ({ ctx = harnessContext(), out = console.log } = {}
       out(`✘ ${p.id}: ${err.message}`)
     }
   }
+  if (ids && !plans.some(p => p.apply || p.action === 'manual')) out(`Nothing to remove: autochat isn't connected to ${plans.map(p => p.name).join(', ')}.`)
   return removed
 }
