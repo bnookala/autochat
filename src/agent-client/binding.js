@@ -1,0 +1,217 @@
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { spawnSync, execFile } from 'node:child_process'
+import { isValidSessionId } from '../paths.js'
+import { envVar } from '../env.js'
+
+// The session binding: which harness runs us (its process, its session id), the git facts for
+// the agent's hello and card, and the paths it touches (auto paths for `status`).
+
+export const HARNESSES = ['copilot', 'claude', 'codex', 'opencode', 'gemini', 'pi']
+
+const PACKAGE_HINTS = [
+  ['copilot', /@github\/copilot\b/],
+  ['claude', /@anthropic-ai\/claude-code\b|\/claude\/versions\//],
+  ['codex', /@openai\/codex\b/],
+  ['opencode', /\bopencode-ai\b/],
+  ['gemini', /@google\/gemini-cli\b/],
+  ['pi', /\bpi-coding-agent\b/]
+]
+const ENV_HINTS = [['claude', 'CLAUDECODE'], ['gemini', 'GEMINI_CLI'], ['opencode', 'OPENCODE'], ['codex', 'CODEX_SANDBOX'], ['codex', 'CODEX_MANAGED_BY_NPM']]
+const SESSION_ENV = {
+  copilot: ['COPILOT_AGENT_SESSION_ID'],
+  claude: ['CLAUDE_CODE_SESSION_ID', 'CLAUDE_SESSION_ID'],
+  codex: ['CODEX_SESSION_ID'],
+  opencode: ['OPENCODE_SESSION_ID'],
+  gemini: ['GEMINI_SESSION_ID'],
+  pi: ['PI_SESSION_ID']
+}
+
+/** Which harness a process command line belongs to, or null. */
+export function matchHarness (command) {
+  if (typeof command !== 'string') return null
+  for (const token of command.trim().split(/\s+/).slice(0, 3)) {
+    const base = path.basename(token).replace(/\.(?:c?js|mjs|exe)$/i, '').toLowerCase()
+    if (HARNESSES.includes(base)) return base
+  }
+  for (const [harness, re] of PACKAGE_HINTS) if (re.test(command)) return harness
+  return null
+}
+
+// pid → {ppid, command} for every process, from one `ps` call.
+export function psTable () {
+  if (process.platform === 'win32') return new Map()
+  const r = spawnSync('ps', ['-A', '-ww', '-o', 'pid=,ppid=,command='], { encoding: 'utf8', timeout: 3000, maxBuffer: 32 * 1024 * 1024 })
+  const table = new Map()
+  for (const line of (r.stdout || '').split('\n')) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line)
+    if (m) table.set(Number(m[1]), { ppid: Number(m[2]), command: m[3] })
+  }
+  return table
+}
+
+function ancestors (table, pid) {
+  const out = []
+  let p = table.get(pid)?.ppid
+  while (p && p > 1 && out.length < 16 && !out.some(a => a.pid === p)) {
+    const row = table.get(p)
+    if (!row) break
+    out.push({ pid: p, command: row.command })
+    p = row.ppid
+  }
+  return out
+}
+
+function processCwd (pid) {
+  try {
+    if (process.platform === 'linux') return fs.readlinkSync(`/proc/${pid}/cwd`)
+    if (process.platform === 'darwin') {
+      const r = spawnSync('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn'], { encoding: 'utf8', timeout: 3000 })
+      const line = (r.stdout || '').split('\n').find(l => l.startsWith('n'))
+      return line ? line.slice(1) : null
+    }
+  } catch {}
+  return null
+}
+
+function git (cwd, args) {
+  const r = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] })
+  return r.status === 0 ? r.stdout.replace(/\n$/, '') : null
+}
+
+function gitAsync (cwd, args) {
+  return new Promise((resolve) => {
+    execFile('git', ['-C', cwd, ...args], { encoding: 'utf8', timeout: 5000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => resolve(err ? null : stdout))
+  })
+}
+
+/** "owner/repo" from a git remote URL (https, ssh, scp-like), or null. */
+export function parseRemote (url) {
+  if (typeof url !== 'string' || !url.trim()) return null
+  const parts = url.trim().replace(/\/+$/, '').replace(/\.git$/, '').split(/[/:]/).filter(Boolean)
+  if (parts.length < 2) return null
+  const repo = parts.slice(-2).join('/')
+  return /^[\w.-]+\/[\w.-]+$/.test(repo) ? repo : null
+}
+
+/**
+ * Git facts for the agent's card. repo is `origin` as owner/repo (then any other remote, then
+ * `local/<repository directory>` for repos without remotes, so worktrees of one local repo
+ * still overlap). All null outside git.
+ */
+export function gitInfo (cwd) {
+  const top = git(cwd, ['rev-parse', '--show-toplevel'])
+  if (!top) return { top: null, repo: null, branch: null, worktree: null }
+  let repo = parseRemote(git(top, ['remote', 'get-url', 'origin']))
+  if (!repo) {
+    const first = (git(top, ['remote']) || '').split('\n').find(Boolean)
+    if (first) repo = parseRemote(git(top, ['remote', 'get-url', first]))
+  }
+  if (!repo) {
+    const common = git(top, ['rev-parse', '--git-common-dir'])
+    if (common) {
+      const dir = path.resolve(top, common)
+      const main = path.basename(dir) === '.git' ? path.dirname(dir) : dir
+      const name = path.basename(main).replace(/\.git$/, '').replace(/[^\w.-]+/g, '-')
+      if (name) repo = 'local/' + name
+    }
+  }
+  const branch = git(top, ['rev-parse', '--abbrev-ref', 'HEAD'])
+  return { top, repo, branch: branch && branch !== 'HEAD' ? branch : null, worktree: path.basename(top) }
+}
+
+/** The agent-hello line (docs/protocol.md, "Agent connection"): who the agent is and where it works. */
+export function agentHello ({ harness, pid, harnessPid = null, sessionId = null, cwd, git: g = gitInfo(cwd), env = process.env }) {
+  return {
+    type: 'agent-hello',
+    v: 1,
+    harness,
+    name: envVar('AGENT_NAME', env) || null,
+    pid,
+    harnessPid,
+    sessionId,
+    cwd,
+    repo: g.repo,
+    branch: g.branch,
+    worktree: g.worktree,
+    resume: null
+  }
+}
+
+/**
+ * Who we are: harness (--harness, else the nearest harness among our ancestor processes, else
+ * env hints, else "agent"), the harness pid, its session id when the env exposes one, and the
+ * git facts. Builds the agent-hello line.
+ */
+export function bindSession ({ harness: flag = null, env = process.env, cwd = process.cwd(), ps = psTable, pid = process.pid } = {}) {
+  let harness = flag ? String(flag).toLowerCase().replace(/[^a-z0-9-]+/g, '-').slice(0, 20) : null
+  let harnessPid = null
+  let chain = []
+  try { chain = ancestors(ps(), pid) } catch {}
+  for (const a of chain) {
+    const h = matchHarness(a.command)
+    if (h && (!harness || h === harness)) {
+      harness = harness || h
+      harnessPid = a.pid
+      break
+    }
+  }
+  if (!harness) harness = ENV_HINTS.find(([, k]) => env[k])?.[0] || 'agent'
+  const sessionId = (SESSION_ENV[harness] || []).map(k => env[k]).find(isValidSessionId) || null
+  // Some harnesses start MCP servers in $HOME or /: use the harness's own directory then.
+  if (harnessPid && (cwd === os.homedir() || cwd === '/')) cwd = processCwd(harnessPid) || cwd
+  const g = gitInfo(cwd)
+  return {
+    harness,
+    harnessPid,
+    sessionId,
+    cwd,
+    top: g.top,
+    hello: agentHello({ harness, pid, harnessPid, sessionId, cwd, git: g, env })
+  }
+}
+
+async function defaultBranchBase (top) {
+  const head = await gitAsync(top, ['rev-parse', '--abbrev-ref', 'HEAD'])
+  let base = (await gitAsync(top, ['rev-parse', '--abbrev-ref', 'origin/HEAD']))?.trim()
+  if (!base) {
+    for (const b of ['main', 'master', 'trunk']) {
+      if (await gitAsync(top, ['rev-parse', '--verify', '--quiet', 'refs/heads/' + b]) !== null) { base = b; break }
+    }
+  }
+  const branch = head?.trim()
+  if (!base || !branch || branch === 'HEAD' || base === branch || base === 'origin/' + branch) return null
+  return (await gitAsync(top, ['merge-base', 'HEAD', base]))?.trim() || null
+}
+
+/**
+ * Repo-relative paths this worktree touches: `git status --porcelain` (including untracked
+ * files and both sides of renames), plus what the branch changed since it forked from the
+ * default branch, so committing doesn't make an overlap disappear.
+ */
+export async function changedPaths (top) {
+  const out = []
+  const status = await gitAsync(top, ['status', '--porcelain=v1', '-z', '--untracked-files=normal'])
+  const parts = (status || '').split('\0')
+  for (let i = 0; i < parts.length; i++) {
+    const entry = parts[i]
+    if (entry.length < 4) continue
+    out.push(entry.slice(3))
+    if (/^[RC]/.test(entry)) out.push(parts[++i])
+  }
+  const base = await defaultBranchBase(top)
+  if (base) {
+    const diff = await gitAsync(top, ['diff', '--name-only', '-z', base])
+    out.push(...(diff || '').split('\0'))
+  }
+  return out.filter(Boolean)
+}
+
+export function repoRelative (p, cwd, top) {
+  if (typeof p !== 'string' || !p.trim()) return null
+  if (!top) return p
+  const rel = path.relative(top, path.resolve(cwd, p))
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null
+  return rel.split(path.sep).join('/')
+}
