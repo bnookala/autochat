@@ -154,6 +154,8 @@ a prompt). Rules:
 - `autochat setup --harness claude,codex [--dry-run]` installs exactly those (`all`: every adapter
   with hooks), showing each change first.
 - `autochat uninstall` runs every adapter's `unplanHooks()`, then removes the MCP registrations.
+  `autochat setup --agents` and `autochat uninstall --agents` take `--harness` the same way, for the
+  MCP registrations alone ([agents.md](agents.md#only-some-harnesses)).
 - `autochat doctor` shows `hookStatus()` per installed harness, and the trigger lists in effect.
   `hookStatus()` may add `disabledBy` (where the harness's hooks are switched off) and `note`
   (something doctor can't check, such as Codex's hook trust).
@@ -282,7 +284,7 @@ a session can only be found through the process table (Codex), which it then rem
 | --- | --- | --- | --- | --- |
 | Copilot CLI | `$COPILOT_HOME/hooks/autochat.json` (a file of our own) | `autopilot`, from `session-state/<id>/events.jsonl` | the session-state scan | `mcp-config.json` |
 | Claude Code | `$CLAUDE_CONFIG_DIR/settings.json`, merged ([below](#claude-code)) | `auto` (`permission_mode`); headless: `CLAUDE_CODE_SESSION_ATTENDED=0` | none needed: running sessions pick up new hooks, and `CLAUDE_PID` ends a session whose process is gone | `claude mcp add` |
-| Gemini CLI | not yet | | | `~/.gemini/settings.json` |
+| Gemini CLI | none, and none planned ([#36](https://github.com/bnookala/autochat/issues/36)) | | | `~/.gemini/settings.json`, opt-in: only with `--harness gemini` ([agents.md](agents.md#gemini-cli-is-opt-in)) |
 | opencode | a plugin of our own, `$XDG_CONFIG_HOME/opencode/plugin/autochat.js` ([below](#opencode)) | headless: `opencode run` (the plugin's `process.argv`), or a server's session that denies the question tool (`run --attach`); never the TUI; the agent is the mode | none yet: opencode processes started before setup don't have the plugin | `opencode.json`, and the etiquette file under `instructions` |
 | Codex | `$CODEX_HOME/hooks.json`, merged ([below](#codex)); Codex runs them once you trust them (`/hooks`) | `headless`: `codex exec`, from the session's rollout; `bypassPermissions` for approval policy `never` | none yet | `config.toml` |
 | pi | `$PI_CODING_AGENT_DIR/extensions/autochat.ts`, an extension of our own ([below](#pi)) | `headless`: print and json mode (`ctx.hasUI` is false) | none: pi reports nothing without the extension | the same extension |

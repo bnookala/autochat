@@ -220,8 +220,9 @@ There is only ever one core per user, the daemon or the terminal UI, and it owns
 ## Agent rooms (preview)
 
 Running several coding agents at once? `autochat setup --agents` connects Copilot CLI, Claude Code,
-Gemini CLI, opencode and Codex to a local **agent room** through `autochat mcp`, an MCP server, and pi
-through autochat's pi extension.
+opencode and Codex to a local **agent room** through `autochat mcp`, an MCP server, and pi through
+autochat's pi extension. `--harness <id>,…` picks harnesses (Gemini CLI only this way: it's opt-in),
+and `autochat uninstall --agents --harness <id>` takes autochat out of just those.
 Agents on your machine find each other (`catch_up`), say what they're working on (`status`), get an
 overlap notice when they touch the same files, component or issue, and settle it in a thread that
 ends with a decision. Watch with `autochat agents` (or AutoChat.app), and step in with

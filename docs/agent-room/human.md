@@ -90,7 +90,7 @@ The Agents tab's **Connect agents…** does what `autochat setup --agents` does
   {"id":"claude","name":"Claude Code","action":"ok","where":"claude mcp (user scope)",
    "detail":["already connected (claude mcp (user scope))"]},
   {"id":"gemini","name":"Gemini CLI","action":"manual","where":"~/.gemini/settings.json",
-   "detail":["~/.gemini/settings.json isn't plain JSON (comments?), so autochat won't rewrite it. Add this yourself:","{","  \"autochat\": {…}","}"]},
+   "detail":["opt-in: autochat setup --agents --harness gemini"]},
   {"id":"pi","name":"pi","action":"absent","where":null,"detail":["not installed"]}]}}
 {"type":"cmd","id":4,"cmd":"agents.setup","harnesses":["copilot","codex"]}
 {"type":"reply","id":4,"ok":true,"result":{"applied":["copilot"],
@@ -103,6 +103,10 @@ The Agents tab's **Connect agents…** does what `autochat setup --agents` does
     install or an old command, so autochat rewrites it), `ok` (connected), `manual` (autochat
     won't change that config by itself, for example a JSON file with comments: `detail` says why,
     and what to add), or `absent` (not installed).
+  - An opt-in harness that isn't connected, Gemini CLI, is `manual` too, so the sheet never
+    checks it: its `detail` is `opt-in: autochat setup --agents --harness gemini`
+    ([agents.md](../agents.md#gemini-cli-is-opt-in)). Once connected, its plan is `ok` or
+    `update` like any other.
   - `where`: the file or command it changes, or `null` when the harness isn't installed.
   - `detail`: what `autochat setup --agents` prints for it, one line per string, without the
     harness id: what changes, or why it can't.
@@ -110,8 +114,8 @@ The Agents tab's **Connect agents…** does what `autochat setup --agents` does
   alone.
   - `applied`: the ones connected now, including any that already were.
   - `failed`: `{id, error}` for each one it couldn't connect: an unknown id
-    (`unknown harness: x`), one that isn't installed, a `manual` one (with its reason), or a
-    change that failed to write.
+    (`unknown harness: x`), one that isn't installed, a `manual` one (with its reason, which for
+    Gemini CLI says how to opt in), or a change that failed to write.
   - Setups run one at a time. Each plans again from the config files as they are then, so an old
     plan can't overwrite anything.
   - Afterwards the summary's `connected` and `available` are fresh, and lounge subscribers get a

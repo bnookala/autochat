@@ -20,10 +20,12 @@ agent can join whether or not it's on autopilot.
 ## Setup
 
 ```sh
-autochat setup --agents --dry-run   # show what would change
-autochat setup --agents             # connect every agent harness you have installed
-autochat doctor                     # per harness: installed, connected, command still valid, etiquette
-autochat uninstall                  # removes the hooks and every registration
+autochat setup --agents --dry-run              # show what would change
+autochat setup --agents                        # connect the agent harnesses you have installed, but Gemini CLI
+autochat setup --agents --harness claude,codex # only these
+autochat doctor                                # per harness: installed, connected, command still valid, etiquette
+autochat uninstall --agents --harness gemini   # take autochat out of these, and nothing else
+autochat uninstall                             # removes the hooks and every registration
 ```
 
 Plain `autochat setup` asks "Also connect your agents? [Y/n]" at the end (only in a terminal).
@@ -38,7 +40,7 @@ Running it again changes nothing. Each registration runs the absolute path of no
 | --- | --- |
 | Copilot CLI | `~/.copilot/mcp-config.json` (`$COPILOT_HOME`): `mcpServers.autochat = {type: "local", command, args, tools: ["*"]}`. Nothing else can be set for its instructions ([Etiquette](#etiquette)) |
 | Claude Code | `claude mcp add --scope user autochat -- <node> <autochat.js> mcp --harness claude` (after `claude mcp get autochat`) |
-| Gemini CLI | `~/.gemini/settings.json`: `mcpServers.autochat = {command, args}` |
+| Gemini CLI | `~/.gemini/settings.json`: `mcpServers.autochat = {command, args}`, only with `--harness gemini` ([opt-in](#gemini-cli-is-opt-in)) |
 | opencode | `~/.config/opencode/opencode.json` (`$XDG_CONFIG_HOME`): `mcp.autochat = {type: "local", command: [...], enabled: true, timeout: 60000}`, and the etiquette in `~/.config/opencode/autochat.md`, a file of autochat's own, added to `instructions` ([opencode](#opencode)) |
 | Codex | `~/.codex/config.toml` (`$CODEX_HOME`): `[mcp_servers.autochat]` with `command` and `args` |
 | pi | `~/.pi/agent/extensions/autochat.ts` (`$PI_CODING_AGENT_DIR`): autochat's pi extension, with its agent room on. pi has no MCP, so the extension registers the tools itself ([below](#pi)) |
@@ -47,8 +49,11 @@ File edits keep your other entries, the file's indentation and (for TOML) its co
 written atomically, and keep a one-time backup next to the file (`<file>.autochat.bak`).
 `opencode.json` is edited as text, so every byte but autochat's two entries stays as it was. A JSON
 file with comments isn't rewritten: setup prints the entries to add yourself (for opencode, run
-setup again afterwards to write the etiquette file they list). Uninstall removes only what autochat
-added. Agent sessions that are already running pick up the tools when they restart.
+setup again afterwards to write the etiquette file they list). Uninstall undoes setup's edit: when
+nothing else in the file has changed since, it puts back the backup's exact bytes; otherwise it
+removes only autochat's entries, as text, so the rest keeps its layout, and a file that autochat
+made goes once nothing else is in it. Agent sessions that are already running pick up the tools
+when they restart.
 
 To try it without touching your harness config, give the harness the server for one session.
 For Copilot CLI, put this in a file, say `autochat-mcp.json` (with your own paths):
@@ -61,6 +66,25 @@ For Copilot CLI, put this in a file, say `autochat-mcp.json` (with your own path
 and run `copilot --additional-mcp-config @autochat-mcp.json --allow-all-mcp-server-instructions`.
 Claude Code takes the same JSON (without `type` and `tools`) with
 `claude --mcp-config autochat-mcp.json`.
+
+### Only some harnesses
+
+`--harness` takes harness ids, comma-separated or repeated, as `autochat setup --harness` does for
+hooks: `copilot`, `claude`, `gemini`, `opencode`, `codex` and `pi`, or `all` for every one of them,
+Gemini CLI included. `setup --agents --harness <ids>` shows and changes only those.
+`autochat uninstall --agents` removes the registrations and leaves the hooks alone; with `--harness`,
+it removes only those harnesses' registrations. An id that isn't a harness is an error that lists
+them, and changes nothing.
+
+### Gemini CLI is opt-in
+
+autochat has no Gemini CLI adapter (no hooks, so no lounge and no doorbell), and none is planned
+([#36](https://github.com/bnookala/autochat/issues/36)). So `setup --agents`, and the question at the
+end of plain `autochat setup`, leave Gemini CLI out, and `autochat doctor` doesn't suggest it. In
+AutoChat.app, **Connect agents…** lists it as `manual`, never checked, with the command that
+connects it: `autochat setup --agents --harness gemini`. Once it's connected, doctor says so, with
+the command that takes it out again: `autochat uninstall --agents --harness gemini`. Plain
+`autochat uninstall` removes it too.
 
 ## The MCP server: `autochat mcp`
 
