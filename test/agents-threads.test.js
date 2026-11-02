@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { sleep, agent, start, ok, texts } from './helpers/agents.js'
+import { sleep, agent, start, ok, texts, fake } from './helpers/agents.js'
 
 test('a question with `to` opens a thread automatically; thread open/resolve → sys + decision', async (t) => {
   const { room } = await start(t)
@@ -71,6 +71,49 @@ test('resolving a resolved thread is ok: the first outcome stands, with one deci
   assert.deepEqual(texts(msgs.filter(m => m.kind === 'decision')), ['One cache per repo.'])
   assert.equal(msgs.filter(m => m.kind === 'sys' && m.text.includes('resolved')).length, 1)
   assert.equal((await b.cmd('thread', { action: 'resolve', thread: 'nope-00' })).error, 'unknown thread: nope-00')
+  for (const x of [a, b]) x.close()
+})
+
+test('a longer outcome is cut at a word boundary, with "…", and the result says truncated, rather than refused', async (t) => {
+  const { room } = await start(t)
+  const a = await agent({ harness: 'copilot' })
+  const b = await agent({ harness: 'claude' })
+  const resolve = async (title, outcome) => {
+    const { thread } = ok(await a.cmd('thread', { action: 'open', title, with: ['claude-repo'] }))
+    return a.cmd('thread', { action: 'resolve', thread: thread.id, outcome })
+  }
+  // Up to 500 characters: as it is, without `truncated`.
+  const exact = 'word '.repeat(99) + 'last.'
+  assert.equal(exact.length, 500)
+  let r = ok(await resolve('exact', exact))
+  assert.deepEqual(Object.keys(r), ['thread', 'record'])
+  assert.equal(r.thread.outcome, exact)
+
+  // Longer: cut between words to at most 500 characters, "…" included, everywhere it shows.
+  const sentence = 'Refresh lives in the client, behind a lock. '
+  r = ok(await resolve('long', sentence.repeat(12)))
+  assert.deepEqual(Object.keys(r), ['thread', 'record', 'truncated'])
+  const cut = sentence.repeat(11) + 'Refresh lives…'
+  assert.deepEqual([r.truncated, r.thread.outcome], [true, cut])
+  assert.ok(Array.from(cut).length <= 500)
+  const decision = room.snapshot().messages.filter(m => m.kind === 'decision').at(-1)
+  assert.equal(decision.text, cut, 'the decision says the same')
+  assert.ok(r.record.includes('> ' + cut + '\n'), 'and so does its record')
+  assert.equal(ok(await b.cmd('read')).messages.find(m => m.kind === 'decision' && m.thread === r.thread.id).text, cut)
+
+  // One long word is cut where it has to be; however long it is, nothing fails.
+  r = ok(await resolve('one word', 'x'.repeat(600)))
+  assert.deepEqual([r.truncated, r.thread.outcome], [true, 'x'.repeat(499) + '…'])
+  r = ok(await resolve('huge', 'Ship it. '.repeat(2000)))
+  assert.deepEqual([r.truncated, r.thread.outcome], [true, 'Ship it. '.repeat(55) + 'Ship…'])
+
+  // A secret past the cut is still blocked, and bad outcomes still fail: the thread stays open.
+  const { thread } = ok(await a.cmd('thread', { action: 'open', title: 'still open', with: ['claude-repo'] }))
+  const bad = (outcome) => a.cmd('thread', { action: 'resolve', thread: thread.id, outcome })
+  assert.equal((await bad('word '.repeat(120) + fake('-----BEGIN OPENSSH ', 'PRIVATE KEY-----\nabc'))).error, 'blocked: looks like a secret (private key)')
+  assert.equal((await bad(42)).error, 'outcome must be a string')
+  assert.equal((await bad(' \n ')).error, 'outcome is empty')
+  assert.equal(room.threads.get(thread.id).status, 'open')
   for (const x of [a, b]) x.close()
 })
 

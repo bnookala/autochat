@@ -1,4 +1,4 @@
-import { sanitize, charCount } from '../text.js'
+import { sanitize, sanitizeMultiline, charCount } from '../text.js'
 import { fail, hex, isStr, label, opt } from './limits.js'
 import { overlapOn } from './overlap.js'
 
@@ -15,17 +15,22 @@ function threadSlug (title) {
   return slug || 'thread'
 }
 
+// The text cut at a word boundary to at most `max` characters, with "…" when cut.
+function cutAtWord (text, max) {
+  const chars = Array.from(text)
+  if (chars.length <= max) return text
+  const head = chars.slice(0, max - 1).join('')
+  const words = /\s/.test(chars[max - 1]) ? head : head.replace(/\s+\S*$/, '')
+  return (words.trim() ? words : head).replace(/[\s,;:.-]+$/, '') + '…'
+}
+
 // The title of a thread a question opens: its first sentence (or line), cut at a word boundary
 // to at most `max` characters, with "…" when cut.
 function firstSentence (text, max = 60) {
   const line = sanitize(text.split('\n').find(l => l.trim()) || text, Infinity)
   const end = line.search(/[.?!](?=\s|$)|[。？！]/)
   const sentence = (end === -1 ? line : line.slice(0, end + 1)).replace(/[\s.]+$/, '') || line
-  const chars = Array.from(sentence)
-  if (chars.length <= max) return sentence
-  const head = chars.slice(0, max - 1).join('')
-  const words = /\s/.test(chars[max - 1]) ? head : head.replace(/\s+\S*$/, '')
-  return (words.trim() ? words : head).replace(/[\s,;:.-]+$/, '') + '…'
+  return cutAtWord(sentence, max)
 }
 
 export const methods = {
@@ -46,7 +51,7 @@ export const methods = {
         const t = this.threads.get(msg.thread)
         // Two agents resolving the same thread: the first outcome stands.
         if (t.status !== 'open') return { thread: this._threadView(t), alreadyResolved: true, record: this._record(t) }
-        const outcome = this._text(msg.outcome, this.limits.outcome, 'outcome')
+        const { outcome, truncated } = this._outcome(msg.outcome)
         const owner = this._owner(agent, msg.owner)
         const next = this._nextSteps(msg.next)
         t.status = 'resolved'
@@ -60,13 +65,29 @@ export const methods = {
         this._sys(`🧵 ${agent.name} resolved “${t.title}”`)
         // The `post` hook below makes it the thread's decision.
         this._append({ kind: 'decision', from: this._from(agent), thread: t.id, text: outcome }, { author: agent.id })
-        return { thread: this._threadView(t), record: this._record(t) }
+        return { thread: this._threadView(t), record: this._record(t), ...(truncated && { truncated: true }) }
       }
       case 'list':
         return { threads: this._threadList() }
       default:
         fail('action must be open, resolve or list')
     }
+  },
+
+  // A resolve's outcome, ≤ 500 characters. A longer one is cut at a word boundary, with "…",
+  // rather than refused: agents overshoot, and a refusal costs them a turn. The secret scan sees
+  // all of it, so a secret the cut goes through is still blocked.
+  _outcome (value) {
+    const max = this.limits.outcome
+    if (!isStr(value)) fail('outcome must be a string')
+    // Only the start can make it in: escape sequences make raw text longer than the result, but
+    // not by this much (guardrails.js's _text).
+    const raw = value.slice(0, max * 4 + 256).replace(/[\ud800-\udbff]$/, '')
+    const text = sanitizeMultiline(raw)
+    if (!text) fail('outcome is empty')
+    this._scan(text)
+    const outcome = cutAtWord(text, max)
+    return { outcome, truncated: outcome !== text || raw.length < value.length }
   },
 
   // The title of the thread a question opens: `title` (≤ 80 characters) or its first sentence.
