@@ -55,7 +55,7 @@ test('agents.say to agents that left: when everyone named has left, it goes to t
   assert.deepEqual(Object.keys(r), ['message', 'rerouted'])
   assert.deepEqual([r.rerouted, r.message.kind, r.message.intervention, r.message.thread, r.message.to], ['main', 'human', true, null, ['claude-repo']])
   assert.deepEqual(texts(ok(await a.cmd('read')).messages), ['keep it small', 'hand over your notes'], 'every agent still here gets it')
-  assert.equal(room.threads.get(thread.id).count, 1, 'the thread has only the first')
+  assert.deepEqual(texts(ok(await a.cmd('read', { thread: thread.id })).messages), ['🧵 copilot-repo opened “parser” with claude-repo', 'keep it small'], 'the thread has only the first')
   assert.equal((await human.cmd('agents.say', { text: 'x', to: ['claude-repo', 'ghost'] })).error, 'unknown agent: ghost')
   human.close()
   a.close()

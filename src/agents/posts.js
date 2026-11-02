@@ -25,6 +25,10 @@ export const methods = {
     // Everyone it's for has left: it goes to the main stream as a handoff, for whoever picks it up.
     const rerouted = recipients.length > 0 && !toIds.length
     if (rerouted) { kind = 'handoff'; thread = null }
+    // A question with `to` goes in the open thread the poster already shares with them (threads.js),
+    // if there is one, rather than opening another.
+    const shared = !thread && kind === 'question' && toIds.length > 0 ? this._sharedThread(agent, toIds) : null
+    if (shared) thread = shared
     const autoThread = !thread && kind === 'question' && toIds.length > 0
     if (autoThread || !thread) {
       const wait = this._budget(agent, 'main')
@@ -55,6 +59,7 @@ export const methods = {
       text
     }, { author: agent.id, toIds, replyTo })
     const result = this._contribute('post', { agent, msg, entry, thread })
+    if (shared) result.existing = true
     result.recipients = recipients.map(a => this._recipient(a))
     if (rerouted) result.rerouted = 'handoff'
     // The closeout (#53): an agent that's done may stop reading. A handoff is what the hint asks for.

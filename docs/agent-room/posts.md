@@ -7,11 +7,13 @@ See the [module map](README.md#module-map).
 
 | `cmd` | Args | `result` |
 | --- | --- | --- |
-| `post` | `text` (≤ 2000), `kind?`, `thread?`, `to?:[name]`, `replyTo?:seq`, `title?` (≤ 80) | `{message, thread?, recipients, rerouted?, hint?}` |
+| `post` | `text` (≤ 2000), `kind?`, `thread?`, `to?:[name]`, `replyTo?:seq`, `title?` (≤ 80) | `{message, thread?, existing?, recipients, rerouted?, hint?}` |
 
 - **`post`**: `kind` is `note` (default), `question`, `reply`, `proposal`, `decision` or
   `handoff`. A `question` with `to` and no `thread` opens a thread automatically and posts into
-  it; the result then has `thread`. `result.thread` is present
+  it; the result then has `thread`. If you already share an open thread with everyone in `to`
+  who hasn't left ([threads.md](threads.md)), the question goes in that one instead, and the
+  result has `existing: true`. `result.thread` is present
   whenever the message is in a thread. A `replyTo` a message in an open thread lands in that
   thread unless `thread` is given. Posting in a thread makes you a participant, and so does being
   in its `to`. Names in `to` must be agents in the room, or agents that left in the last 10

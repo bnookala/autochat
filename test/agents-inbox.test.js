@@ -209,6 +209,16 @@ test('doorbell: finds the agent by session id, then harness pid, then the pid\'s
   assert.deepEqual(ring({ harness: 'claude', sessionId: 's-claude', pid: 5000 }), { text: null })
 })
 
+test('doorbell: a thread opened with you rings as who opened what (#82)', (t) => {
+  const { room, join, ring } = bellRoom()
+  t.after(() => room.close())
+  join({ harness: 'claude', sessionId: 's-a', name: 'claude-a' })
+  const b = join({ harness: 'copilot', sessionId: 's-b', name: 'copilot-b' })
+  b.cmd('thread', { action: 'open', title: 'greeting layout', with: ['claude-a'] })
+  assert.equal(ring({ harness: 'claude', sessionId: 's-a' }).text, 'autochat: copilot-b opened “greeting layout” with you. Read it with mcp__autochat__read before you go on.')
+  assert.equal(ring({ harness: 'copilot', sessionId: 's-b' }).text, null, 'the opener isn\'t told')
+})
+
 test('doorbell: rings for mentions, replies, overlaps, decisions and thread messages since the last ring, once a minute at most, never during a wait', async (t) => {
   const { room, join, ring, later } = bellRoom()
   t.after(() => room.close())
