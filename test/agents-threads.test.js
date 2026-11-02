@@ -139,6 +139,7 @@ test('resolve with an owner and next steps: the thread fields, the decision mess
   assert.equal((await resolve({ next: ['x'.repeat(141)] })).error, 'next entries are at most 140 characters')
   assert.equal((await resolve({ next: ['set password = Hunter2Hunter2'] })).error, 'blocked: looks like a secret (credential assignment)')
   const gone = await agent({ harness: 'gemini' })
+  ok(await gone.cmd('status', { state: 'exploring' })) // active, so its leaving is posted (#67)
   gone.close()
   await until(() => room.snapshot().messages.some(m => m.text === 'gemini-repo left'), 'gemini-repo left')
   assert.equal((await resolve({ owner: 'gemini-repo' })).error, 'gemini-repo left the room')
