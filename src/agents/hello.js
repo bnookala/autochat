@@ -61,7 +61,6 @@ export const methods = {
     }
     agent.peer = peer
     agent.present = true
-    this.everConnected = true
     peer.send({
       type: 'agent-welcome',
       v: AGENT_PROTOCOL,

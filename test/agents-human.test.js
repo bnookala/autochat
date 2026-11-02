@@ -121,11 +121,15 @@ test('lounge summary: never null; connected (ok, update) and available (add) fro
   b.close()
   await until(() => room.summary().present === 1)
   assert.deepEqual([room.summary().present, room.summary().active], [1, 1], 'an agent that dropped is neither present nor active')
-  assert.equal(fake.calls.plan, 1, 'every summary within a minute is cached')
+  assert.equal(fake.calls.plan, 1, 'every summary within 15 minutes is cached')
   a.close()
 })
 
-test('lounge summary: refreshed at most once a minute, in the background, and the newest plan wins', async (t) => {
+// A plan can start `autochat mcp` (Claude Code's `claude mcp get autochat` checks it), so the
+// summary refreshes only every 15 minutes; agents.setupPlan and agents.setup plan when asked.
+const REFRESH = 15 * 60_000
+
+test('lounge summary: refreshed at most every 15 minutes, in the background, and the newest plan wins', async (t) => {
   let clock = 1_000_000
   const fake = fakeHarnesses({ hold: true })
   const logged = []
@@ -133,19 +137,22 @@ test('lounge summary: refreshed at most once a minute, in the background, and th
   room.on('error-log', (err) => logged.push(err.message))
   assert.equal(fake.pending.length, 1)
   for (let i = 0; i < 5; i++) room.summary()
-  assert.equal(fake.calls.plan, 1, 'one plan a minute, even while it runs')
+  assert.equal(fake.calls.plan, 1, 'one plan at a time, even while it runs')
   assert.deepEqual(room.summary().available, [], 'the snapshot never waits for the plan')
   let change = changed(room)
   fake.pending.shift().resolve(fake.now())
   await change
   assert.deepEqual([room.summary().connected, room.summary().available], [['claude', 'opencode'], ['copilot', 'codex']])
 
-  clock += 59_999
+  clock += 60_000
   room.summary()
-  assert.equal(fake.calls.plan, 1, 'not yet a minute old')
+  assert.equal(fake.calls.plan, 1, 'a minute old: not refreshed any more')
+  clock += REFRESH - 60_000 - 1
+  room.summary()
+  assert.equal(fake.calls.plan, 1, 'not yet 15 minutes old')
   clock += 1
   const s = room.summary()
-  assert.equal(fake.calls.plan, 2, 'a minute old: a new plan, in the background')
+  assert.equal(fake.calls.plan, 2, '15 minutes old: a new plan, in the background')
   assert.deepEqual(s.connected, ['claude', 'opencode'], 'meanwhile, the last plan, at once')
   fake.plans.find(p => p.id === 'codex').action = 'none'
   change = changed(room)
@@ -153,17 +160,20 @@ test('lounge summary: refreshed at most once a minute, in the background, and th
   await change
   assert.deepEqual([room.summary().connected, room.summary().available], [['claude', 'opencode', 'codex'], ['copilot']])
 
-  // A plan that fails keeps the lists, is logged, and isn't retried before another minute.
-  clock += 60_000
+  // A plan that fails keeps the lists, is logged, and isn't retried for another 15 minutes.
+  clock += REFRESH
   room.summary()
   fake.pending.shift().reject(new Error('the harness check exited (1)'))
   await until(() => logged.length > 0)
   assert.deepEqual(logged, ['the harness check exited (1)'])
   assert.deepEqual(room.summary().connected, ['claude', 'opencode', 'codex'])
   assert.equal(fake.calls.plan, 3)
+  clock += REFRESH - 1
+  room.summary()
+  assert.equal(fake.calls.plan, 3)
 
   // A refresh that started before agents.setupPlan finished doesn't overwrite it.
-  clock += 60_000
+  clock += 1
   room.summary()
   const stale = fake.pending.shift()
   const human = await subscribe()
@@ -241,7 +251,7 @@ test('agents.setup: one at a time, and a refresh from before it can\'t undo it',
   const { room } = await start(t, { harnesses: fake, now: () => clock })
   fake.pending.shift().resolve(fake.now())
   await changed(room)
-  clock += 60_000
+  clock += REFRESH
   room.summary()
   const stale = fake.pending.shift()
   const order = []
