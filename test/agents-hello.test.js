@@ -25,11 +25,13 @@ test('hello → welcome; default names, dedupe, overrides, and refusals', async 
   assert.equal(c.welcome.agent.title, 'My Web_App')
   const d = await named({ name: 'Reviewer Bot!!' })
   assert.equal(d.name, 'reviewer-bot')
-  // maxAgents counts active agents (board.md): once all four have spoken, a fifth is refused.
+  // maxAgents counts active agents (board.md): once all four have spoken, a fifth gets in, idle,
+  // and its first post is refused.
   for (const x of [a, b, c, d]) ok(await x.cmd('post', { text: 'here' }))
   const e = await named()
-  assert.deepEqual(e.welcome, { type: 'error', v: 1, error: 'too many agents' })
-  await e.closed
+  assert.equal(e.welcome.type, 'agent-welcome')
+  assert.equal((await e.cmd('post', { text: 'me too' })).error, 'too many agents')
+  ok(await e.cmd('bye'))
   const f = client()
   f.send({ ...HELLO, v: 2 })
   assert.deepEqual(await f.next(), { type: 'error', v: 1, error: 'unsupported protocol version' })
@@ -152,6 +154,8 @@ test('status: title and parent; a child names the agent that started it', async 
   const lead = await named({ title: 'P1 coordinator', branch: 'main' })
   const kid = await named({ title: 'Names and scale', branch: 'p1/66-names' })
   const grandkid = await named({ title: 'Docs pass', branch: 'p1/66-names' })
+  // Active agents: their names stay (an idle agent's follows its title, below).
+  for (const x of [lead, kid, grandkid]) ok(await x.cmd('status', { summary: 'on it' }))
   // title: up to 80, ids stripped; "" restores the default; null changes nothing.
   let card = ok(await kid.cmd('status', { title: 'Readable agent names' })).card
   assert.deepEqual([card.title, card.display, card.name], ['Readable agent names', 'Readable agent names', 'names-and-scale'], 'the name stays: rename with status({name})')
@@ -181,4 +185,47 @@ test('status: title and parent; a child names the agent that started it', async 
   ok(await grandkid.cmd('status', { parent: 'names-and-scale' }))
   assert.equal(ok(await grandkid.cmd('status', { parent: null })).card.parent, null)
   for (const x of [kid, grandkid]) x.close()
+})
+
+test('an idle agent\'s name follows a title that comes later, until it speaks, picks a name, or is mentioned (#83)', async (t) => {
+  const { room } = await start(t, { limits: { statusGapMs: 0 } })
+  // Copilot names a session after its first prompt, so its hello has no title yet.
+  const a = await named()
+  assert.equal(a.name, 'repo-feat-x')
+  ok(await a.cmd('catchUp'))
+  // Its first status brings the title: it joins under the new name, without a rename line.
+  let card = ok(await a.cmd('status', { title: 'Fix the login page', summary: 'login' })).card
+  assert.deepEqual([card.name, card.title, card.active], ['fix-the-login-page', 'Fix the login page', true])
+  const lines = room.snapshot().messages.map(m => m.text)
+  assert.ok(lines.includes('fix-the-login-page joined'))
+  assert.ok(!lines.some(l => l.includes(' is now ')), 'silent')
+  // Active: the name stays.
+  assert.equal(ok(await a.cmd('status', { title: 'Fix the signup page' })).card.name, 'fix-the-login-page')
+
+  // A resume's hello can bring the title too: the welcome has the new name.
+  const b = await named({ harness: 'claude', branch: 'b' })
+  assert.equal(b.name, 'repo-b')
+  const b2 = await named({ harness: 'claude', branch: 'b', resume: b.welcome.resume, title: 'Docs pass' })
+  assert.deepEqual([b2.welcome.agent.id, b2.welcome.agent.name], [b.welcome.agent.id, 'docs-pass'])
+  // A title whose name is taken gets the usual suffix. Reading doesn't make an agent active.
+  const c = await named({ harness: 'codex', branch: 'c' })
+  ok(await c.cmd('read'))
+  ok(await c.cmd('paths', { paths: ['src/login.js'] }))
+  const c2 = await named({ harness: 'codex', branch: 'c', resume: c.welcome.resume, title: 'Docs pass' })
+  assert.equal(c2.welcome.agent.name, 'docs-pass-c')
+
+  // A chosen name stays: the hello's, or status({name}).
+  const d = await agent({ harness: 'gemini', name: 'reviewer' })
+  assert.equal(ok(await d.cmd('status', { title: 'Review the PR' })).card.name, 'reviewer')
+  const e = await named({ harness: 'pi', branch: 'e' })
+  assert.equal(ok(await e.cmd('status', { name: 'docs-bot', title: 'Docs' })).card.name, 'docs-bot')
+
+  // Mentioned while idle, in `to` or with @name: others know it by that name, so it stays.
+  const f = await named({ harness: 'opencode', branch: 'f' })
+  const g = await named({ harness: 'opencode', branch: 'g' })
+  ok(await a.cmd('post', { text: 'can you look at the login form?', to: ['repo-f'] }))
+  ok(await a.cmd('post', { text: 'thanks @repo-g' }))
+  assert.equal(ok(await f.cmd('status', { title: 'Login form' })).card.name, 'repo-f')
+  assert.equal(ok(await g.cmd('status', { title: 'Signup form' })).card.name, 'repo-g')
+  for (const x of [a, b2, c2, d, e, f, g]) x.close()
 })

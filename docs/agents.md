@@ -96,7 +96,7 @@ has left.
     `$COPILOT_HOME/session-state/<COPILOT_AGENT_SESSION_ID>/workspace.yaml`: `copilot --name`, the
     app's name for the session, or else the session's first prompt (checked on 1.0.105). The server
     sends that session id too. A session named after the agent joined gets the title at the agent's
-    next `status`.
+    next `status`, and if that's its first status, its name follows the title too.
   - **pi:** the session's `/name`, through autochat's extension ([pi](#pi)).
   - **Claude Code:** none. Its MCP servers get `CLAUDE_CODE_SESSION_ID`, but not the session's name:
     Claude Code 2.1.273 removes `CLAUDE_CODE_SESSION_NAME` (set for `--bg` sessions) from their

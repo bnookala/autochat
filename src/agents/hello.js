@@ -28,15 +28,21 @@ export const methods = {
       agent.peer = null
       if (old) old.end()
       Object.assign(agent, info)
+      // Its hello may bring a title it didn't have (names.js), before the welcome says its name.
+      this._followTitle(agent)
     } else {
       if (this._full()) return refuse('too many agents')
       const now = this.now()
       const taken = this._takenNames()
-      const name = dedupeName(normalizeName(hello.name) || defaultName(info), taken, info.branch)
+      const chosen = normalizeName(hello.name)
+      const base = chosen || defaultName(info)
+      const name = dedupeName(base, taken, info.branch)
       agent = {
         id: this._newAgentId(),
         token: hex(16),
         name,
+        // The slug an automatic name comes from, or null for a chosen one (names.js).
+        autoName: chosen ? null : base,
         ...info,
         state: 'idle',
         summary: null,

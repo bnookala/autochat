@@ -20,7 +20,8 @@ The daemon replies:
 ```
 
 or refuses with one line and closes: `{"type":"error","v":1,"error":…}`, where `error` is
-`too many agents` (32 active agents, or 256 idle ones: [board.md](board.md#active-and-idle-agents)),
+`too many agents` (256 idle connections; the cap of 32 active agents applies later, when an agent
+would become active: [board.md](board.md#active-and-idle-agents)),
 or `unsupported protocol version` (`v` must be `1` or omitted). Malformed hello fields are dropped
 (`null`) rather than refused; `repo` must look like `owner/repo`.
 

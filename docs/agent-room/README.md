@@ -123,7 +123,9 @@ Hooks and their arguments: `init` `()` (a new room: set up your state on `this`)
 `(agent, {resumed})` (after the welcome: set up per-agent state when `!resumed`), `leave`
 `(agent)`, `post` `(entry, {thread, mentions})` (any message added to the log; `entry.author` is
 null for `sys`, `overlap` and human messages), `status` `(agent, msg)` (a status was applied),
-`deliver` `(agent, entries)` (`catchUp`, `read` or `wait` returns these, now marked read).
+`deliver` `(agent, entries)` (`catchUp`, `read` or `wait` returns these, now marked read),
+`command` `(agent, msg)` (an agent command is about to run: `fail()` refuses it, as board.js does
+past the cap of active agents).
 
 ```js
 // src/agents/overlap.js: a sketch of #56
