@@ -7,8 +7,10 @@ import { AGENT_PROTOCOL, TIER, fail, isStr, label } from './limits.js'
 // Connect agents: the daemon passes `harnesses` ({planAgents, setupAgents}, src/harness-jobs.js).
 // Their plans carry src/harness/index.js's actions; the protocol says `ok` for `none`.
 const SETUP_ACTIONS = new Map([['add', 'add'], ['update', 'update'], ['none', 'ok'], ['manual', 'manual'], ['absent', 'absent']])
-// How old the summary's `connected` and `available` may get while someone reads it.
-const HARNESS_REFRESH_MS = 60000
+// How old the summary's `connected` and `available` may get while someone reads it. A plan can
+// start a process or two (`claude mcp get autochat` starts `autochat mcp` to check it), so the
+// room plans when it starts and on Connect agents' own commands, and otherwise rarely.
+const HARNESS_REFRESH_MS = 15 * 60 * 1000
 const MAX_HARNESSES = 16
 const UNAVAILABLE = 'connecting agents needs the autochat daemon'
 
@@ -28,7 +30,7 @@ export const methods = {
   },
 
   // For the lounge `state` snapshot. It never waits: `connected` and `available` are the last
-  // plan's, and a plan a minute old starts a new one in the background.
+  // plan's, and a plan 15 minutes old starts a new one in the background.
   summary () {
     let open = 0
     for (const t of this.threads.values()) if (t.status === 'open') open++
@@ -142,8 +144,8 @@ export const methods = {
     this._changed()
   },
 
-  // A plan counts from when it starts, and gives up long before a minute (src/harness-jobs.js),
-  // so background plans never overlap.
+  // A plan counts from when it starts, and gives up after 15 s (src/harness-jobs.js), so
+  // background plans never overlap.
   _refreshHarnesses () {
     if (!this.harnesses || this.closed || this.now() - this.harnessPlan.checkedAt < HARNESS_REFRESH_MS) return
     this._planHarnesses().catch((err) => this.emit('error-log', err))

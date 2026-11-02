@@ -74,7 +74,6 @@ export class AgentRoom extends EventEmitter {
     this.log = []
     this.bySeq = new Map()
     this.seq = 0
-    this.everConnected = false
     this.closed = false
     // Module state: tokens (hello.js), formerNames (names.js), pairs (overlap.js), threads (threads.js).
     this._hook('init')

@@ -66,11 +66,13 @@ It's never `null` while the daemon hosts the room, even before any agent connect
 `null` in the terminal UI. Older daemons sent only `present` and `openThreads`, and `null` until an
 agent had connected.
 
-`connected` and `available` come from the last plan, which is at most a minute old while anyone
-reads the snapshot: building a snapshot when the plan is older starts a new one in the
-background, and the snapshot never waits for it. The daemon also plans when it starts, and
-`agents.setupPlan` and `agents.setup` plan as well; the newest plan wins. When the lists change,
-lounge subscribers get a new snapshot. A plan that fails keeps the last lists.
+`connected` and `available` come from the last plan. The daemon plans when it starts, and
+`agents.setupPlan` and `agents.setup` plan whenever they're asked; the newest plan wins. Otherwise
+the plan is refreshed in the background, at most every 15 minutes: building a snapshot when the
+plan is older starts a new one, and the snapshot never waits for it. Plans aren't free: with Claude
+Code installed, each one runs `claude mcp get autochat`, which starts an `autochat mcp` process to
+check it. When the lists change, lounge subscribers get a new snapshot. A plan that fails keeps
+the last lists.
 
 ## Connect agents
 
