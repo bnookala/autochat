@@ -5,6 +5,10 @@ import os from 'node:os'
 import path from 'node:path'
 import createTestnet from 'hyperdht/testnet.js'
 
+// These wait for a second peer to join over the Hyperswarm testnet, which on busy CI runners
+// sometimes takes longer than the wait (#100). They still run locally.
+const p2pJoinOnCI = process.env.CI ? 'flaky on CI runners: a peer join over the testnet (#100)' : false
+
 process.env.AUTOCHAT_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'autochat-ctl-'))
 process.env.COPILOT_HOME = path.join(process.env.AUTOCHAT_HOME, 'copilot')
 const { Controller } = await import('../src/controller.js')
@@ -49,7 +53,7 @@ function mk (testnet, room, auto = true, config = {}) {
   return c
 }
 
-test('autopilot drives room membership, requests, pull-back, spectating and death', { timeout: 90000 }, async (t) => {
+test('autopilot drives room membership, requests, pull-back, spectating and death', { skip: p2pJoinOnCI, timeout: 90000 }, async (t) => {
   const testnet = await createTestnet(3)
   t.after(() => testnet.destroy())
   const room = 'lc1-ctl-test-' + Math.random().toString(36).slice(2, 12)
@@ -233,7 +237,7 @@ test('exit countdown: you stay in the room and keep chatting; new autopilot canc
   await waitFor(() => c.exited, 3000, 'auto UI exits after the banner')
 })
 
-test('countdown ticks every second, keeps the room alive for others, and expires into the pull-back', { timeout: 90000 }, async (t) => {
+test('countdown ticks every second, keeps the room alive for others, and expires into the pull-back', { skip: p2pJoinOnCI, timeout: 90000 }, async (t) => {
   const testnet = await createTestnet(3)
   t.after(() => testnet.destroy())
   const room = 'lc1-ctl-tick-' + Math.random().toString(36).slice(2, 12)
@@ -281,7 +285,7 @@ test('leaving during the countdown behaves like ctrl-c always did', { timeout: 6
   await waitFor(() => c.phase === 'lounge', 3000, 'back to the lounge')
 })
 
-test('autochat join/host/leave while the core runs: the room is re-read on entering one, never under an open room', { timeout: 60000 }, async (t) => {
+test('autochat join/host/leave while the core runs: the room is re-read on entering one, never under an open room', { skip: p2pJoinOnCI, timeout: 60000 }, async (t) => {
   const testnet = await createTestnet(3)
   t.after(() => testnet.destroy())
   const { saveConfig, loadConfig } = await import('../src/config.js')

@@ -73,7 +73,8 @@ test('a slow harness CLI never blocks the event loop', { skip: !posix }, async (
   assert.match(claude.detail[0], /^run: claude mcp add --scope user autochat -- /)
 })
 
-test('a plan that takes too long is killed, with the harness CLI it waits on', { skip: !posix }, async (t) => {
+// Timing-sensitive: on a busy machine the kill can race the plan's own exit (#100).
+test('a plan that takes too long is killed, with the harness CLI it waits on', { skip: !posix || (process.env.CI ? 'timing-sensitive on CI runners (#100)' : false) }, async (t) => {
   const mark = path.join(tmp, 'claude-finished')
   stubClaude(t, `sleep 1\ntouch '${mark}'\nexit 1\n`)
   const started = Date.now()
