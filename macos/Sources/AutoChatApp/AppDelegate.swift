@@ -46,6 +46,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             quit: { NSApp.terminate(nil) }
         ))
         panel = StatusPanelController(model: model, anchor: { [weak self] in self?.statusItem.anchorRect }, openChat: { [weak self] in self?.openChat() })
+        // Shown only while the chat is open (the app is regular then), but its key equivalents
+        // (⌘C, ⌘V, ⌘W…) work in the chat either way.
+        NSApp.mainMenu = MainMenu.make()
         model.start()
     }
 
