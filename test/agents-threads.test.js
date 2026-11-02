@@ -30,10 +30,7 @@ test('a question with `to` opens a thread automatically; thread open/resolve →
   // Anyone can read a whole thread.
   assert.deepEqual(texts(ok(await c.cmd('read', { thread: thread.id })).messages), [message.text, 'client, behind a lock', 'agree'])
 
-  // Explicit open, with names; then resolve → main-stream sys + a decision in the thread.
-  const opened = ok(await b.cmd('thread', { action: 'open', title: 'cache layout', with: ['copilot-repo'] }))
-  assert.equal(opened.thread.opener, 'claude-repo')
-  assert.equal(room.snapshot().messages.at(-1).text, '🧵 claude-repo opened “cache layout” with copilot-repo')
+  // Resolve → main-stream sys + a decision in the thread.
   const resolved = ok(await a.cmd('thread', { action: 'resolve', thread: thread.id, outcome: 'Refresh lives in the client, behind a lock.' }))
   assert.equal(resolved.thread.status, 'resolved')
   assert.equal(resolved.thread.outcome, 'Refresh lives in the client, behind a lock.')
@@ -42,6 +39,10 @@ test('a question with `to` opens a thread automatically; thread open/resolve →
   assert.deepEqual([decision.kind, decision.thread, decision.text, decision.from.name], ['decision', thread.id, 'Refresh lives in the client, behind a lock.', 'copilot-repo'])
   // Decisions are in everyone's inbox, and in catchUp.
   assert.deepEqual(texts(ok(await c.cmd('read')).messages), [decision.text])
+  // Explicit open, with names (they share no open thread any more): advertised on the main stream.
+  const opened = ok(await b.cmd('thread', { action: 'open', title: 'cache layout', with: ['copilot-repo'] }))
+  assert.equal(opened.thread.opener, 'claude-repo')
+  assert.equal(room.snapshot().messages.filter(m => m.thread === null).at(-1).text, '🧵 claude-repo opened “cache layout” with copilot-repo')
   const caught = ok(await b.cmd('catchUp'))
   assert.deepEqual(texts(caught.inbox), ['agree', decision.text])
   assert.deepEqual(caught.threads.map(x => [x.title, x.status]), [['cache layout', 'open'], ['Should token refresh live in src/auth.js or the client?', 'resolved']])
@@ -150,11 +151,87 @@ test('open with agents that left: the thread opens with the ones still here, and
   for (const x of [a, b]) x.close()
 })
 
+test('opening a thread with agents tells them: its first message is addressed to them, in their inbox', async (t) => {
+  const { room } = await start(t)
+  const a = await agent({ harness: 'copilot' })
+  const b = await agent({ harness: 'claude' })
+  const c = await agent({ harness: 'codex' })
+  const d = await agent({ harness: 'gemini' })
+  const { thread } = ok(await a.cmd('thread', { action: 'open', title: 'cache layout', with: ['claude-repo', 'codex-repo'] }))
+  assert.equal(thread.messages, 1)
+  // The main stream still advertises it; the thread's first message is for the agents invited.
+  const notice = '🧵 copilot-repo opened “cache layout” with claude-repo, codex-repo'
+  assert.deepEqual(room.snapshot().messages.slice(-2).map(m => [m.kind, m.from, m.thread, m.to, m.text]), [
+    ['sys', null, null, [], notice],
+    ['sys', null, thread.id, ['claude-repo', 'codex-repo'], notice]
+  ])
+  const r = await b.cmd('read')
+  assert.deepEqual(r.inbox, { unread: 0, mentions: 0 })
+  assert.deepEqual(ok(r).messages.map(m => [m.kind, m.thread, m.text]), [['sys', thread.id, notice]])
+  assert.deepEqual((await c.cmd('catchUp')).result.inbox.map(m => m.text), [notice])
+  assert.deepEqual(ok(await a.cmd('read')).messages, [], 'not the opener')
+  assert.deepEqual(ok(await d.cmd('read')).messages, [], 'nor anyone else')
+  assert.equal(ok(await d.cmd('read', { thread: thread.id })).messages[0].text, notice, 'the thread starts with it')
+  // Alone: nobody to tell.
+  assert.equal(ok(await d.cmd('thread', { action: 'open', title: 'notes' })).thread.messages, 0)
+  for (const x of [a, b, c, d]) x.close()
+})
+
+test('a thread you already share: opening one with the same agents returns it (existing), and a question to them goes in it', async (t) => {
+  let clock = 1_000_000
+  const { room } = await start(t, { now: () => clock })
+  const tick = () => { clock += 1000 }
+  const a = await agent({ harness: 'copilot' })
+  const b = await agent({ harness: 'claude' })
+  const c = await agent({ harness: 'codex' })
+  const first = ok(await a.cmd('thread', { action: 'open', title: 'greeting layout', with: ['claude-repo'] }))
+  tick()
+
+  // b opens one about the same overlap, without having read a's: it gets a's, and nothing happens.
+  const [seq, spent] = [room.seq, room.agents.get(b.welcome.agent.id).posts.main.length]
+  const again = ok(await b.cmd('thread', { action: 'open', title: 'greeting.js overlap', with: ['copilot-repo'] }))
+  assert.deepEqual(Object.keys(again), ['thread', 'recipients', 'existing'])
+  assert.deepEqual([again.existing, again.thread.id, again.thread.title, again.thread.opener], [true, first.thread.id, 'greeting layout', 'copilot-repo'])
+  assert.deepEqual(again.recipients, [{ name: 'copilot-repo', presence: 'here', state: 'idle', delivered: true }])
+  assert.deepEqual([room.seq, room.threads.size, room.agents.get(b.welcome.agent.id).posts.main.length], [seq, 1, spent], 'nothing posted, opened or spent')
+
+  // A question to them goes in it too, rather than opening another.
+  const q = ok(await b.cmd('post', { kind: 'question', text: 'Can you keep greet()?', to: ['copilot-repo'] }))
+  assert.deepEqual(Object.keys(q), ['message', 'thread', 'existing', 'recipients'])
+  assert.deepEqual([q.existing, q.thread.id, q.message.thread, room.threads.size], [true, first.thread.id, first.thread.id, 1])
+  assert.deepEqual(texts(ok(await a.cmd('read')).messages), ['Can you keep greet()?'])
+  tick()
+
+  // A thread with more agents counts too; of several, the one with the newest activity.
+  const trio = ok(await a.cmd('thread', { action: 'open', title: 'release plan', with: ['claude-repo', 'codex-repo'] }))
+  assert.equal(trio.existing, undefined, 'none had all three: a new one')
+  tick()
+  assert.equal(ok(await c.cmd('thread', { action: 'open', title: 'x', with: ['copilot-repo'] })).thread.id, trio.thread.id)
+  ok(await a.cmd('post', { thread: first.thread.id, text: 'greet() stays' }))
+  tick()
+  assert.equal(ok(await b.cmd('thread', { action: 'open', title: 'x', with: ['copilot-repo'] })).thread.id, first.thread.id, 'the newest activity')
+  assert.equal(ok(await b.cmd('post', { kind: 'question', text: 'Friday?', to: ['copilot-repo', 'codex-repo'] })).thread.id, trio.thread.id)
+
+  // Resolved threads don't count.
+  ok(await a.cmd('thread', { action: 'resolve', thread: first.thread.id, outcome: 'greet() stays' }))
+  ok(await a.cmd('thread', { action: 'resolve', thread: trio.thread.id, outcome: 'Friday' }))
+  const fresh = ok(await b.cmd('thread', { action: 'open', title: 'next steps', with: ['copilot-repo'] }))
+  assert.deepEqual([fresh.existing, fresh.thread.title, room.threads.size], [undefined, 'next steps', 3])
+  const asked = ok(await c.cmd('post', { kind: 'question', text: 'Who tags the release?', to: ['copilot-repo'] }))
+  assert.deepEqual([asked.existing, asked.thread.title, room.threads.size], [undefined, 'Who tags the release?', 4])
+  for (const x of [a, b, c]) x.close()
+})
+
 test('post title: the title of the thread a question opens; by default its first sentence, cut at a word', async (t) => {
   const { room } = await start(t)
   const a = await agent({ harness: 'copilot' })
   const b = await agent({ harness: 'claude' })
-  const ask = async (text, extra = {}) => ok(await a.cmd('post', { kind: 'question', to: ['claude-repo'], text, ...extra })).thread
+  // Each one resolved, so the next question opens a thread of its own rather than going in it.
+  const ask = async (text, extra = {}) => {
+    const { thread } = ok(await a.cmd('post', { kind: 'question', to: ['claude-repo'], text, ...extra }))
+    ok(await a.cmd('thread', { action: 'resolve', thread: thread.id, outcome: 'noted' }))
+    return thread
+  }
   let th = await ask('I am adding shout() to src/greeting.js. Can you keep the export names stable in your i18n change?')
   assert.equal(th.title, 'I am adding shout() to src/greeting.js')
   th = await ask('Cache layout\nShould it be one cache per repo, or per worktree?')
@@ -172,7 +249,7 @@ test('post title: the title of the thread a question opens; by default its first
   th = await ask('Can you keep greet() as it is? I build shout() on it.', { title: 'greet() stays' })
   assert.equal(th.title, 'greet() stays')
   assert.match(th.id, /^greet-stays-[0-9a-f]{2}$/)
-  assert.equal(room.snapshot().messages.filter(m => m.kind === 'sys').at(-1).text, '🧵 copilot-repo opened “greet() stays” with claude-repo')
+  assert.ok(room.snapshot().messages.some(m => m.kind === 'sys' && m.thread === null && m.text === '🧵 copilot-repo opened “greet() stays” with claude-repo'))
 
   // A bad title fails the post before anything happens; a title without a new thread is ignored.
   const threads = room.threads.size

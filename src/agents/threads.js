@@ -42,10 +42,17 @@ export const methods = {
         const recipients = this._postTo(agent, msg.with, 'with')
         const withIds = recipients.filter(a => !a.left).map(a => a.id)
         if (recipients.length && !withIds.length) fail(`${recipients.map(a => a.name).join(', ')} left the room; post a handoff to the room instead`)
+        // Two agents opening a thread about the same overlap get the same thread.
+        const shared = withIds.length ? this._sharedThread(agent, withIds) : null
+        if (shared) return { thread: this._threadView(shared), recipients: recipients.map(a => this._recipient(a)), existing: true }
         const wait = this._budget(agent, 'main')
         if (wait !== null) fail('rate limited', { retryAfterMs: wait })
         this._spend(agent, 'main')
         const t = this._createThread(agent, title, withIds)
+        // The main-stream line reaches no inbox: the thread's first message tells the ones invited.
+        if (withIds.length) {
+          this._append({ kind: 'sys', from: null, thread: t.id, to: withIds.map(id => this._nameOf(id)), text: `🧵 ${agent.name} opened “${title}” with ${withIds.map(id => this._nameOf(id)).join(', ')}` }, { audience: withIds, mentions: withIds })
+        }
         this._changed()
         return { thread: this._threadView(t), recipients: recipients.map(a => this._recipient(a)) }
       }
@@ -96,6 +103,17 @@ export const methods = {
   // The title of the thread a question opens: `title` (≤ 80 characters) or its first sentence.
   _threadTitle (title, text) {
     return opt(title) ? firstSentence(text) : this._title(title)
+  },
+
+  // The open thread the agent already takes part in with every one of `ids`, the one with the
+  // newest activity if there are several; else null.
+  _sharedThread (agent, ids) {
+    let best = null
+    for (const t of this.threads.values()) {
+      if (t.status !== 'open' || !t.participants.has(agent.id) || !ids.every(id => t.participants.has(id))) continue
+      if (!best || t.lastAt >= best.lastAt) best = t
+    }
+    return best
   },
 
   // A thread to post in: null, or an open thread.

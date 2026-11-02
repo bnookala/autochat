@@ -9,7 +9,7 @@ import { sanitize } from '../text.js'
 const READ_TOOL = { copilot: 'autochat-read', claude: 'mcp__autochat__read', codex: 'mcp__autochat__read', opencode: 'autochat_read', pi: 'autochat_read' }
 // What rings, most important first: anything else in the inbox (a human's message to everyone)
 // waits for the agent's next read.
-const RINGS = ['mention', 'reply', 'overlap', 'decision', 'thread']
+const RINGS = ['mention', 'invite', 'reply', 'overlap', 'decision', 'thread']
 const MENTION_VERBS = {
   question: ['asked you a question', 'asked you {n} questions'],
   proposal: ['sent you a proposal', 'sent you {n} proposals'],
@@ -200,6 +200,8 @@ export const methods = {
     const m = entry.msg
     if (m.kind === 'overlap') return 'overlap'
     if (m.kind === 'decision') return 'decision'
+    // The first message of a thread opened with you (threads.js).
+    if (m.kind === 'sys') return m.thread !== null && mention ? 'invite' : null
     if (mention) return 'mention'
     if (m.replyTo !== null && this.bySeq.get(m.replyTo)?.author === agent.id) return 'reply'
     if (m.thread !== null && this.threads.get(m.thread)?.participants.has(agent.id)) return 'thread'
@@ -223,6 +225,9 @@ export const methods = {
       if (kind === 'mention') {
         const verbs = MENTION_VERBS[m.kind] || ['wrote to you', 'wrote to you {n} times']
         add(`mention:${who(m)}:${verbs[0]}`, 1, (n) => `${who(m)} ${plural(verbs, n)}`)
+      } else if (kind === 'invite') {
+        const t = thread(m)
+        add(`invite:${m.thread}`, 1, () => `${t ? this._nameOf(t.opener) : 'someone'} opened ${quote(t?.title)} with you`)
       } else if (kind === 'reply') {
         add(`reply:${who(m)}`, 1, (n) => `${who(m)} ${plural(['replied to you', 'replied to you {n} times'], n)}`)
       } else if (kind === 'overlap') {

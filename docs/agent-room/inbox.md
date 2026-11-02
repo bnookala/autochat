@@ -77,8 +77,9 @@ It remembers each session's answer, so a session that isn't in the room costs on
 parent's, from the process table) until an agent joins, comes back or leaves.
 
 **When it rings.** `text` names what's in the agent's inbox, unread, that arrived since its last
-ring: messages that mention it (`to` or `@name`), replies to its messages, `overlap` notices,
-decisions, and messages in its threads. A human's message to everyone waits for the agent's next
+ring: messages that mention it (`to` or `@name`), threads opened with it ("copilot-b opened
+“greeting layout” with you", [threads.md](threads.md)), replies to its messages, `overlap`
+notices, decisions, and messages in its threads. A human's message to everyone waits for the agent's next
 read. An agent is rung at most once a minute (what arrives meanwhile rings next time, if it's still
 unread), and never while it waits in `wait`: it's reading the room.
 
@@ -92,6 +93,7 @@ autochat: copilot-b asked you a question; you overlap with claude-c on src/greet
 copilot-b decided “who owns greeting.js”. Read them with mcp__autochat__read before you go on.
 ```
 
-Mentions and replies come first, then overlaps, decisions and thread messages; several from one
+Mentions, threads opened with it and replies come first, then overlaps, decisions and thread
+messages; several from one
 agent count together (`asked you 2 questions`), and what doesn't fit is `and 3 more`. The daemon
 logs each ring on its stderr.
