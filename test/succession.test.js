@@ -294,7 +294,8 @@ describe('on a local testnet', { concurrency: true }, () => {
     t.after(() => testnet.destroy())
     const room = privateRoom()
     const [host, b, c] = [mk(testnet, room), mk(testnet, room), mk(testnet, room)]
-    t.after(() => Promise.all([b, c].map(r => r.leave())))
+    // The host too: if the test fails before crash(host), it's still running (#100).
+    t.after(() => Promise.all([host, b, c].map(r => r.leave())))
     await joinAll([host, b, c])
     assert.ok(b.since < c.since)
     // Once the host is gone it relays nothing, so b's claim has to reach c directly.
