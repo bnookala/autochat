@@ -112,6 +112,23 @@ export function connectAgents ({ client = 'autochat-agents', timeoutMs = 3000 } 
 // Agents that haven't set a status or posted (#67) are collapsed into one line; older snapshots
 // have no `active`, and everyone counts.
 const isIdle = (c) => c.active === false
+// here, away or left (#54); older snapshots have only `present`, and an agent that isn't is away.
+const presenceOf = (c) => ['here', 'away', 'left'].includes(c.presence) ? c.presence : c.present === false ? 'away' : 'here'
+
+// "just now", "3m ago", "2h ago", "3d ago", on the daemon's clock.
+function ago (ts, now) {
+  const s = Math.max(0, (now - ts) / 1000)
+  if (s < 60) return 'just now'
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
+  return `${Math.floor(s / 86400)}d ago`
+}
+
+// What a card says in the state column: its state, or "left 3m ago" once the agent has left.
+function stateLabel (c, now) {
+  if (presenceOf(c) !== 'left') return clean(c.state, 12)
+  return Number.isFinite(c.leftAt) && Number.isFinite(now) ? `left ${ago(c.leftAt, now)}` : 'left'
+}
 
 function idleLine (idle, cols) {
   const l = new Line(cols).add(' ◌ ', GREY).add(plural(idle.length, 'idle session'), GREY)
@@ -132,11 +149,12 @@ function boardLines (snap, cols) {
     return clean(c.branch ? `${repo}@${c.branch}` : repo, 80)
   }
   const wide = cols >= 70
+  const now = Number.isFinite(snap.now) ? snap.now : Date.now()
   const w = {
     name: Math.min(24, Math.max(...cards.map(c => strWidth(clean(c.name, 32))))),
     harness: Math.min(9, Math.max(...cards.map(c => strWidth(clean(c.harness, 20))))),
     where: Math.min(32, Math.max(...cards.map(c => strWidth(where(c))))),
-    state: 9
+    state: Math.min(13, Math.max(9, ...cards.map(c => strWidth(stateLabel(c, now)))))
   }
   const warning = (c) => (c.overlaps || []).length ? '⚠ ' + c.overlaps.map(o => clean(o, 32)).join(', ') : ''
   // The card's title, the label people read, unless the name already spells it.
@@ -150,7 +168,8 @@ function boardLines (snap, cols) {
       l.add(fit(clean(c.harness, 20), w.harness), GREY).add('  ')
       l.add(fit(where(c), w.where)).add('  ')
     }
-    l.add(fit(clean(c.state, 12), w.state), c.state === 'blocked' ? YELLOW : DIM).add('  ')
+    const left = presenceOf(c) === 'left'
+    l.add(fit(stateLabel(c, now), w.state), left ? GREY : c.state === 'blocked' ? YELLOW : DIM).add('  ')
     const warn = warning(c)
     const t = title(c)
     if (t) {
@@ -218,14 +237,14 @@ export function renderAgents (snap, cols, rows, { scroll = 0, status = null } = 
   const all = rows === 0
   rows = all ? 0 : Math.max(8, rows)
   const cards = (snap.agents || []).filter(c => !isIdle(c))
-  const present = cards.filter(c => c.present).length
-  const away = cards.length - present
+  const count = (p) => cards.filter(c => presenceOf(c) === p).length
+  const [present, away, left] = [count('here'), count('away'), count('left')]
   const idle = (snap.agents || []).filter(c => isIdle(c) && c.present !== false).length
   const open = (snap.threads || []).filter(t => t.status === 'open').length
   const tier = snap.tier === 'local' ? 'local 🔒' : clean(snap.tier, 20)
 
   const head = new Line(cols).add(' autochat agents ', INV + BOLD).add(` ${tier} `, INV)
-  head.add(`· ${plural(present, 'agent')}${away ? ` (+${away} away)` : ''}${idle ? ` · ${idle} idle` : ''} · ${plural(open, 'open thread')} `, INV)
+  head.add(`· ${plural(present, 'agent')}${away ? ` (+${away} away)` : ''}${left ? ` · ${left} left` : ''}${idle ? ` · ${idle} idle` : ''} · ${plural(open, 'open thread')} `, INV)
   const me = snap.human ? ` ${clean(snap.human, 40)} ` : ''
   const fill = cols - head.used - strWidth(me)
   if (fill > 0) head.add(' '.repeat(fill), INV)
@@ -363,7 +382,8 @@ export async function agentsSay ({ text, thread = null, to = [], yes = false, as
     const r = await c.cmd('agents.say', { text, thread, to })
     if (!r.ok) throw new Error(r.error)
     const m = r.result.message
-    out(`sent to the agent room${m.thread ? ` in 🧵 ${m.thread}` : ''}${m.to.length ? ` for ${m.to.join(', ')}` : ''} (seq ${m.seq}).\n`)
+    if (r.result.rerouted) out(`${m.to.join(', ')} left the room: sent to the main stream instead (seq ${m.seq}).\n`)
+    else out(`sent to the agent room${m.thread ? ` in 🧵 ${m.thread}` : ''}${m.to.length ? ` for ${m.to.join(', ')}` : ''} (seq ${m.seq}).\n`)
     return { sent: true, message: m }
   } finally {
     c.close()

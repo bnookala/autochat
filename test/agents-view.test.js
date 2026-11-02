@@ -96,6 +96,35 @@ test('idle sessions (#67) collapse into one line, and the header counts them', (
   assert.equal(onlyIdle[1], ' ◌ 1 idle session: lonely', 'instead of "no agents yet"')
 })
 
+test('agents that left (#54) show as left, with how long ago, instead of their state; away ones still count as away', () => {
+  const snap = structuredClone(fixture)
+  for (const c of snap.agents) c.presence = c.present ? 'here' : 'away'
+  // An older daemon says only `present`: not present is away.
+  assert.match(plainLines(renderAgents(fixture, 110, 40).lines)[0], /· 2 agents \(\+1 away\) · 1 open thread/)
+  assert.match(plainLines(renderAgents(snap, 110, 40).lines)[0], /· 2 agents \(\+1 away\) · 1 open thread/)
+
+  Object.assign(snap.agents[2], { presence: 'left', leftAt: snap.now - 3 * 60_000 - 5000 })
+  let lines = plainLines(renderAgents(snap, 140, 40).lines)
+  assert.match(lines[0], /· 2 agents · 1 left · 1 open thread/, 'not away')
+  assert.match(lines[3], /^ ○ gemini-docs {7}gemini {3}octo\/docs@main {12}left 3m ago {2}Docs pass on the README$/)
+  assert.match(lines[1], /^ ● copilot-greeting {2}copilot {2}octo\/greeting@feat-shout {2}editing {6}Adding shout\(\)/, 'the state column makes room')
+  const label = (leftAt) => {
+    snap.agents[2].leftAt = leftAt
+    return plainLines(renderAgents(snap, 110, 40).lines)[3].match(/(left[^ ]*(?: [^ ]+ ago| just now)?)/)[1]
+  }
+  assert.equal(label(snap.now - 20_000), 'left just now')
+  assert.equal(label(snap.now - 2 * 3600_000), 'left 2h ago')
+  assert.equal(label(null), 'left', 'without leftAt')
+
+  // Away and left together; an idle agent that left isn't counted at all.
+  snap.agents[1].presence = 'away'
+  snap.agents[1].present = false
+  snap.agents.push({ ...structuredClone(fixture.agents[2]), id: 'z', name: 'idle-gone', active: false, presence: 'left', leftAt: snap.now })
+  lines = plainLines(renderAgents(snap, 110, 40).lines)
+  assert.match(lines[0], /· 1 agent \(\+1 away\) · 1 left · 1 open thread/)
+  assert.match(lines[2], /^ ○ claude-greeting .* editing /, 'away keeps its state')
+})
+
 async function host (t, opts = {}) {
   const acks = []
   const room = new AgentRoom({ human: 'stormy-newt-59', onAck: () => acks.push(Date.now()), ...opts })
@@ -145,6 +174,14 @@ test('say: the first intervention shows the warning and needs a yes, then sends 
   assert.equal(acks.length, 1)
   await assert.rejects(say('x', 'y', { thread: 'nope' }), /unknown thread: nope/)
   await assert.rejects(say('  ', 'y'), /usage: autochat agents say/)
+
+  // To agents that have all left: the main stream, still addressed to them (#81).
+  const gone = room.connect({ type: 'agent-hello', v: 1, harness: 'claude', name: 'claude-r', repo: 'o/r', cwd: '/w' }, { send () {}, end () {} })
+  gone.message({ type: 'cmd', id: 1, cmd: 'bye' })
+  const moved = await say('hand over your notes', 'n', { to: ['claude-r'] })
+  assert.deepEqual([moved.sent, moved.message.thread, moved.message.to], [true, null, ['claude-r']])
+  assert.match(out.at(-1), /^claude-r left the room: sent to the main stream instead \(seq \d+\)\.\n$/)
+  assert.equal(read().at(-1).text, 'hand over your notes', 'the agents still here get it')
 })
 
 test('say --yes acknowledges without asking; without a terminal it refuses to guess', async (t) => {

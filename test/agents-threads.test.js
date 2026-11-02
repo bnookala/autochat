@@ -117,6 +117,39 @@ test('a longer outcome is cut at a word boundary, with "…", and the result say
   for (const x of [a, b]) x.close()
 })
 
+test('open with agents that left: the thread opens with the ones still here, and recipients says who; only gone agents fail with a hint', async (t) => {
+  const { room } = await start(t, { limits: { resumeMs: 60_000 } })
+  const a = await agent({ harness: 'copilot' })
+  const b = await agent({ harness: 'claude' })
+  const c = await agent({ harness: 'codex' })
+  const d = await agent({ harness: 'gemini' })
+  ok(await d.cmd('status', { state: 'testing' }))
+  ok(await d.cmd('bye'))
+  c.close()
+  await c.closed
+  await sleep(20)
+
+  const r = ok(await a.cmd('thread', { action: 'open', title: 'parser layout', with: ['claude-repo', 'codex-repo', 'gemini-repo', 'copilot-repo'] }))
+  assert.deepEqual(Object.keys(r), ['thread', 'recipients'])
+  assert.deepEqual(r.thread.participants, ['copilot-repo', 'claude-repo', 'codex-repo'], 'here and away are in; left is not')
+  assert.deepEqual(r.recipients, [
+    { name: 'claude-repo', presence: 'here', state: 'idle', delivered: true },
+    { name: 'codex-repo', presence: 'away', state: 'idle', delivered: false },
+    { name: 'gemini-repo', presence: 'left', state: 'testing', delivered: false }
+  ], 'as in a post: one entry per name, yourself left out')
+  assert.equal(room.snapshot().messages.filter(m => m.kind === 'sys').at(-1).text, '🧵 copilot-repo opened “parser layout” with claude-repo, codex-repo')
+  assert.deepEqual(ok(await a.cmd('thread', { action: 'open', title: 'alone' })).recipients, [], 'no `with`: no recipients')
+
+  // Everyone named has left: no thread, nothing spent, and the error says what to do instead.
+  const [threads, seq, spent] = [room.threads.size, room.seq, room.agents.get(a.welcome.agent.id).posts.main.length]
+  assert.equal((await a.cmd('thread', { action: 'open', title: 'parser', with: ['gemini-repo'] })).error, 'gemini-repo left the room; post a handoff to the room instead')
+  assert.deepEqual([room.threads.size, room.seq, room.agents.get(a.welcome.agent.id).posts.main.length], [threads, seq, spent])
+  // Unknown names and bad lists still fail as before.
+  assert.equal((await a.cmd('thread', { action: 'open', title: 'x', with: ['gemini-repo', 'nobody'] })).error, 'unknown agent: nobody')
+  assert.equal((await a.cmd('thread', { action: 'open', title: 'x', with: 'claude-repo' })).error, 'with must be a list of agent names')
+  for (const x of [a, b]) x.close()
+})
+
 test('post title: the title of the thread a question opens; by default its first sentence, cut at a word', async (t) => {
   const { room } = await start(t)
   const a = await agent({ harness: 'copilot' })
