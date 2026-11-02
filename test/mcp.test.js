@@ -1,4 +1,4 @@
-import { test } from 'node:test'
+import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -14,6 +14,31 @@ const { send } = await import('../src/ipc.js')
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 const MODERN = { 'io.modelcontextprotocol/protocolVersion': '2026-07-28', 'io.modelcontextprotocol/clientCapabilities': {} }
+
+// Every process the tests spawn. One left running keeps its pipes open, and with them this file's
+// process, so `node --test` waits forever (#100). Each test stops its own in t.after; whatever is
+// still running when the file is done, or starts after that, is stopped too.
+const children = new Set()
+let fileDone = false
+function track (child) {
+  children.add(child)
+  child.once('exit', () => children.delete(child))
+  if (fileDone) stop(child)
+  return child
+}
+// SIGTERM, then SIGKILL if it hasn't exited within 1 s.
+async function stop (child) {
+  if (child.exitCode !== null || child.signalCode !== null) return
+  const exited = new Promise(resolve => child.once('exit', () => resolve(true)))
+  child.kill('SIGTERM')
+  if (await Promise.race([exited, sleep(1000)])) return
+  child.kill('SIGKILL')
+  await Promise.race([exited, sleep(2000)])
+}
+after(() => {
+  fileDone = true
+  return Promise.all([...children].map(stop))
+})
 
 // A stand-in for the daemon link: replies come from `respond(cmd, args)`.
 function fakeTools (respond = () => ({ ok: true, result: {}, inbox: { unread: 0, mentions: 0 } })) {
@@ -143,7 +168,7 @@ test('tool results: compact JSON text plus structuredContent, provenance, inbox;
 
 const GIT = ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', '-c', 'init.defaultBranch=main']
 function sh (cwd, ...args) {
-  const r = spawnSync('git', [...GIT, ...args], { cwd, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: path.join(tmp, 'gitconfig'), GIT_CONFIG_NOSYSTEM: '1' } })
+  const r = spawnSync('git', [...GIT, ...args], { cwd, encoding: 'utf8', timeout: 30000, env: { ...process.env, GIT_CONFIG_GLOBAL: path.join(tmp, 'gitconfig'), GIT_CONFIG_NOSYSTEM: '1' } })
   assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`)
   return r.stdout.trim()
 }
@@ -170,7 +195,7 @@ function trialRepo () {
 }
 
 function mcpProcess (cwd, harness, env) {
-  const child = spawn(process.execPath, [BIN, 'mcp', '--harness', harness], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] })
+  const child = track(spawn(process.execPath, [BIN, 'mcp', '--harness', harness], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] }))
   const waiters = new Map()
   const lines = []
   let buf = ''
@@ -234,10 +259,10 @@ test('two autochat mcp processes coordinate through the daemon: overlap → ques
     GIT_CONFIG_NOSYSTEM: '1'
   }
   process.env.AUTOCHAT_HOME = home
-  const daemon = spawn(process.execPath, [BIN, 'daemon'], { env, stdio: ['ignore', 'ignore', 'pipe'] })
+  const daemon = track(spawn(process.execPath, [BIN, 'daemon'], { env, stdio: ['ignore', 'ignore', 'pipe'] }))
   let daemonErr = ''
   daemon.stderr.on('data', (d) => { daemonErr += d })
-  t.after(() => daemon.kill('SIGKILL'))
+  t.after(() => stop(daemon))
   let pong = null
   for (let i = 0; i < 100 && !pong; i++) {
     pong = await send({ type: 'ping' }, 300)
@@ -248,7 +273,7 @@ test('two autochat mcp processes coordinate through the daemon: overlap → ques
   // Named as before #66 (names now come from titles: greeting-feat-a, greeting-feat-b).
   const A = mcpProcess(wtA, 'copilot', { ...env, AUTOCHAT_AGENT_NAME: 'copilot-greeting' })
   const B = mcpProcess(wtB, 'claude', { ...env, AUTOCHAT_AGENT_NAME: 'claude-greeting' })
-  t.after(() => { A.child.kill('SIGKILL'); B.child.kill('SIGKILL') })
+  t.after(() => Promise.all([stop(A.child), stop(B.child)]))
 
   // A is a legacy client, B a modern one.
   const initA = await A.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test-a', version: '1' } })
@@ -323,7 +348,7 @@ test('two autochat mcp processes coordinate through the daemon: overlap → ques
   await until(async () => (await A.tool('read', { scope: 'all', since: 0, limit: 100 })).messages.some(m => m.kind === 'sys' && m.text === 'claude-greeting left'), 'B left')
 
   // The terminal client of the agents stream: one --json snapshot, a one-shot text view, and say.
-  const cli = (...args) => spawnSync(process.execPath, [BIN, 'agents', ...args], { env, encoding: 'utf8' })
+  const cli = (...args) => spawnSync(process.execPath, [BIN, 'agents', ...args], { env, encoding: 'utf8', timeout: 30000 })
   const json = cli('--json')
   assert.equal(json.status, 0, json.stderr)
   const snap = JSON.parse(json.stdout)
@@ -425,10 +450,10 @@ test('autochat mcp says bye when its harness closes it (stdin EOF, SIGTERM, SIGI
   const env = { ...process.env, AUTOCHAT_HOME: home, COPILOT_HOME: path.join(tmp, 'copilot'), AUTOCHAT_APP_DIRS: path.join(tmp, 'no-apps'), AUTOCHAT_NO_NOTIFY: '1', AUTOCHAT_NO_FOCUS: '1' }
   delete env.AUTOCHAT_AGENT_RESUME_MS
   process.env.AUTOCHAT_HOME = home
-  const daemon = spawn(process.execPath, [BIN, 'daemon'], { env, stdio: ['ignore', 'ignore', 'pipe'] })
+  const daemon = track(spawn(process.execPath, [BIN, 'daemon'], { env, stdio: ['ignore', 'ignore', 'pipe'] }))
   let daemonErr = ''
   daemon.stderr.on('data', (d) => { daemonErr += d })
-  t.after(() => daemon.kill('SIGKILL'))
+  t.after(() => stop(daemon))
   let pong = null
   for (let i = 0; i < 100 && !pong; i++) {
     pong = await send({ type: 'ping' }, 300)
@@ -448,7 +473,7 @@ test('autochat mcp says bye when its harness closes it (stdin EOF, SIGTERM, SIGI
   for (const how of ['EOF', 'SIGTERM', 'SIGINT']) {
     const name = 'copilot-' + how.toLowerCase()
     const p = mcpProcess(tmp, 'copilot', { ...env, AUTOCHAT_AGENT_NAME: name })
-    t.after(() => p.child.kill('SIGKILL'))
+    t.after(() => stop(p.child))
     await p.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } })
     assert.equal((await p.tool('catch_up')).you.name, name)
     await p.tool('status', { state: 'exploring' }) // active (#67): on the board, and its leaving is posted
@@ -500,8 +525,8 @@ test('live paths: two autochat mcp processes overlap from git alone, without a s
     GIT_CONFIG_NOSYSTEM: '1'
   }
   process.env.AUTOCHAT_HOME = home
-  const daemon = spawn(process.execPath, [BIN, 'daemon'], { env, stdio: ['ignore', 'ignore', 'ignore'] })
-  t.after(() => daemon.kill('SIGKILL'))
+  const daemon = track(spawn(process.execPath, [BIN, 'daemon'], { env, stdio: ['ignore', 'ignore', 'ignore'] }))
+  t.after(() => stop(daemon))
   let pong = null
   for (let i = 0; i < 100 && !pong; i++) {
     pong = await send({ type: 'ping' }, 300)
@@ -511,7 +536,7 @@ test('live paths: two autochat mcp processes overlap from git alone, without a s
   // Named as before #66 (from their titles, both would be greeting-main).
   const A = mcpProcess(one, 'copilot', { ...env, AUTOCHAT_AGENT_NAME: 'copilot-greeting' })
   const B = mcpProcess(two, 'claude', { ...env, AUTOCHAT_AGENT_NAME: 'claude-greeting' })
-  t.after(() => { A.child.kill('SIGKILL'); B.child.kill('SIGKILL') })
+  t.after(() => Promise.all([stop(A.child), stop(B.child)]))
   for (const X of [A, B]) await X.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'live', version: '1' } })
   // Only active agents overlap (#67): each says hello, and neither sets a status.
   for (const X of [A, B]) await X.tool('post', { text: 'hello' })

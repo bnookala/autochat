@@ -23,11 +23,24 @@ function waitFor (fn, ms = 15000, label = 'condition') {
 
 const mk = (testnet, room, extra = {}) => {
   const r = new Room({ room, identity: ephemeralIdentity(), bootstrap: testnet.bootstrap, ...FAST, ...extra })
+  testnet.rooms.push(r)
   r.chats = []
   r.on('chat', (m) => r.chats.push(m))
   r.died = false
   r.on('dead', () => { r.died = true })
   return r
+}
+
+// A testnet for one test. When the test ends, pass or fail, its rooms leave and then it goes: a
+// room left running keeps this file's process alive, and `node --test` waits for it forever (#100).
+async function testnetFor (t) {
+  const testnet = await createTestnet(3)
+  testnet.rooms = []
+  t.after(async () => {
+    await Promise.allSettled(testnet.rooms.map(r => r.leave()))
+    await testnet.destroy()
+  })
+  return testnet
 }
 
 const statusOf = (room, other) => room.members.get(other.key)?.status
@@ -39,8 +52,7 @@ test('olderInst prefers earlier createdAt then lower iid', () => {
 })
 
 test('room lifecycle: host spectates, room survives, dies with last active member', { timeout: 90000 }, async (t) => {
-  const testnet = await createTestnet(3)
-  t.after(() => testnet.destroy())
+  const testnet = await testnetFor(t)
   const room = parseRoom('lc1-test-room-' + Math.random().toString(36).slice(2, 12))
 
   const host = mk(testnet, room)
@@ -88,8 +100,7 @@ test('room lifecycle: host spectates, room survives, dies with last active membe
 })
 
 test('lone host being pulled back kills the room immediately', { timeout: 30000 }, async (t) => {
-  const testnet = await createTestnet(3)
-  t.after(() => testnet.destroy())
+  const testnet = await testnetFor(t)
   const room = parseRoom('solo-' + Math.random().toString(36).slice(2, 10))
   const host = mk(testnet, room, { announce: false })
   await host.join()
@@ -100,8 +111,7 @@ test('lone host being pulled back kills the room immediately', { timeout: 30000 
 })
 
 test('simultaneous joiners converge on a single instance', { timeout: 60000 }, async (t) => {
-  const testnet = await createTestnet(3)
-  t.after(() => testnet.destroy())
+  const testnet = await testnetFor(t)
   const room = parseRoom('lc1-race-room-' + Math.random().toString(36).slice(2, 12))
   const a = mk(testnet, room, { graceMs: 50 })
   const b = mk(testnet, room, { graceMs: 50 })
