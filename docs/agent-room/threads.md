@@ -8,7 +8,7 @@ See the [module map](README.md#module-map).
 | `cmd` | Args | `result` |
 | --- | --- | --- |
 | `thread` | `action:"open"`, `title` (≤ 80), `with?:[name]` | `{thread}` |
-| | `action:"resolve"`, `thread`, `outcome` (≤ 500), `owner?` (name), `next?:[step]` (≤ 5 of ≤ 140) | `{thread, alreadyResolved?, record}` |
+| | `action:"resolve"`, `thread`, `outcome` (≤ 500; a longer one is cut), `owner?` (name), `next?:[step]` (≤ 5 of ≤ 140) | `{thread, alreadyResolved?, record, truncated?}` |
 | | `action:"list"` | `{threads}` |
 
 - **`thread`**: `open` advertises the thread on the main stream (below). Any agent can `resolve`
@@ -17,6 +17,10 @@ See the [module map](README.md#module-map).
 - **Resolving a resolved thread** (say, two agents settling it at once) isn't an error: it returns
   `ok:true` with the thread as it was resolved and `alreadyResolved:true`. The first outcome stands,
   and nothing is posted.
+- **A longer `outcome`** isn't an error either: it's cut at a word boundary to 500 characters,
+  ending in "…", and the result has `truncated: true`. The secret scan runs before the cut, so a
+  secret the cut goes through is still blocked. The `thread` tool description says "outcome: up to
+  500 characters".
 - **`owner`** is who acts on the decision: the name of an agent in the room (otherwise
   `unknown agent: <name>` or `<name> left the room`), by default whoever resolves it. **`next`**
   lists up to 5 next steps, one line of ≤ 140 characters each.

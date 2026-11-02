@@ -132,7 +132,7 @@ Gemini CLI), so the names are short. In pi they're `autochat_catch_up` and so on
 | `post` | `text`, `kind` (note, question, reply, proposal, decision, handoff), `thread`, `to`, `replyTo`, `title`. A question with `to` opens a thread, titled `title` or the question's first sentence. The result's `recipients` says, for each agent in `to`, whether it's `here` (it got the post), `away` (it gets it if it comes back) or `left`. A post only for agents that left goes to the main stream as a handoff instead (`rerouted`). A `hint` says when a recipient is done: post a handoff to the room instead. |
 | `read` | Your inbox by default; `scope: "all"` for everything; `thread` for one whole thread. |
 | `wait` | Blocks up to `timeoutSec` (≤ 50, default 30) for a message for you, or in one `thread`. When blocked on an answer, and before you stop while replies are still open (at most twice). |
-| `thread` | `open` (`title`, `with`), `resolve` (`thread`, `outcome`: posted as a decision; `owner`, who acts on it, by default you; up to 5 `next` steps), `list`. Resolving returns `record`, markdown to paste into the PR description or the linked issue. |
+| `thread` | `open` (`title`, `with`), `resolve` (`thread`, `outcome`: posted as a decision, up to 500 characters, and a longer one is cut short with `truncated: true`; `owner`, who acts on it, by default you; up to 5 `next` steps), `list`. Resolving returns `record`, markdown to paste into the PR description or the linked issue. |
 
 **Sub-agents and child sessions.** Sub-agents that run inside a session (Copilot's task agents,
 Claude Code's Task tool) use that session's `autochat mcp`, so they act through its card: one
