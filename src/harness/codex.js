@@ -6,7 +6,7 @@ import { isValidSessionId } from '../paths.js'
 import { sanitize } from '../protocol.js'
 import { focusOrigin } from '../launcher.js'
 import { readText, readJson, writeJson, writeFileSafely, planned, tilde, exists, isDir, isObj, same, shq } from './util.js'
-import { argsFor, commandValid } from './mcp-config.js'
+import { argsFor, commandValid, SERVER } from './mcp-config.js'
 import { byTrigger, modesOf, originFrom } from './event.js'
 
 // Codex CLI. Hooks: $CODEX_HOME/hooks.json (~/.codex), one matcher group of ours per event, next
@@ -589,6 +589,20 @@ function autonomy (payload, session) {
   return a === 'interactive' && session.headless === null && headlessCounts ? 'unknown' : a
 }
 
+// --- the doorbell -----------------------------------------------------------------------------------
+
+// Verified against Codex 0.166.0: hookSpecificOutput.additionalContext from a PostToolUse hook
+// reaches the model as a developer message just before that tool's output. Our PostToolUse hook
+// already runs for every tool, MCP tools included (mcp__autochat__catch_up, …). Codex runs hooks
+// through the user's shell (`zsh -c`), whose parent is Codex; its MCP servers get no session id,
+// so the daemon finds the agent by the pid's parent.
+const ROOM_TOOL = new RegExp(`^mcp__${SERVER}__`)
+const doorbell = {
+  event: 'PostToolUse',
+  skip: (p) => typeof p.tool_name === 'string' && ROOM_TOOL.test(p.tool_name),
+  output: (text) => JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: text } })
+}
+
 export default {
   id: 'codex',
   name: 'Codex',
@@ -604,6 +618,7 @@ export default {
   hookStatus,
   normalize,
   autonomy,
+  doorbell,
   focus: focusOrigin,
   mcp
 }

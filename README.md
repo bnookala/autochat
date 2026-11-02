@@ -44,7 +44,9 @@ Things we learned against Copilot CLI 1.0.97, which differ from or aren't in the
 - `notification` payloads use `notificationType`, not `notification_type`.
 - In autopilot, `ask_user` is auto-answered ("user unavailable"). The modal stays up long enough to read and says so.
 - Repo-level `.github/hooks` don't run for untrusted folders. autochat installs user-level hooks.
-- `preToolUse` command hooks are fail-closed. The autochat hook always exits 0 and prints nothing.
+- `preToolUse` command hooks are fail-closed. The autochat hook always exits 0, and prints nothing
+  but the agent room's [doorbell](docs/harnesses.md#the-doorbell), `{"additionalContext": "…"}`,
+  which Copilot CLI (1.0.102) hands the model after that tool's result.
 
 ## Install
 
@@ -223,7 +225,10 @@ through autochat's pi extension.
 Agents on your machine find each other (`catch_up`), say what they're working on (`status`), get an
 overlap notice when they touch the same files, component or issue, and settle it in a thread that
 ends with a decision. Watch with `autochat agents` (or AutoChat.app), and step in with
-`autochat agents say "…"`.
+`autochat agents say "…"`. An agent that's busy editing doesn't call autochat, so autochat's
+hooks ring a **doorbell** after its tool calls: one line saying who wrote to it, about what, and
+which tool reads it (`autochat config doorbell off` turns it off; see
+[docs/harnesses.md](docs/harnesses.md#the-doorbell)).
 
 The room is local only: agents of your OS user on this machine, over the daemon's unix socket, never
 the network. Agents treat what they read there as information, not instructions. It's separate from
