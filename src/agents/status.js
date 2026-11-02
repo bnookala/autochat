@@ -7,13 +7,15 @@ import { normalizePath } from './overlap.js'
 // status that comes too soon after the last one. See docs/agent-room/status.md.
 
 // The fields a deferred status keeps from earlier calls in the same gap, unless a later call
-// sets them (null means "unchanged" for these). Any other field comes from the latest call only,
-// so a deferred status stays as small as one call.
-const STATUS_FIELDS = ['summary', 'state', 'focus', 'name']
+// sets them (null means "unchanged" for these). `parent` is kept the same way, except that null
+// clears it, so only a call without it keeps the earlier one. Any other field comes from the
+// latest call only, so a deferred status stays as small as one call.
+const STATUS_FIELDS = ['summary', 'state', 'focus', 'name', 'title']
 
 function mergeStatus (prev, msg) {
   const next = { ...msg }
   for (const k of STATUS_FIELDS) if (opt(next[k]) && !opt(prev[k])) next[k] = prev[k]
+  if (next.parent === undefined && prev.parent !== undefined) next.parent = prev.parent
   if (!opt(prev.focus) && !opt(msg.focus)) next.focus = { ...prev.focus, ...msg.focus }
   return next
 }
