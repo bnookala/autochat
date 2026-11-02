@@ -38,13 +38,16 @@ export const methods = {
     switch (msg.action) {
       case 'open': {
         const title = this._title(msg.title)
-        const withIds = this._resolveNames(msg.with, 'with').filter(id => id !== agent.id)
+        // As `to` in a post (posts.js): agents that left are named, but not brought in.
+        const recipients = this._postTo(agent, msg.with, 'with')
+        const withIds = recipients.filter(a => !a.left).map(a => a.id)
+        if (recipients.length && !withIds.length) fail(`${recipients.map(a => a.name).join(', ')} left the room; post a handoff to the room instead`)
         const wait = this._budget(agent, 'main')
         if (wait !== null) fail('rate limited', { retryAfterMs: wait })
         this._spend(agent, 'main')
         const t = this._createThread(agent, title, withIds)
         this._changed()
-        return { thread: this._threadView(t) }
+        return { thread: this._threadView(t), recipients: recipients.map(a => this._recipient(a)) }
       }
       case 'resolve': {
         if (!isStr(msg.thread) || !this.threads.has(msg.thread)) fail(`unknown thread: ${label(msg.thread)}`)

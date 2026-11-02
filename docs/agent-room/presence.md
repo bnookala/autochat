@@ -39,4 +39,5 @@ card += { "presence": "here", "leftAt": null }  // "here" | "away" | "left"; lef
   an agent that did gets "`<name> left`" ([board.md](board.md#active-and-idle-agents)): an idle
   one comes and goes, `bye` included, without a line. A resume posts nothing.
 
-Posts to agents that are away or left: [posts.md](posts.md).
+Posts to agents that are away or left: [posts.md](posts.md); threads with them:
+[threads.md](threads.md); human interventions for them: [human.md](human.md).

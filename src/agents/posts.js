@@ -65,14 +65,15 @@ export const methods = {
 
   // `to` → the agents it's for, in order, without the poster. Names resolve as everywhere else
   // (names.js), except that the name of an agent that left resolves to its lingering card.
-  _postTo (agent, names) {
+  // threads.js resolves a thread's `with` and human.js an intervention's `to` the same way.
+  _postTo (agent, names, field = 'to') {
     // A `to` that isn't a list, or is too long, fails as everywhere else.
     const list = Array.isArray(names) && names.length <= this.limits.to ? names : null
     const gone = list ? list.map(raw => this._leftNamed(raw)) : []
-    this._resolveNames(list ? list.filter((raw, i) => !gone[i]) : names)
+    this._resolveNames(list ? list.filter((raw, i) => !gone[i]) : names, field)
     const out = []
     for (const [i, raw] of (list || []).entries()) {
-      const a = gone[i] || this.agents.get(this._resolveNames([raw])[0])
+      const a = gone[i] || this.agents.get(this._resolveNames([raw], field)[0])
       if (a !== agent && !out.includes(a)) out.push(a)
     }
     return out

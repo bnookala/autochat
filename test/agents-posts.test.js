@@ -130,13 +130,14 @@ test('post recipients: here gets it, away gets it if it resumes, left never does
   for (const x of [a, b, c2, d2]) x.close()
 })
 
-test('post: no more "left the room": a left card is addressable until it goes, then the name is unknown; `with` still refuses it', async (t) => {
+test('post: no more "left the room": a left card is addressable until it goes, then the name is unknown', async (t) => {
   await start(t, { limits: { lingerMs: 300 } })
   const a = await agent({ harness: 'copilot' })
   const b = await agent({ harness: 'claude' })
   ok(await b.cmd('bye'))
   assert.equal(ok(await a.cmd('post', { text: 'are you still there?', to: ['claude-repo'] })).rerouted, 'handoff')
-  assert.equal((await a.cmd('thread', { action: 'open', title: 'x', with: ['claude-repo'] })).error, 'claude-repo left the room')
+  // A thread only with agents that left can't open (threads.js): the error says what to do.
+  assert.equal((await a.cmd('thread', { action: 'open', title: 'x', with: ['claude-repo'] })).error, 'claude-repo left the room; post a handoff to the room instead')
   assert.equal((await a.cmd('post', { text: 'x', to: ['claude-repo', 7] })).error, 'to must be a list of agent names')
   assert.equal((await a.cmd('post', { text: 'x', to: 'claude-repo' })).error, 'to must be a list of agent names')
   assert.equal((await a.cmd('post', { text: 'x', to: Array(17).fill('claude-repo') })).error, 'to has too many names (max 16)')

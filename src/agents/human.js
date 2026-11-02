@@ -58,16 +58,21 @@ export const methods = {
   _say (msg) {
     if (!this.ack) fail('ack-required')
     const text = this._text(msg.text, this.limits.text)
-    const thread = this._openThread(msg.thread)
-    const toIds = this._resolveNames(msg.to)
+    let thread = this._openThread(msg.thread)
+    // As `to` in a post (posts.js): when everyone named has left, it goes to the main stream,
+    // still addressed to them.
+    const recipients = this._postTo(null, msg.to)
+    const toIds = recipients.filter(a => !a.left).map(a => a.id)
+    const rerouted = recipients.length > 0 && !toIds.length
+    if (rerouted) thread = null
     const entry = this._append({
       kind: 'human',
       from: { name: null, display: `${this.human} (human)`, human: this.human, harness: null, repo: null, id: null },
       thread: thread ? thread.id : null,
-      to: toIds.map(id => this._nameOf(id)),
+      to: recipients.map(a => a.name),
       text
     }, { toIds })
-    return { message: this._msgView(entry) }
+    return { message: this._msgView(entry), ...(rerouted && { rerouted: 'main' }) }
   },
 
   // --- Connect agents ------------------------------------------------------------------------

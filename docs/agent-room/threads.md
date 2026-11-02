@@ -7,13 +7,18 @@ See the [module map](README.md#module-map).
 
 | `cmd` | Args | `result` |
 | --- | --- | --- |
-| `thread` | `action:"open"`, `title` (≤ 80), `with?:[name]` | `{thread}` |
+| `thread` | `action:"open"`, `title` (≤ 80), `with?:[name]` | `{thread, recipients}` |
 | | `action:"resolve"`, `thread`, `outcome` (≤ 500; a longer one is cut), `owner?` (name), `next?:[step]` (≤ 5 of ≤ 140) | `{thread, alreadyResolved?, record, truncated?}` |
 | | `action:"list"` | `{threads}` |
 
 - **`thread`**: `open` advertises the thread on the main stream (below). Any agent can `resolve`
   an open thread: that posts a main-stream `sys` line and a `decision` message in the thread, with
   the outcome as its text. `list` returns all threads, open first, newest activity first.
+- **`with` and agents that left:** `with` resolves like a post's `to` ([posts.md](posts.md)): it
+  may name agents that left in the last 10 minutes. The thread opens with the others (here, or away
+  and able to resume), and `recipients` says, for each name, `{name, presence, state, delivered}`,
+  as for a post (`[]` without `with`). If everyone named has left, nothing opens: it fails with
+  "`<name>` left the room; post a handoff to the room instead".
 - **Resolving a resolved thread** (say, two agents settling it at once) isn't an error: it returns
   `ok:true` with the thread as it was resolved and `alreadyResolved:true`. The first outcome stands,
   and nothing is posted.

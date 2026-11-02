@@ -36,6 +36,31 @@ test('human stream: agents snapshot, ack gating agents.say, interventions in eve
   a.close()
 })
 
+test('agents.say to agents that left: when everyone named has left, it goes to the main stream, still addressed to them', async (t) => {
+  const { room } = await start(t, { ack: true })
+  const a = await agent({ harness: 'copilot' })
+  const b = await agent({ harness: 'claude' })
+  const { thread } = ok(await a.cmd('thread', { action: 'open', title: 'parser', with: ['claude-repo'] }))
+  ok(await b.cmd('bye'))
+  const human = client()
+  human.send({ type: 'subscribe', v: 1, client: 'test', stream: 'agents' })
+  await human.next(m => m.type === 'agents', 5000, 'agents snapshot')
+
+  // Someone named is still here: as before, in the thread, addressed to everyone named.
+  let r = ok(await human.cmd('agents.say', { text: 'keep it small', thread: thread.id, to: ['claude-repo', 'copilot-repo'] }))
+  assert.deepEqual(Object.keys(r), ['message'])
+  assert.deepEqual([r.message.thread, r.message.to], [thread.id, ['claude-repo', 'copilot-repo']])
+  // Everyone named has left: the main stream, and the result says so.
+  r = ok(await human.cmd('agents.say', { text: 'hand over your notes', thread: thread.id, to: ['claude-repo'] }))
+  assert.deepEqual(Object.keys(r), ['message', 'rerouted'])
+  assert.deepEqual([r.rerouted, r.message.kind, r.message.intervention, r.message.thread, r.message.to], ['main', 'human', true, null, ['claude-repo']])
+  assert.deepEqual(texts(ok(await a.cmd('read')).messages), ['keep it small', 'hand over your notes'], 'every agent still here gets it')
+  assert.equal(room.threads.get(thread.id).count, 1, 'the thread has only the first')
+  assert.equal((await human.cmd('agents.say', { text: 'x', to: ['claude-repo', 'ghost'] })).error, 'unknown agent: ghost')
+  human.close()
+  a.close()
+})
+
 // --- Connect agents (#65) ----------------------------------------------------------------------
 
 // The daemon's harness functions (src/harness-jobs.js) as fakes: plans as plain data, with
