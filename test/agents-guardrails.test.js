@@ -22,12 +22,11 @@ test('guardrails: budgets with retryAfterMs, and secret blocking that never echo
   clock += 599000
   ok(await a.cmd('post', { text: 'back again' }))
 
+  // A status within 5 s of the last one isn't refused: it's deferred (agents-status.test.js).
   ok(await a.cmd('status', { state: 'testing' }))
   clock += 1200
-  r = await a.cmd('status', { state: 'done' })
-  assert.deepEqual([r.ok, r.error, r.retryAfterMs], [false, 'rate limited', 3800])
-  clock += 3800
-  ok(await a.cmd('status', { state: 'done' }))
+  r = ok(await a.cmd('status', { state: 'done' }))
+  assert.deepEqual([r.deferred, r.appliesInMs], [true, 3800])
 
   const token = fake('gh', 'p_', 'Zz9'.repeat(12))
   r = await a.cmd('post', { text: `use ${token} for the API` })
