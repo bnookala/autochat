@@ -21,7 +21,8 @@ function mergeStatus (prev, msg) {
 }
 
 export const methods = {
-  _status (agent, msg) {
+  // `later`: applied when its gap ended (_statusLater), so its result goes to nobody.
+  _status (agent, msg, later = false) {
     const L = this.limits
     const patch = {}
     if (!opt(msg.summary)) {
@@ -60,7 +61,7 @@ export const methods = {
     // overlap.js recomputes the agent's overlaps.
     this._hook('status', agent, msg)
     this._changed()
-    return this._contribute('status', { agent, msg })
+    return this._contribute('status', { agent, msg, later })
   },
 
   // Within the gap (or while one is waiting): kept, merged into any status already waiting, and
@@ -81,7 +82,7 @@ export const methods = {
     if (!later || agent.left || this.closed) return
     agent.lastStatusAt = null // the gap is over
     try {
-      this._status(agent, later.msg)
+      this._status(agent, later.msg, true)
     } catch (err) {
       // It was valid when it was deferred; only the room can have changed since.
       if (!(err instanceof AgentError)) this.emit('error-log', err)

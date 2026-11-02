@@ -218,7 +218,7 @@ test('status returns knownComponents: the other cards\' components for your repo
   clock += 10
   let r = ok(await a.cmd('status', { focus: { components: ['Greetings', 'i18n'] } }))
   assert.deepEqual(r.knownComponents, [], 'only other cards, only your repo')
-  assert.deepEqual(Object.keys(r), ['card', 'overlaps', 'knownComponents', 'pending'])
+  assert.deepEqual(Object.keys(r), ['card', 'overlaps', 'knownComponents', 'relevant', 'pending'])
   clock += 10
   r = ok(await b.cmd('status', { focus: { components: ['greeting', 'cli'] } }))
   assert.deepEqual(r.knownComponents, ['Greetings', 'i18n'])

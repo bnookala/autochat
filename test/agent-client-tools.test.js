@@ -75,3 +75,16 @@ test('tool calls: thread passes owner and next (a string is one step per line); 
   relevant = null
   assert.deepEqual((await tools.call('catch_up', {})).structuredContent.relevant, [], 'an older daemon: none')
 })
+
+test('tool calls: status marks its relevant decisions as from someone else, like catch_up', async () => {
+  const { Tools } = await import('../src/agent-client.js')
+  const decision = { seq: 3, kind: 'decision', from: { id: 'ffff0000' }, text: 'One cache per repo.' }
+  let relevant = [decision]
+  const link = { on () {}, agent: { id: 'a1b2c3d4' }, request: async () => ({ ok: true, result: { card: {}, overlaps: [], knownComponents: [], ...(relevant && { relevant }), pending: {} }, inbox: { unread: 0, mentions: 0 } }) }
+  const tools = new Tools({ link, session: { cwd: tmp, top: null } })
+  const out = (await tools.call('status', { summary: 'cache', autoPaths: false })).structuredContent
+  assert.deepEqual(out.relevant, [{ ...decision, untrusted: true }])
+  assert.deepEqual(Object.keys(out), ['card', 'overlaps', 'knownComponents', 'relevant', 'pending', 'inbox'])
+  relevant = null
+  assert.equal('relevant' in (await tools.call('status', { summary: 'cache', autoPaths: false })).structuredContent, false, 'only when the daemon sends it')
+})

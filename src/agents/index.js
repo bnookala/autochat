@@ -35,7 +35,7 @@ const MODULES = [guardrails, names, hello, status, presence, overlap, board, pos
 // its place.
 //   card     ctx {agent}                       an agent's card
 //   catchUp  ctx {agent, msg}                  the catchUp result
-//   status   ctx {agent, msg}                  the status result
+//   status   ctx {agent, msg, later}           the status result (later: applied after its gap, for nobody)
 //   post     ctx {agent, msg, entry, thread}   the post result
 //   read     ctx {agent, msg}                  the read result
 //   message  ctx {entry}                       a message as agents and humans see it
