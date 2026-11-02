@@ -48,7 +48,8 @@ export const CONTRIBUTIONS = ['card', 'catchUp', 'status', 'post', 'read', 'mess
 //   post     (entry, {thread, mentions})  a message was added to the log: posts, sys, overlap, human
 //   status   (agent, msg)                 a status command was applied; its result comes next
 //   deliver  (agent, entries)             catchUp, read or wait returns these, now marked read
-export const HOOKS = ['init', 'join', 'leave', 'post', 'status', 'deliver']
+//   command  (agent, msg)                 an agent command is about to run: fail() refuses it
+export const HOOKS = ['init', 'join', 'leave', 'post', 'status', 'deliver', 'command']
 
 export const registry = {
   commands: new Map(), // agent command name → fn.call(room, agent, msg)
@@ -124,6 +125,7 @@ export class AgentRoom extends EventEmitter {
   _command (agent, msg) {
     const run = registry.commands.get(msg.cmd)
     if (!run) fail('unknown command')
+    this._hook('command', agent, msg)
     return run.call(this, agent, msg)
   }
 

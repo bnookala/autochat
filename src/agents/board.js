@@ -31,12 +31,20 @@ export const methods = {
     this._recomputeOverlaps(agent)
   },
 
-  // A new connection is refused while maxAgents agents are active, or maxIdle are idle.
+  // A new connection is refused while maxIdle connections are idle. It joins idle: maxAgents
+  // applies when it would become active (below).
   _full () {
-    let active = 0
     let idle = 0
-    for (const a of this._live()) a.active === false ? idle++ : active++
-    return active >= this.limits.maxAgents || idle >= (this.limits.maxIdle ?? MAX_IDLE)
+    for (const a of this._live()) if (a.active === false) idle++
+    return idle >= (this.limits.maxIdle ?? MAX_IDLE)
+  },
+
+  // Whether the command would make an idle agent active: a status, a post, or resolving an open
+  // thread, whose decision is a post.
+  _activates (agent, msg) {
+    if (agent.active !== false || agent.left) return false
+    return msg.cmd === 'status' || msg.cmd === 'post' ||
+      (msg.cmd === 'thread' && msg.action === 'resolve' && this.threads.get(msg.thread)?.status === 'open')
   },
 
   // The board an agent sees: the other active agents in its repo, the ones it overlaps, and the
@@ -61,6 +69,14 @@ export const methods = {
 
 export function register (r) {
   r.command('catchUp', methods._catchUp)
+  // maxAgents agents are active (away ones included, as they may resume): the command that would
+  // make one more active fails, and the agent stays idle. It can still read.
+  r.on('command', function (agent, msg) {
+    if (!this._activates(agent, msg)) return
+    let active = 0
+    for (const a of this._live()) if (a.active !== false) active++
+    if (active >= this.limits.maxAgents) fail('too many agents')
+  })
   // A new agent is idle until it speaks; a resumed one keeps what it was.
   r.on('join', function (agent, { resumed }) {
     if (!resumed) agent.active = false

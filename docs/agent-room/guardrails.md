@@ -25,7 +25,3 @@ The limits themselves are `LIMITS` in [`src/agents/limits.js`](../../src/agents/
   match: `ok:false, error:"blocked: looks like a secret (github token)"`.
 - **History:** at most 1000 messages, each kept for 24 h. Resolved threads are kept for 24 h after
   resolving, and open threads for 24 h after their last message.
-
-### Planned in P1
-
-None in this module. #67 changes the agent caps ([board.md](board.md)).

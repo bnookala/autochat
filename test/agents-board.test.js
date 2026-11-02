@@ -93,24 +93,39 @@ test('scale: 100 agents in 10 repos; the board has only your repo, your overlaps
   for (const a of [...agents, loose]) a.close()
 })
 
-test('caps: maxAgents counts active agents only; idle connections are capped too (too many agents)', async (t) => {
+test('caps: maxAgents applies when an agent would become active; idle connections are capped (too many agents)', async (t) => {
   const { room } = await start(t, { limits: { maxAgents: 2, maxIdle: 3, resumeMs: 20, lingerMs: 20 } })
   const idle = [1, 2, 3].map(i => direct(room, { harness: 'copilot', name: `idle-${i}` }))
   assert.ok(idle.every(a => a.welcome.type === 'agent-welcome'))
   const refused = direct(room, { harness: 'copilot', name: 'one-more' })
   assert.deepEqual(refused.welcome, { type: 'error', v: 1, error: 'too many agents' }, 'past the idle cap')
-  // Two of them speak: they're active, and the idle cap has room again…
+  // Two of them speak: they're active, and the idle cap has room again.
   ok(idle[0].cmd('status', { summary: 'busy' }))
   ok(idle[1].cmd('post', { text: 'hello' }))
-  // …but maxAgents (2) are active, so a new connection is refused.
-  assert.deepEqual(direct(room, { harness: 'copilot', name: 'late' }).welcome.error, 'too many agents')
-  // One active agent leaves: room again.
-  idle[0].close()
-  await sleep(60)
+  const { thread } = ok(idle[0].cmd('thread', { action: 'open', title: 'caps', with: ['idle-3'] }))
+
+  // maxAgents (2) are active: an idle agent's status, post or resolve fails, and changes nothing.
+  // It stays idle, and can still read.
+  const last = idle[2]
+  const seq = room.seq
+  for (const [cmd, args] of [['status', { summary: 'me too' }], ['post', { text: 'me too' }], ['thread', { action: 'resolve', thread: thread.id, outcome: 'done' }]]) {
+    assert.deepEqual(last.cmd(cmd, args).error, 'too many agents', cmd)
+  }
+  assert.deepEqual([room.seq, room.threads.get(thread.id).status], [seq, 'open'])
+  const card = room.card(room.agents.get(last.id))
+  assert.deepEqual([card.active, card.summary, card.state], [false, null, 'idle'])
+  for (const cmd of ['read', 'catchUp', 'paths']) assert.equal(last.cmd(cmd, cmd === 'paths' ? { paths: ['src/a.js'] } : {}).ok, true, cmd)
+  assert.equal(ok(last.cmd('thread', { action: 'list' })).threads.length, 1)
+  // A new connection still gets in: it joins idle.
   const next = direct(room, { harness: 'copilot', name: 'next' })
   assert.equal(next.welcome.type, 'agent-welcome')
-  // An idle agent that's already in may still become active.
-  ok(idle[2].cmd('status', { summary: 'me too' }))
+
+  // One active agent leaves: room again, for the first to speak.
+  idle[0].close()
+  await sleep(60)
+  ok(last.cmd('status', { summary: 'my turn' }))
+  assert.equal(next.cmd('post', { text: 'and me' }).error, 'too many agents')
+  ok(idle[1].cmd('post', { text: 'active agents are never refused' }))
   assert.deepEqual(room.snapshot().agents.filter(c => c.active && c.present).map(c => c.name), ['idle-2', 'idle-3'])
   for (const a of [...idle, next]) a.close()
 })

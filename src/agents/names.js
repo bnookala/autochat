@@ -132,6 +132,17 @@ export const methods = {
     return (agent.parent && this.agents.get(agent.parent)?.name) || null
   },
 
+  // An idle agent's name follows its title, so a title that comes after its hello still names
+  // it: Copilot names a session after its first prompt. Not once it chose a name (autoName is
+  // null), became active (spoke), or a message mentioned it: by then others may know it by name.
+  _followTitle (agent) {
+    if (agent.active !== false || agent.left || agent.mentioned || !agent.autoName) return
+    const base = slug(agent.ownTitle || '') || defaultName(agent)
+    if (base === agent.autoName) return
+    agent.autoName = base
+    agent.name = dedupeName(base, this._takenNames(agent), agent.branch)
+  },
+
   // status({name}): deduped against the agents in the room. An idle agent joins under its new
   // name instead (board.js).
   _rename (agent, name) {
@@ -175,8 +186,18 @@ export function register (r) {
   // Names of agents that are gone, for messages and threads that outlive them.
   r.on('init', function () { this.formerNames = new Map() })
   // ownTitle: the title from status({title}); parent: the parent agent's id (status({parent})).
+  // mentioned: a message has named the agent (in `to` or with @name).
   r.on('join', function (agent, { resumed }) {
-    if (!resumed) Object.assign(agent, { ownTitle: null, parent: null })
+    if (!resumed) Object.assign(agent, { ownTitle: null, parent: null, mentioned: false })
+  })
+  r.on('post', function (entry, { mentions }) {
+    for (const id of mentions) { const a = this.agents.get(id); if (a) a.mentioned = true }
+  })
+  // Before hello.js's status hook makes the agent active: its first status's title still names it.
+  // A name it chose (status({name})) stays.
+  r.on('status', function (agent, msg) {
+    if (!opt(msg.name)) agent.autoName = null
+    else if (!opt(msg.title)) this._followTitle(agent)
   })
   r.contribute('card', function ({ agent }) {
     return { id: agent.id, name: agent.name, display: this._display(agent), human: this.human, title: this._titleOf(agent), parent: this._parentName(agent) }

@@ -30,8 +30,15 @@ A hello's title that looks like a secret is dropped; a `status` title is refused
 
 **Names.** An agent's name is a slug of its title when it joins: lowercase `[a-z0-9-]`, accents
 folded (`Café Menü` → `cafe-menu`), at most 32 characters, cut between words. A title with nothing
-to slug (`日本語のタスク`) leaves it to the next one down the list. The name doesn't follow later
-title changes: rename with `status({name})`.
+to slug (`日本語のタスク`) leaves it to the next one down the list.
+
+- **An idle agent's name follows its title** ([board.md](board.md#active-and-idle-agents)): a title
+  that comes after the hello renames it, silently, as long as it hasn't chosen a name (the hello's
+  `name`, or `status({name})`) and no message has mentioned it (`to` or `@name`). Copilot names a
+  session after its first prompt, after the hello: the title then comes with the agent's first
+  `status` ([status.md](status.md), sent by `autochat mcp`), which renames it before it joins
+  under the new name, or with a resume's hello, before the welcome. Once the agent is active, or
+  was mentioned, its name stays: rename with `status({name})`.
 
 - **Collisions** with an agent in the room (present, or away within the resume window): append
   `-<branch slug>` (up to 15 characters), unless the name already ends with it, then `-2`, `-3`,
