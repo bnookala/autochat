@@ -1,17 +1,17 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { fileURLToPath } from 'node:url'
 import createTestnet from 'hyperdht/testnet.js'
+import { tmpDir } from './helpers/tmp.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const BIN = path.join(ROOT, 'bin', 'autochat.js')
 const MODULE = path.join(ROOT, 'src', 'harness', 'pi-extension.js')
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'autochat-pi-'))
+const tmp = tmpDir()
 process.env.AUTOCHAT_HOME = path.join(tmp, 'ac')
 process.env.COPILOT_HOME = path.join(tmp, 'copilot')
 const H = await import('../src/harness/index.js')

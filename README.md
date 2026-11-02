@@ -248,6 +248,10 @@ cd macos && swift build && swift test   # the macOS app (see macos/README.md)
 
 Pull requests: [CONTRIBUTING.md](CONTRIBUTING.md). Dependent changes go in a GitHub stack.
 
+Tests that use a unix socket make their temp dirs with `tmpDir()` from `test/helpers/tmp.js`. A
+socket's path is at most 104 bytes, so under a long `TMPDIR` those dirs go in a shorter temp dir:
+`XDG_RUNTIME_DIR`, macOS's per-user temp dir, or `/tmp`.
+
 Env overrides: `AUTOCHAT_HOME` (default `~/.autochat`), `COPILOT_HOME` (default `~/.copilot`),
 `AUTOCHAT_BOOTSTRAP=host:port,...` (custom DHT bootstrap), `AUTOCHAT_COUNTDOWN_MS` (exit countdown length),
 `AUTOCHAT_APP_DIRS` (where to look for `AutoChat.app`, default `/Applications:~/Applications`),

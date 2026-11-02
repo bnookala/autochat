@@ -1,10 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
+import { tmpDir } from './helpers/tmp.js'
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'autochat-agents-view-'))
+const tmp = tmpDir()
 process.env.AUTOCHAT_HOME = path.join(tmp, 'ac')
 process.env.TZ = 'UTC'
 const { renderAgents, plainLines, agentsSay, connectAgents, WARNING, NOT_RUNNING } = await import('../src/agents-view.js')

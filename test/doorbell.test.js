@@ -1,18 +1,18 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import os from 'node:os'
 import net from 'node:net'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { tmpDir } from './helpers/tmp.js'
 
 // The doorbell's harness side (#52), against a fake daemon socket: what the hooks, the opencode
 // plugin and the pi extension ask, and what they put in front of the model.
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const BIN = path.join(ROOT, 'bin', 'autochat.js')
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'autochat-db-'))
+const tmp = tmpDir()
 const home = path.join(tmp, 'd')
 process.env.AUTOCHAT_HOME = home
 process.env.COPILOT_HOME = path.join(tmp, 'copilot')
