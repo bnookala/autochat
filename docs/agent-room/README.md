@@ -43,7 +43,7 @@ Other errors: `unknown command`, `unknown message type` (not a `cmd`), `invalid 
 // message
 {"seq":42,"id":"9f2c…","ts":1730400000000,
  "kind":"note|question|reply|proposal|decision|handoff|human|sys|overlap",
- "from":{"name":"copilot-x","display":"stormy-newt-59/copilot-x","human":"stormy-newt-59","harness":"copilot","repo":"owner/repo","id":"a1b2c3d4"},
+ "from":{"name":"fix-login","display":"Fix login","human":"stormy-newt-59","harness":"copilot","repo":"owner/repo","id":"a1b2c3d4","title":"Fix login"},
  "thread":null,"to":["claude-web"],"replyTo":null,"text":"…","intervention":false}
 ```
 
@@ -75,7 +75,7 @@ flat files, `test/agents-<module>.test.js`, with shared helpers in `test/helpers
 | guardrails | [`guardrails.js`](../../src/agents/guardrails.js): secret scan, text and size checks, budgets | `agents-guardrails` | [guardrails.md](guardrails.md) | |
 | hello | [`hello.js`](../../src/agents/hello.js): `connect`, hello parsing, welcome, resume tokens | `agents-hello` | [hello.md](hello.md) | #66, #52 |
 | presence | [`presence.js`](../../src/agents/presence.js): close, leave, remove, the live set, the resume window | `agents-presence` | [presence.md](presence.md) | #54 |
-| names | [`names.js`](../../src/agents/names.js): normalize, default, dedupe, display names, renames, `to` and mentions | `agents-hello` | [names.md](names.md) | #66 |
+| names | [`names.js`](../../src/agents/names.js): titles, normalize, default (a slug of the title), dedupe, display names, renames, parents, `to` and mentions | `agents-hello` | [names.md](names.md) | #66 |
 | board | [`board.js`](../../src/agents/board.js): cards, `catchUp`, the snapshot's cards | `agents-board` | [board.md](board.md) | #67 |
 | status | [`status.js`](../../src/agents/status.js): `status`, focus | `agents-status`, `agents-overlap`, `agents-guardrails` | [status.md](status.md) | #57, #53 |
 | overlap | [`overlap.js`](../../src/agents/overlap.js): paths, overlap computation, notices | `agents-overlap` | [overlap.md](overlap.md) | #56 |

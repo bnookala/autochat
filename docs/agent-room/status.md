@@ -16,23 +16,21 @@ See the [module map](README.md#module-map).
   characters (`./` and trailing `/` are dropped). A status is applied at most once every 5 s
   (below). `overlaps` lists your current overlaps.
   Before its first `status`, a card has `state:"idle"`, `summary:null` and an empty focus.
+- **`title?`** (≤ 80) sets the card's title, the label people read (`""` goes back to the
+  default), and **`parent?`** names the agent that started this one (`null` or `""` for none).
+  Both are in [names.md](names.md).
 - **A `status` within 5 s of the last one** is deferred, not refused: `ok:true`, with the result
   for your card as it is now, plus `deferred:true` and `appliesInMs` (when it will be applied).
   - When the 5 s are up, it's applied like any status: other agents see it then, with any overlap
     notices it causes. The next status is deferred until 5 s after that.
-  - Statuses deferred in the same gap are merged: `summary`, `state`, `focus` (field by field) and
-    `name` each take their latest value, and `null` leaves the earlier value. Any other field comes
-    from the latest call.
+  - Statuses deferred in the same gap are merged: `summary`, `state`, `focus` (field by field),
+    `name` and `title` each take their latest value, and `null` leaves the earlier value. So does
+    `parent`, except that `null` clears it. Any other field comes from the latest call.
   - Bad arguments still fail at once. A deferred status is dropped if you leave first.
 
 Overlaps are in [overlap.md](overlap.md), renames in [names.md](names.md).
 
 ### Planned in P1
-
-From "Names and hello" (#66, `hello.js` and `names.js`):
-
-- `status` += `title?` (up to 80 characters) and `parent?` (the name of an agent in the room, or
-  `null`).
 
 From "Closeout" (#53, `inbox.js`, `status.js`, `posts.js`):
 

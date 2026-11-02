@@ -327,6 +327,7 @@ test('extension: the agent-room tools against a real daemon: presence, status, p
   const home = path.join(tmp, 'd')
   fs.mkdirSync(home, { recursive: true })
   const env = { ...baseEnv, HOME: path.join(tmp, 'dh'), AUTOCHAT_HOME: home, COPILOT_HOME: path.join(tmp, 'copilot'), AUTOCHAT_APP_DIRS: path.join(tmp, 'no-apps'), AUTOCHAT_NO_NOTIFY: '1', AUTOCHAT_NO_FOCUS: '1', AUTOCHAT_AGENT_RESUME_MS: '2000' }
+  env.AUTOCHAT_AGENT_NAME = 'pi-room-repo' // named as before #66, which derives names from titles
   process.env.AUTOCHAT_HOME = home
   t.after(() => { process.env.AUTOCHAT_HOME = path.join(tmp, 'ac') })
   const daemon = spawn(process.execPath, [BIN, 'daemon'], { env, stdio: ['ignore', 'ignore', 'pipe'] })

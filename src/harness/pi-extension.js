@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import { spawn } from 'node:child_process'
 import { envVar } from '../env.js'
 import { TOOLS, instructions, agentHello, gitInfo, DaemonLink, Tools } from '../agent-client.js'
+import { titleLine } from '../agent-client/binding.js'
 
 // The autochat extension for pi (#35). pi has no hooks and no MCP, so the stub that autochat
 // writes to ~/.pi/agent/extensions/autochat.ts loads this module, and it does both jobs:
@@ -174,10 +175,16 @@ const aborted = (signal) => new Promise((resolve) => {
 const RESUME = Symbol.for('autochat.pi.resume')
 const resumeTokens = () => (globalThis[RESUME] ??= new Map())
 
+// The pi session's name (/name), if it has one.
+const sessionName = (ctx) => {
+  try { return titleLine(ctx?.sessionManager?.getSessionName?.()) } catch { return null }
+}
+
 function agentRoom (pi, { env, log, joinDelayMs = JOIN_DELAY_MS }) {
   let link = null
   let tools = null
   let joinTimer = null
+  let lastCtx = null
   // One agent per pi session: who it is, from the first session event or tool call.
   const bind = (ctx) => {
     if (link) return
@@ -186,13 +193,13 @@ function agentRoom (pi, { env, log, joinDelayMs = JOIN_DELAY_MS }) {
     try { cwd = fs.realpathSync(cwd) } catch {}
     const git = gitInfo(cwd)
     const sessionId = ctx.sessionManager?.getSessionId?.() ?? null
-    const hello = agentHello({ harness: 'pi', pid: process.pid, harnessPid: process.pid, sessionId, cwd, git, env })
+    const hello = agentHello({ harness: 'pi', pid: process.pid, harnessPid: process.pid, sessionId, cwd, git, env, title: sessionName(ctx) })
     link = new DaemonLink({ hello, env, log })
     if (sessionId) {
       link.token = resumeTokens().get(sessionId) ?? null
       link.on('connected', () => resumeTokens().set(sessionId, link.token))
     }
-    tools = new Tools({ link, session: { harness: 'pi', cwd, top: git.top } })
+    tools = new Tools({ link, session: { harness: 'pi', cwd, top: git.top, readTitle: () => sessionName(lastCtx) } })
   }
   pi.on('session_start', (e, ctx) => {
     try {
@@ -222,6 +229,7 @@ function agentRoom (pi, { env, log, joinDelayMs = JOIN_DELAY_MS }) {
       parameters: t.inputSchema,
       async execute (toolCallId, params, signal, onUpdate, ctx) {
         bind(ctx)
+        lastCtx = ctx
         clearTimeout(joinTimer)
         if (!link.connected) link.start()
         const result = await Promise.race([tools.call(t.name, isObj(params) ? params : {}, () => !!signal?.aborted), aborted(signal)])
