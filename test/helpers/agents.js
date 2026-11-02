@@ -1,15 +1,15 @@
 import fs from 'node:fs'
-import os from 'node:os'
 import net from 'node:net'
 import path from 'node:path'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
+import { tmpDir } from './tmp.js'
 
 // Shared by test/agents-*.test.js: a temp AUTOCHAT_HOME (set on import, before any src/ module
 // loads), a daemon-like host for the agent room on its socket, and line-level clients.
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
-export const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'autochat-agents-'))
+export const tmp = tmpDir()
 process.env.AUTOCHAT_HOME = path.join(tmp, 'ac')
 const { serve } = await import('../../src/ipc.js')
 const { AgentRoom } = await import('../../src/agents.js')

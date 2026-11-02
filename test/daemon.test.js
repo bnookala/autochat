@@ -1,15 +1,15 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import os from 'node:os'
 import net from 'node:net'
 import path from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import createTestnet from 'hyperdht/testnet.js'
+import { tmpDir } from './helpers/tmp.js'
 
 const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'autochat.js')
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'autochat-daemon-'))
+const tmp = tmpDir()
 process.env.AUTOCHAT_HOME = path.join(tmp, 'lc')
 process.env.COPILOT_HOME = path.join(tmp, 'copilot')
 const { serve, send, MAX } = await import('../src/ipc.js')

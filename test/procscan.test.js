@@ -1,15 +1,15 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import os from 'node:os'
 import net from 'node:net'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { tmpDir } from './helpers/tmp.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const BIN = path.join(ROOT, 'bin', 'autochat.js')
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'autochat-procscan-'))
+const tmp = tmpDir()
 process.env.AUTOCHAT_HOME = path.join(tmp, 'ac')
 process.env.COPILOT_HOME = path.join(tmp, 'copilot')
 const P = await import('../src/harness/procscan.js')
