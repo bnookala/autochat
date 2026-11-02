@@ -111,7 +111,7 @@ test('failed items: an error that ends the turn, one the agent works past, and C
   const c = mk(testnet)
   t.after(() => c.shutdown())
 
-  // Claude's PermissionDenied (once its adapter sends it): it carries on.
+  // Claude's PermissionDenied: auto mode refused a call, and it carries on.
   c.handle(hook('claude', 'c1', 'activity'))
   c.handle(hook('claude', 'c1', 'failed', { reason: 'denied', summary: 'Bash: rm -rf build ([Irreversible Local Destruction])' }))
   let [f] = queue(c)
