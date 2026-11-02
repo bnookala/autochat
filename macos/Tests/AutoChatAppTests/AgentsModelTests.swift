@@ -16,6 +16,22 @@ final class FakeAgentsDaemon {
     }
 }
 
+/// Holds a reply until the test opens it.
+@MainActor
+final class ReplyGate {
+    private var waiting: CheckedContinuation<Void, Never>?
+    var isWaiting: Bool { waiting != nil }
+
+    func wait() async {
+        await withCheckedContinuation { waiting = $0 }
+    }
+
+    func open() {
+        waiting?.resume()
+        waiting = nil
+    }
+}
+
 @Suite("App model: Agents tab")
 @MainActor
 struct AgentsTabTests {
@@ -294,6 +310,144 @@ struct AgentsNamesModelTests {
         model.toggleIdle()
         #expect(names().count == 6)
         #expect(AgentsModel(fixture: Fixtures.agentsIdle(now: Date()), idleExpanded: true).boardRows.contains(.idle(count: 3, expanded: true)))
+    }
+}
+
+@Suite("App model: connect agents")
+@MainActor
+struct AgentsConnectModelTests {
+    private func json(_ text: String) -> JSONValue? {
+        try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))
+    }
+
+    private let plans = #"""
+    {"plans":[{"id":"copilot","name":"Copilot CLI","action":"add","where":"~/.copilot/mcp-config.json","detail":"Adds the autochat MCP server."},
+              {"id":"claude","name":"Claude Code","action":"ok","where":"claude mcp (user scope)"},
+              {"id":"gemini","name":"Gemini CLI","action":"manual","detail":"settings.json isn't plain JSON"},
+              {"id":"opencode","name":"opencode","action":"absent"},
+              {"id":"codex","name":"Codex","action":"update","where":"~/.codex/config.toml"},
+              {"id":"pi","name":"pi","action":"absent"}]}
+    """#
+
+    @Test func theSheetLoadsThePlanAndConnectsTheCheckedTools() async {
+        let daemon = FakeAgentsDaemon()
+        daemon.replies["agents.setupPlan"] = Reply(id: 1, ok: true, result: json(plans))
+        daemon.replies["agents.setup"] = Reply(id: 2, ok: true, result: json(#"{"applied":["copilot"],"failed":[{"id":"codex","error":"read-only"}]}"#))
+        let model = AgentsModel(send: { try await daemon.send($0) })
+        model.apply(Fixtures.agentsEmpty(now: Date()))
+        #expect(!model.setup.isShown)
+
+        await model.openSetup()
+        #expect(daemon.sent == [.agentsSetupPlan])
+        #expect(model.setup.phase == .ready)
+        #expect(model.setup.plans.map(\.id) == ["copilot", "claude", "gemini", "opencode", "codex", "pi"])
+        #expect(model.setup.selection == ["copilot", "codex"], "add and update start checked")
+        model.toggleSetup("gemini")
+        model.toggleSetup("claude")
+        #expect(model.setup.selection == ["copilot", "codex"])
+
+        await model.connectAgents()
+        #expect(daemon.sent.last == .agentsSetup(harnesses: ["copilot", "codex"]))
+        #expect(model.setup.phase == .done)
+        #expect(model.setup.result == AgentSetupResult(applied: ["copilot"], failed: [.init(id: "codex", error: "read-only")]))
+        #expect(AgentsRules.setupSummary(model.setup) == "Connected Copilot CLI. Codex didn't connect.")
+        model.closeSetup()
+        #expect(!model.setup.isShown)
+    }
+
+    @Test func uncheckedToolsStayOut() async {
+        let daemon = FakeAgentsDaemon()
+        daemon.replies["agents.setupPlan"] = Reply(id: 1, ok: true, result: json(plans))
+        daemon.replies["agents.setup"] = Reply(id: 2, ok: true, result: json(#"{"applied":["copilot"],"failed":[]}"#))
+        let model = AgentsModel(send: { try await daemon.send($0) })
+        await model.openSetup()
+        model.toggleSetup("codex")
+        await model.connectAgents()
+        #expect(daemon.sent.last == .agentsSetup(harnesses: ["copilot"]))
+        // Nothing checked: Connect does nothing.
+        model.closeSetup()
+        await model.openSetup()
+        model.toggleSetup("copilot")
+        model.toggleSetup("codex")
+        let before = daemon.sent.count
+        await model.connectAgents()
+        #expect(daemon.sent.count == before)
+        #expect(model.setup.phase == .ready)
+    }
+
+    @Test func aDaemonWithoutThePlanShowsTheCommandInstead() async {
+        let daemon = FakeAgentsDaemon()
+        daemon.replies["agents.setupPlan"] = Reply(id: 1, ok: false, error: "unknown command")
+        let model = AgentsModel(send: { try await daemon.send($0) })
+        await model.openSetup()
+        #expect(model.setup.phase == .failed)
+        #expect(model.setup.error == "unknown command")
+        #expect(AgentsSetupSheet.command == "autochat setup --agents")
+        // Try Again asks once more.
+        daemon.replies["agents.setupPlan"] = Reply(id: 2, ok: true, result: json(plans))
+        await model.openSetup()
+        #expect(model.setup.phase == .ready)
+        // An empty or missing plan is a failure too.
+        daemon.replies["agents.setupPlan"] = Reply(id: 3, ok: true, result: json(#"{"plans":[]}"#))
+        model.closeSetup()
+        await model.openSetup()
+        #expect(model.setup.phase == .failed)
+    }
+
+    @Test func aFailedConnectKeepsThePlan() async {
+        let daemon = FakeAgentsDaemon()
+        daemon.replies["agents.setupPlan"] = Reply(id: 1, ok: true, result: json(plans))
+        daemon.replies["agents.setup"] = Reply(id: 2, ok: false, error: "rate limited")
+        let model = AgentsModel(send: { try await daemon.send($0) })
+        await model.openSetup()
+        await model.connectAgents()
+        #expect(model.setup.phase == .ready)
+        #expect(model.setup.error == "rate limited")
+        #expect(model.setup.selection == ["copilot", "codex"])
+        // A transport failure too, and an answer without a result is "nothing changed".
+        let gone = AgentsModel(send: { command in
+            if command == .agentsSetupPlan { return Reply(id: 1, ok: true, result: try JSONDecoder().decode(JSONValue.self, from: Data(#"{"plans":[{"id":"copilot","action":"add"}]}"#.utf8))) }
+            throw CommandError.disconnected
+        })
+        await gone.openSetup()
+        await gone.connectAgents()
+        #expect(gone.setup.error == CommandError.disconnected.localizedDescription)
+        daemon.replies["agents.setup"] = Reply(id: 3, ok: true)
+        await model.connectAgents()
+        #expect(model.setup.phase == .done)
+        #expect(AgentsRules.setupSummary(model.setup) == "Nothing changed.")
+    }
+
+    @Test func aClosedSheetIgnoresALateAnswer() async {
+        let gate = ReplyGate()
+        let model = AgentsModel(send: { _ in
+            await gate.wait()
+            return Reply(id: 1, ok: true, result: try JSONDecoder().decode(JSONValue.self, from: Data(#"{"plans":[{"id":"copilot","action":"add"}]}"#.utf8)))
+        })
+        let opening = Task { await model.openSetup() }
+        while !gate.isWaiting { await Task.yield() }
+        #expect(model.setup.phase == .loading)
+        // Cancel while the daemon is still thinking: its answer must not reopen the sheet.
+        model.closeSetup()
+        gate.open()
+        await opening.value
+        #expect(!model.setup.isShown)
+    }
+
+    @Test func fixturesNeverSend() async {
+        let model = AgentsModel(fixture: Fixtures.agentsEmpty(now: Date()))
+        await model.openSetup()
+        #expect(!model.setup.isShown)
+    }
+
+    @Test func theTabShowsOnAFreshInstall() {
+        let model = connectedModel()
+        model.apply(Fixtures.connectLounge(now: Date()))
+        #expect(model.showsAgentsTab, "agents is non-null before anyone connects")
+        model.selectTab(.agents)
+        #expect(model.effectiveTab == .agents)
+        model.apply(Fixtures.lounge())
+        #expect(!model.showsAgentsTab, "a daemon without an agent room")
     }
 }
 

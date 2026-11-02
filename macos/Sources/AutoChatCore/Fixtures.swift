@@ -150,6 +150,42 @@ public enum Fixtures {
         return s
     }
 
+    // MARK: Connect agents (issue #65)
+
+    /// A fresh install: the daemon hosts an empty agent room, three agents are running here
+    /// without reaching it, Claude Code is connected, and three tools could be.
+    public static func connectLounge(now: Date) -> Snapshot {
+        var s = lounge()
+        s.agents = LoungeAgents(present: 0, openThreads: 0, connected: ["claude"], available: ["copilot", "codex", "gemini"])
+        s.detected = DetectedAgents(scannedAt: now.addingTimeInterval(-9), agents: [
+            DetectedAgent(harness: .claude, pid: 4200, cwd: "~/code/web", startedAt: now.addingTimeInterval(-3600)),
+            DetectedAgent(harness: .copilot, pid: 5120, cwd: "~/code/autochat", startedAt: now.addingTimeInterval(-1500)),
+            DetectedAgent(harness: .copilot, pid: 5377, cwd: "~/code/api-server", startedAt: now.addingTimeInterval(-600))
+        ])
+        return s
+    }
+
+    /// The agents stream of an empty room.
+    public static func agentsEmpty(now: Date) -> AgentsSnapshot {
+        AgentsSnapshot(now: now, tier: "local", human: me.handle, ack: false)
+    }
+
+    /// `agents.setupPlan` on that Mac: one of each action.
+    public static let setupPlans: [AgentSetupPlan] = [
+        AgentSetupPlan(id: "copilot", name: "Copilot CLI", action: .add, location: "~/.copilot/mcp-config.json", detail: "Adds the autochat MCP server. The Copilot app picks it up at once."),
+        AgentSetupPlan(id: "claude", name: "Claude Code", action: .update, location: "claude mcp (user scope)", detail: "Points autochat at this install (it ran an older one)."),
+        AgentSetupPlan(id: "codex", name: "Codex", action: .add, location: "~/.codex/config.toml", detail: "Adds [mcp_servers.autochat]."),
+        AgentSetupPlan(id: "opencode", name: "opencode", action: .ok, location: "~/.config/opencode/plugin/autochat.js"),
+        AgentSetupPlan(id: "gemini", name: "Gemini CLI", action: .manual, location: "~/.gemini/settings.json", detail: "~/.gemini/settings.json isn't plain JSON (comments?), so autochat won't rewrite it."),
+        AgentSetupPlan(id: "pi", name: "pi", action: .absent, detail: "Not installed")
+    ]
+
+    /// `agents.setup` for the checked ones: two connected, one failed.
+    public static let setupResult = AgentSetupResult(
+        applied: ["copilot", "claude"],
+        failed: [.init(id: "codex", error: "~/.codex/config.toml is read-only (EACCES).")]
+    )
+
     static func agent(_ name: String, _ harness: AgentHarness) -> AgentSender {
         AgentSender(name: name, display: "\(me.handle!)/\(name)", human: me.handle, harness: harness, repo: repo)
     }

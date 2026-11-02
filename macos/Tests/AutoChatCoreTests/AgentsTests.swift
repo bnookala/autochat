@@ -204,6 +204,80 @@ struct AgentsDecodingTests {
         #expect(try lounge(#"{"type":"state","v":1,"phase":"lounge","agents":{"present":2,"openThreads":1,"x":true}}"#).agents == LoungeAgents(present: 2, openThreads: 1))
         #expect(try lounge(#"{"type":"state","v":1,"phase":"lounge","agents":{}}"#).agents == LoungeAgents(present: 0, openThreads: 0))
         #expect(try lounge(#"{"type":"state","v":1,"phase":"lounge","agents":{"present":"3","openThreads":-1}}"#).agents == LoungeAgents(present: 3, openThreads: 0))
+        // P1 (issue #65): which tools are connected, and which could be.
+        let p1 = try lounge(#"{"type":"state","v":1,"phase":"lounge","agents":{"present":0,"openThreads":0,"connected":["claude"],"available":["copilot",7,"","codex"]}}"#)
+        #expect(p1.agents == LoungeAgents(present: 0, openThreads: 0, connected: ["claude"], available: ["copilot", "codex"]))
+        let odd = try lounge(#"{"type":"state","v":1,"phase":"lounge","agents":{"present":1,"connected":"claude","available":null}}"#)
+        #expect(odd.agents?.connected == nil)
+        #expect(odd.agents?.available == nil)
+    }
+
+    @Test func detectedAgentsDecodeLeniently() throws {
+        let s = try lounge(#"""
+        {"type":"state","v":1,"phase":"lounge","detected":{"scannedAt":1730400001000,"agents":[
+          {"harness":"claude","pid":4200,"cwd":"/Users/me/code/y","startedAt":1730396400000,"hooks":"missing"},
+          {"harness":"cursor","pid":"77","cwd":null,"startedAt":null},
+          "garbage",
+          {"pid":9}]}}
+        """#.replacingOccurrences(of: "\n", with: ""))
+        let detected = try #require(s.detected)
+        #expect(detected.scannedAt == Date(timeIntervalSince1970: 1_730_400_001))
+        #expect(detected.agents.map(\.harness) == [.claude, .generic("cursor"), .generic(nil)])
+        #expect(detected.agents[0] == DetectedAgent(harness: .claude, pid: 4200, cwd: "/Users/me/code/y", startedAt: Date(timeIntervalSince1970: 1_730_396_400)))
+        #expect(detected.agents[1].pid == 77)
+        #expect(detected.agents[1].cwd == nil)
+        #expect(try lounge(#"{"type":"state","v":1,"phase":"lounge"}"#).detected == nil)
+        #expect(try lounge(#"{"type":"state","v":1,"phase":"lounge","detected":null}"#).detected == nil)
+    }
+
+    @Test func repliesCarryTheirResult() throws {
+        guard case let .reply(plan) = Inbound.parse(Data(#"{"type":"reply","id":3,"ok":true,"result":{"plans":[{"id":"copilot","action":"add","where":"~/.copilot/mcp-config.json"}]}}"#.utf8)) else {
+            throw CommandError.rejected("not a reply")
+        }
+        #expect(plan.ok)
+        let plans = try #require(plan.result?.decode(AgentSetupPlans.self)?.plans)
+        #expect(plans == [AgentSetupPlan(id: "copilot", name: "Copilot CLI", action: .add, location: "~/.copilot/mcp-config.json")])
+        guard case let .reply(bare) = Inbound.parse(Data(#"{"type":"reply","id":4,"ok":true,"result":null}"#.utf8)) else {
+            throw CommandError.rejected("not a reply")
+        }
+        #expect(bare.result == nil)
+        // A result the client doesn't expect decodes to nothing rather than failing the reply.
+        guard case let .reply(odd) = Inbound.parse(Data(#"{"type":"reply","id":5,"ok":true,"result":[1,"two",{"three":true},null]}"#.utf8)) else {
+            throw CommandError.rejected("not a reply")
+        }
+        #expect(odd.result == .array([.number(1), .string("two"), .object(["three": .bool(true)]), .null]))
+        #expect(odd.result?.decode(AgentSetupPlans.self) == nil)
+    }
+
+    @Test func encodesTheConnectCommands() throws {
+        let plan = Command.agentsSetupPlan.encodedLine(id: 4)
+        #expect(String(decoding: plan, as: UTF8.self) == "{\"cmd\":\"agents.setupPlan\",\"id\":4,\"type\":\"cmd\"}\n")
+        let setup = Command.agentsSetup(harnesses: ["copilot", "codex"]).encodedLine(id: 5)
+        #expect(String(decoding: setup, as: UTF8.self) == "{\"cmd\":\"agents.setup\",\"harnesses\":[\"copilot\",\"codex\"],\"id\":5,\"type\":\"cmd\"}\n")
+        #expect(Command.agentsSetup(harnesses: []).name == "agents.setup")
+    }
+
+    @Test func setupPlansAndResultsDecodeLeniently() throws {
+        let plans = try #require(try JSONDecoder().decode(JSONValue.self, from: Data(#"""
+        {"plans":[{"id":"copilot","name":"Copilot CLI","action":"add","where":"~/.copilot/mcp-config.json","detail":"Adds the autochat MCP server."},
+                  {"id":"claude","action":"update","where":"claude mcp (user scope)","detail":["Points autochat at this install.","It ran an older one."]},
+                  {"id":"opencode","action":"ok"},{"id":"gemini","action":"none"},
+                  {"id":"codex","action":"manual","detail":"config.toml defines autochat inline"},
+                  {"id":"pi","action":"absent"},{"id":"cursor","action":"teleport"},{"id":"aider"},
+                  {"action":"add"},"garbage"]}
+        """#.utf8)).decode(AgentSetupPlans.self)?.plans)
+        #expect(plans.map(\.id) == ["copilot", "claude", "opencode", "gemini", "codex", "pi", "cursor", "aider"])
+        #expect(plans.map(\.action) == [.add, .update, .ok, .ok, .manual, .absent, .unknown("teleport"), .unknown("")])
+        #expect(plans[0].location == "~/.copilot/mcp-config.json")
+        #expect(plans[1].name == "Claude Code", "a name from the harness id")
+        #expect(plans[1].detail == "Points autochat at this install.\nIt ran an older one.")
+        #expect(plans[6].name == "cursor")
+
+        let result = try #require(try JSONDecoder().decode(JSONValue.self, from: Data(#"{"applied":["copilot",3],"failed":[{"id":"codex","error":"read-only"},"pi",{"error":"no id"}]}"#.utf8)).decode(AgentSetupResult.self))
+        #expect(result.applied == ["copilot"])
+        #expect(result.failed == [.init(id: "codex", error: "read-only"), .init(id: "pi")])
+        #expect(result.failure("codex")?.error == "read-only")
+        #expect(try JSONDecoder().decode(JSONValue.self, from: Data("{}".utf8)).decode(AgentSetupResult.self) == AgentSetupResult())
     }
 
     @Test func encodesTheHumanCommands() throws {
@@ -234,9 +308,116 @@ struct AgentsRulesTests {
         // Zero agents left is still a room (the card list just went empty).
         #expect(AgentsRules.showsTab(connected: true, lounge: Fixtures.agentsLounge(present: 0, openThreads: 0)))
         #expect(!AgentsRules.showsTab(connected: false, lounge: Fixtures.agentsLounge()))
+        // P1 daemons send `agents` before anyone connects (issue #65): the tab shows on a fresh install.
+        #expect(AgentsRules.showsTab(connected: true, lounge: Fixtures.connectLounge(now: t0)))
+        // Agents running here without an agent room (an older daemon) don't make a tab.
+        var scanOnly = Fixtures.lounge()
+        scanOnly.detected = Fixtures.connectLounge(now: t0).detected
+        #expect(!AgentsRules.showsTab(connected: true, lounge: scanOnly))
         #expect(AgentsRules.effectiveTab(.agents, showsAgents: true) == .agents)
         #expect(AgentsRules.effectiveTab(.agents, showsAgents: false) == .lounge)
         #expect(AgentsRules.effectiveTab(.lounge, showsAgents: true) == .lounge)
+    }
+
+    @Test func theEmptyRoomSaysWhoIsRunning() throws {
+        let lounge = Fixtures.connectLounge(now: t0)
+        let empty = try #require(AgentsRules.emptyState(cards: [], lounge: lounge.agents, detected: lounge.detected))
+        #expect(empty == AgentsEmptyState(title: "No agents connected yet", running: "3 agents running here aren't connected", canConnect: true))
+        #expect(AgentsRules.isEmptyRoom(Fixtures.agentsEmpty(now: t0)))
+        #expect(!AgentsRules.isEmptyRoom(Fixtures.agents(now: t0)))
+        // One running, nothing to connect: say so, and that a restart picks it up.
+        let one = DetectedAgents(agents: [DetectedAgent(harness: .claude)])
+        let connected = LoungeAgents(present: 0, openThreads: 0, connected: ["claude"], available: [])
+        #expect(AgentsRules.emptyState(cards: [], lounge: connected, detected: one) == AgentsEmptyState(
+            title: "No agents connected yet", running: "1 agent running here isn't connected",
+            hint: "Their tools are connected: sessions that started before that join once they restart.", canConnect: false
+        ))
+        // Nothing running, nothing known: just the title.
+        #expect(AgentsRules.emptyState(cards: [], lounge: LoungeAgents(), detected: nil) == AgentsEmptyState(title: "No agents connected yet"))
+        // Cards that aren't here (left, reconnecting, or a room's history): "right now".
+        let gone = [AgentCard(id: "a", name: "a", presence: .left), AgentCard(id: "b", name: "b", presence: .away)]
+        #expect(AgentsRules.emptyState(cards: gone, lounge: lounge.agents, detected: nil)?.title == "No agents connected right now")
+        // Anyone here, idle or not, and there's no empty state.
+        #expect(AgentsRules.emptyState(cards: [AgentCard(id: "i", name: "i", active: false)], lounge: lounge.agents, detected: lounge.detected) == nil)
+        // Connect agents… whenever something is available, with or without agents here.
+        #expect(AgentsRules.canConnect(lounge.agents))
+        #expect(!AgentsRules.canConnect(LoungeAgents(present: 2, openThreads: 0)), "a daemon from before P1")
+        #expect(!AgentsRules.canConnect(nil))
+        #expect(AgentsRules.availableText(lounge.agents) == "Not connected yet: Copilot CLI, Codex and Gemini CLI")
+        #expect(AgentsRules.availableText(LoungeAgents(available: ["cursor"])) == "Not connected yet: cursor")
+        #expect(AgentsRules.availableText(LoungeAgents()) == nil)
+        #expect(AgentsRules.runningByHarness(lounge.detected) == [AgentsRunning(harness: .copilot, count: 2), AgentsRunning(harness: .claude, count: 1)])
+        #expect(AgentsRules.runningByHarness(nil).isEmpty)
+    }
+
+    @Test func thePlanMapsToCheckboxes() {
+        var setup = AgentsSetup()
+        #expect(!setup.isShown)
+        setup.begin()
+        #expect(setup.phase == .loading && setup.isShown)
+        setup.loaded(Fixtures.setupPlans)
+        #expect(setup.phase == .ready)
+        // add and update start checked; ok, manual and absent can't be.
+        #expect(setup.checked == ["copilot", "claude", "codex"])
+        #expect(setup.selection == ["copilot", "claude", "codex"])
+        #expect(Fixtures.setupPlans.map(\.action.isSelectable) == [true, true, true, false, false, false])
+        #expect(Fixtures.setupPlans.map { AgentsRules.setupStatus($0, result: nil) } == ["add", "update", "add", "connected", "manual", "not installed"])
+        #expect(AgentsRules.setupDetail(Fixtures.setupPlans[4], result: nil)?.hasPrefix("~/.gemini/settings.json isn't plain JSON") == true)
+        #expect(AgentsRules.setupDetail(Fixtures.setupPlans[5], result: nil) == nil, "\"Not installed\" says what the pill says")
+        #expect(AgentsRules.setupStatus(AgentSetupPlan(id: "x", action: .unknown("teleport")), result: nil) == "teleport")
+        #expect(AgentsRules.setupStatus(AgentSetupPlan(id: "x", action: .unknown("")), result: nil) == "unavailable")
+        // Unchecking, and what can't be checked.
+        setup.toggle("claude")
+        #expect(setup.selection == ["copilot", "codex"])
+        setup.toggle("gemini")
+        setup.toggle("opencode")
+        setup.toggle("nope")
+        #expect(setup.selection == ["copilot", "codex"])
+        setup.toggle("claude")
+        setup.toggle("claude")
+        #expect(setup.canConnect)
+        // Connect: then nothing changes until the daemon answers.
+        setup.connecting()
+        #expect(setup.phase == .connecting && !setup.canConnect)
+        setup.toggle("copilot")
+        #expect(setup.selection == ["copilot", "codex"])
+        setup.finished(Fixtures.setupResult)
+        #expect(setup.phase == .done)
+        #expect(Fixtures.setupPlans.map { AgentsRules.setupStatus($0, result: setup.result) } == ["connected", "connected", "failed", "connected", "manual", "not installed"])
+        #expect(AgentsRules.setupDetail(Fixtures.setupPlans[2], result: setup.result) == "~/.codex/config.toml is read-only (EACCES).")
+        #expect(AgentsRules.setupSummary(setup) == "Connected Copilot CLI and Claude Code. Codex didn't connect.")
+        #expect(AgentsRules.restartHint == "Restart running sessions of these tools to pick it up.")
+        setup.close()
+        #expect(setup == AgentsSetup())
+
+        // Nothing checked: no Connect.
+        var none = AgentsSetup()
+        none.begin()
+        none.loaded([AgentSetupPlan(id: "pi", action: .absent), AgentSetupPlan(id: "opencode", action: .ok)])
+        #expect(none.selection.isEmpty && !none.canConnect)
+        none.connecting()
+        #expect(none.phase == .ready)
+        // A failed connect goes back to the plan with why; a failed plan has none.
+        var retry = AgentsSetup()
+        retry.begin()
+        retry.loaded(Fixtures.setupPlans)
+        retry.connecting()
+        retry.connectFailed("Lost the connection to autochat")
+        #expect(retry.phase == .ready && retry.error == "Lost the connection to autochat")
+        retry.connecting()
+        #expect(retry.error == nil)
+        var failed = AgentsSetup()
+        failed.begin()
+        failed.loadFailed("unknown command")
+        #expect(failed.phase == .failed && failed.plans.isEmpty && failed.error == "unknown command")
+        failed.loaded(Fixtures.setupPlans)
+        #expect(failed.phase == .failed, "a late plan doesn't reopen a failed sheet")
+        var summary = AgentsSetup()
+        summary.begin()
+        summary.loaded(Fixtures.setupPlans)
+        summary.connecting()
+        summary.finished(AgentSetupResult())
+        #expect(AgentsRules.setupSummary(summary) == "Nothing changed.")
     }
 
     @Test func openChatPrefersTheLoungeWhenSomethingHappensThere() {
@@ -280,8 +461,13 @@ struct AgentsRulesTests {
     }
 
     @Test func copy() {
-        #expect(AgentsRules.menuLine(LoungeAgents(present: 2, openThreads: 1)) == "Agents: 2 active · 1 thread")
-        #expect(AgentsRules.menuLine(LoungeAgents(present: 0, openThreads: 0)) == "Agents: 0 active · 0 threads")
+        #expect(AgentsRules.menuLine(LoungeAgents(present: 2, openThreads: 1)) == "Agents: 2 connected · 1 thread")
+        #expect(AgentsRules.menuLine(LoungeAgents(present: 0, openThreads: 0)) == "Agents: none connected")
+        // With nobody connected, what's running here (issue #65).
+        let fresh = Fixtures.connectLounge(now: t0)
+        #expect(AgentsRules.menuLine(fresh.agents!, detected: fresh.detected) == "Agents: none connected · 3 running here")
+        #expect(AgentsRules.menuLine(LoungeAgents(present: 0, openThreads: 2), detected: fresh.detected) == "Agents: none connected · 3 running here · 2 open threads")
+        #expect(AgentsRules.menuLine(LoungeAgents(present: 8, openThreads: 0), detected: fresh.detected) == "Agents: 8 connected · 0 threads")
         let s = Fixtures.agents(now: t0)
         #expect(AgentsRules.subtitle(snapshot: s, lounge: nil) == "Local · this Mac only · 2 active · 1 open thread")
         #expect(AgentsRules.subtitle(snapshot: nil, lounge: LoungeAgents(present: 3, openThreads: 2)) == "Local · this Mac only · 3 active · 2 open threads")

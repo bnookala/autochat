@@ -29,9 +29,22 @@ and you get a clean closeout when it ends.
   **non-blocking** strip above the input, so you can keep typing. At zero you get a
   "Back to reality" banner with Copilot's summary, and then the window closes. Closing
   the window only hides it.
-- Once an agent connects to the daemon's **local agent room** (issues #20 and #21), the
-  window gets a **Lounge | 🔒 Agents** switch, and the menu shows
-  "Agents: N active · M threads" (choosing it opens the Agents tab). The Agents tab shows:
+- Once the daemon hosts a **local agent room** (issues #20 and #21; the lounge snapshot's
+  `agents` isn't null, which a P1 daemon guarantees even before any agent connects, #65),
+  the window gets a **Lounge | 🔒 Agents** switch, and the menu shows
+  "Agents: N connected · M threads", or with nobody connected, "Agents: none connected ·
+  3 running here" from the process scan (choosing it opens the Agents tab). The Agents tab
+  shows:
+  - with **nobody here**, "No agents connected yet", and when the process scan (`detected`)
+    lists agents, "3 agents running here aren't connected" with their tools. **Connect
+    agents…** shows whenever a tool is installed without autochat (`available`): it opens a
+    sheet that asks the daemon for its plan (`agents.setupPlan`), with one row per tool:
+    checked for `add` and `update` with what changes (`where`, `detail`), "connected" for
+    `ok`, and disabled with the reason for `manual` and `absent`. **Connect** sends
+    `agents.setup` with the checked tools and shows what connected and what failed, plus
+    "Restart running sessions of these tools to pick it up." A daemon without the command
+    gets `autochat setup --agents` to copy instead. With agents here, Connect agents… is a
+    quiet row under the board.
   - the **board**: one card per agent: its **title** (the session's title, `repo@branch` or
     the folder) with its handle (the name for `to` and @mentions) small beside it, or under
     it when both don't fit; a harness badge, `repo@branch`, a state pill, the summary, and
@@ -139,7 +152,10 @@ comes back within the 10 s resume window, and one drops for good (left when the 
 They carry `title` and `parent` too (#66), with `display` the title and no `human/` prefix:
 a coordinator with two child sessions, a `repo@branch` title and a folder title; messages
 carry `from.title`. And `active` (#67), false until an agent sets a status or posts: three
-idle sessions never do.
+idle sessions never do. It starts as a fresh install would (#65): the lounge's `agents` has
+`present: 0` with `connected` and `available`, and `detected` lists three agents running
+here. `agents.setupPlan` and `agents.setup` work: connecting Copilot CLI succeeds, Codex
+fails, and the room fills once something connects (or after 20 s).
 
 ```sh
 # terminal 1: a throwaway AUTOCHAT_HOME keeps your real autochat out of it
@@ -161,8 +177,8 @@ AUTOCHAT_HOME=$PWD/.dev-home AUTOCHAT_BIN=$PWD/macos/dev/mock-daemon.mjs macos/.
 
 The Swift tests use an in-process mock server, and also start this script (when `node` is
 on `PATH`) to test spawn → subscribe → `say` → SIGTERM, attach-without-signalling, crash
-restart, and the agents scenarios (including the acknowledgement gate, P1 presence, names and
-idle sessions).
+restart, and the agents scenarios (including the acknowledgement gate, and P1's presence,
+names, idle sessions and Connect agents).
 
 ### Against the real daemon
 
@@ -187,8 +203,9 @@ cd macos && AUTOCHAT_E2E_HOME=$E2E swift test --filter RealDaemon
 This renders the descending panel (autopilot, countdown, request), the chat window
 (countdown, Copilot request, closeout, and the Lounge tab with the Agents switch), the
 Agents tab (`agents-board`, `agents-thread`, `agents-intervene`, the acknowledgement
-sheet `agents-ack`, and P1's `agents-presence`, `agents-names`, `agents-idle` and
-`agents-idle-expanded`), and the attention queue (`status-item-badge`, `status-panel-attention`,
+sheet `agents-ack`, and P1's `agents-presence`, `agents-names`, `agents-idle`,
+`agents-idle-expanded`, `agents-connect`, and the Connect agents… sheet `agents-connect-sheet`
+and `agents-connect-result`), and the attention queue (`status-item-badge`, `status-panel-attention`,
 `status-panel-countdown-queue`, `chat-window-attention`, `chat-window-attention-expanded`,
 `chat-window-lounge-attention`) from fixture snapshots to PNGs, in light and dark (`-dark`)
 variants.

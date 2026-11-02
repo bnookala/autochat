@@ -61,6 +61,26 @@ enum SnapshotRenderer {
                 AgentsModel(fixture: Fixtures.agentsIdle(now: now), collapsedChildren: [Fixtures.leadAgent], idleExpanded: true),
                 now: now, appearance: appearance, to: dir.appendingPathComponent("agents-idle-expanded\(suffix).png"), size: NSSize(width: 960, height: 1060)
             ) && ok
+            // Connect agents (issue #65): the empty room with agents running here, the sheet with
+            // the plan, and the sheet after connecting.
+            ok = renderAgents(
+                AgentsModel(fixture: Fixtures.agentsEmpty(now: now)), lounge: Fixtures.connectLounge(now: now),
+                now: now, appearance: appearance, to: dir.appendingPathComponent("agents-connect\(suffix).png")
+            ) && ok
+            var plan = AgentsSetup()
+            plan.begin()
+            plan.loaded(Fixtures.setupPlans)
+            ok = renderAgents(
+                AgentsModel(fixture: Fixtures.agentsEmpty(now: now), setup: plan), lounge: Fixtures.connectLounge(now: now),
+                now: now, appearance: appearance, to: dir.appendingPathComponent("agents-connect-sheet\(suffix).png")
+            ) && ok
+            var done = plan
+            done.connecting()
+            done.finished(Fixtures.setupResult)
+            ok = renderAgents(
+                AgentsModel(fixture: Fixtures.agentsEmpty(now: now), setup: done), lounge: Fixtures.connectLounge(now: now),
+                now: now, appearance: appearance, to: dir.appendingPathComponent("agents-connect-result\(suffix).png")
+            ) && ok
             // The attention queue: the badge, the panel when agents are blocked on you, the
             // countdown with several agents, and the strip in the chat (collapsed, expanded, and
             // back in the lounge).
@@ -137,9 +157,11 @@ enum SnapshotRenderer {
 
     static let agentsSize = NSSize(width: 960, height: 760)
 
-    private static func renderAgents(_ agents: AgentsModel, now: Date, appearance: NSAppearance.Name, to url: URL, size: NSSize = agentsSize) -> Bool {
+    private static func renderAgents(
+        _ agents: AgentsModel, lounge: Snapshot = Fixtures.agentsLounge(), now: Date, appearance: NSAppearance.Name, to url: URL, size: NSSize = agentsSize
+    ) -> Bool {
         let model = AppModel(
-            fixture: Fixtures.agentsLounge(), now: now, chatWindow: ChatWindowState(isVisible: true, isKey: true, appIsActive: true),
+            fixture: lounge, now: now, chatWindow: ChatWindowState(isVisible: true, isKey: true, appIsActive: true),
             agents: agents, tab: .agents
         )
         let (controller, window) = ChatWindowController.makeForSnapshot(model: model, size: size, appearance: appearance)
@@ -155,9 +177,9 @@ enum SnapshotRenderer {
             withExtendedLifetime(controller) {}
         }
         guard let frame = window.contentView?.superview else { return false }
-        guard agents.gate.sheetShown else { return write(frame, to: url) }
+        guard agents.gate.sheetShown || agents.setup.isShown else { return write(frame, to: url) }
         guard let sheet = window.attachedSheet, let sheetFrame = sheet.contentView?.superview else {
-            FileHandle.standardError.write(Data("render-snapshots: the acknowledgement sheet didn't appear\n".utf8))
+            FileHandle.standardError.write(Data("render-snapshots: the sheet didn't appear\n".utf8))
             return false
         }
         sheet.appearance = NSAppearance(named: appearance)
@@ -395,8 +417,8 @@ extension SnapshotRenderer {
             return false
         }
         let summary = model.snapshot?.agents
-        log("connected; lounge snapshot reports \(summary?.present ?? 0) active, \(summary?.openThreads ?? 0) open threads")
-        if let summary { log("menu line: \(AgentsRules.menuLine(summary))") }
+        log("connected; lounge snapshot reports \(summary?.present ?? 0) here, \(summary?.openThreads ?? 0) open threads, connected \(summary?.connected ?? []), available \(summary?.available ?? []), \(model.snapshot?.detected?.agents.count ?? 0) detected")
+        if let summary { log("menu line: \(AgentsRules.menuLine(summary, detected: model.snapshot?.detected))") }
 
         model.selectTab(.agents)
         let (controller, window) = ChatWindowController.makeForSnapshot(model: model, size: agentsSize, appearance: .aqua)

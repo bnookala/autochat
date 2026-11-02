@@ -133,6 +133,36 @@ public enum AgentBoardRow: Sendable, Equatable, Identifiable {
     }
 }
 
+/// The Agents tab while no agent is here (issue #65).
+public struct AgentsEmptyState: Sendable, Equatable {
+    /// "No agents connected yet"
+    public var title: String
+    /// "3 agents running here aren't connected", from the process scan.
+    public var running: String?
+    /// Their tools are connected, so it's a matter of restarting them.
+    public var hint: String?
+    /// There's something for Connect agents… to set up (`available` isn't empty).
+    public var canConnect: Bool
+
+    public init(title: String, running: String? = nil, hint: String? = nil, canConnect: Bool = false) {
+        self.title = title
+        self.running = running
+        self.hint = hint
+        self.canConnect = canConnect
+    }
+}
+
+/// How many agents of one harness the process scan found.
+public struct AgentsRunning: Sendable, Equatable {
+    public var harness: AgentHarness
+    public var count: Int
+
+    public init(harness: AgentHarness, count: Int) {
+        self.harness = harness
+        self.count = count
+    }
+}
+
 /// Pure view-model rules for the Agents tab. Every string returned here that contains peer
 /// text is already cleaned with `PlainText`; callers still render it verbatim.
 public enum AgentsRules {
@@ -201,9 +231,15 @@ public enum AgentsRules {
 
     // MARK: Copy
 
-    /// The menu bar line: "Agents: 2 active · 1 thread" (open threads, from the lounge snapshot).
-    public static func menuLine(_ a: LoungeAgents) -> String {
-        "Agents: \(a.present) active · \(count(a.openThreads, "thread"))"
+    /// The menu bar line: "Agents: 3 connected · 1 thread" (the lounge snapshot's counts), and
+    /// with nobody connected, what's running here instead: "Agents: none connected · 3 running
+    /// here" (issue #65).
+    public static func menuLine(_ a: LoungeAgents, detected: DetectedAgents? = nil) -> String {
+        guard a.present == 0 else { return "Agents: \(a.present) connected · \(count(a.openThreads, "thread"))" }
+        var bits = ["none connected"]
+        if let running = detected?.agents.count, running > 0 { bits.append("\(running) running here") }
+        if a.openThreads > 0 { bits.append(count(a.openThreads, "open thread")) }
+        return "Agents: " + bits.joined(separator: " · ")
     }
 
     public static func tierLabel(_ tier: String?) -> String {
@@ -479,6 +515,101 @@ public enum AgentsRules {
 
     static func count(_ n: Int, _ noun: String) -> String {
         "\(n) \(noun)\(n == 1 ? "" : "s")"
+    }
+
+    /// "a", "a and b", "a, b and c"
+    static func list(_ items: [String]) -> String {
+        switch items.count {
+        case 0: ""
+        case 1: items[0]
+        default: items.dropLast().joined(separator: ", ") + " and " + items[items.count - 1]
+        }
+    }
+
+    // MARK: Connecting agents (issue #65)
+
+    public static let restartHint = "Restart running sessions of these tools to pick it up."
+
+    /// A room with nothing in it yet: no cards, threads or messages. The tab is all empty state.
+    public static func isEmptyRoom(_ s: AgentsSnapshot) -> Bool {
+        s.agents.isEmpty && s.threads.isEmpty && s.messages.isEmpty
+    }
+
+    /// What the tab says while no agent is here (nil once one is).
+    public static func emptyState(cards: [AgentCard], lounge: LoungeAgents?, detected: DetectedAgents?) -> AgentsEmptyState? {
+        guard !cards.contains(where: { $0.presence == .here }) else { return nil }
+        let running = detected?.agents.count ?? 0
+        let connect = canConnect(lounge)
+        var hint: String?
+        if running > 0, !connect, !(lounge?.connected ?? []).isEmpty {
+            hint = "Their tools are connected: sessions that started before that join once they restart."
+        }
+        return AgentsEmptyState(
+            title: cards.isEmpty ? "No agents connected yet" : "No agents connected right now",
+            running: running > 0 ? "\(running) agent\(running == 1 ? "" : "s") running here \(running == 1 ? "isn't" : "aren't") connected" : nil,
+            hint: hint,
+            canConnect: connect
+        )
+    }
+
+    /// Connect agents… shows whenever an installed tool doesn't have autochat yet.
+    public static func canConnect(_ lounge: LoungeAgents?) -> Bool {
+        !(lounge?.available ?? []).isEmpty
+    }
+
+    /// "Not connected yet: Codex and Gemini CLI"
+    public static func availableText(_ lounge: LoungeAgents?) -> String? {
+        let names = (lounge?.available ?? []).map { AgentHarness(raw: $0).displayName }
+        return names.isEmpty ? nil : "Not connected yet: " + list(names)
+    }
+
+    /// The process scan by harness, most first, then by name.
+    public static func runningByHarness(_ detected: DetectedAgents?) -> [AgentsRunning] {
+        var counts: [AgentHarness: Int] = [:]
+        var order: [AgentHarness] = []
+        for agent in detected?.agents ?? [] {
+            if counts[agent.harness] == nil { order.append(agent.harness) }
+            counts[agent.harness, default: 0] += 1
+        }
+        return order
+            .map { AgentsRunning(harness: $0, count: counts[$0] ?? 0) }
+            .sorted { ($0.count, $1.harness.displayName) > ($1.count, $0.harness.displayName) }
+    }
+
+    /// The pill on a plan row: what Connect will do, or what it did.
+    public static func setupStatus(_ plan: AgentSetupPlan, result: AgentSetupResult?) -> String {
+        if let result {
+            if result.applied.contains(plan.id) { return "connected" }
+            if result.failure(plan.id) != nil { return "failed" }
+        }
+        switch plan.action {
+        case .add: return "add"
+        case .update: return "update"
+        case .ok: return "connected"
+        case .manual: return "manual"
+        case .absent: return "not installed"
+        case let .unknown(raw): return PlainText.clean(raw).prefix(16).description.nilIfEmpty ?? "unavailable"
+        }
+    }
+
+    /// The line under a plan row: what changes, why it can't, or why it failed.
+    public static func setupDetail(_ plan: AgentSetupPlan, result: AgentSetupResult?) -> String? {
+        if let failure = result?.failure(plan.id) {
+            return failure.error.map { PlainText.clean($0, keepNewlines: true) } ?? "autochat couldn't connect it"
+        }
+        let detail = plan.detail.map { PlainText.clean($0, keepNewlines: true).trimmingCharacters(in: .whitespacesAndNewlines) }?.nilIfEmpty
+        guard let detail, detail.lowercased() != setupStatus(plan, result: nil) else { return nil }
+        return detail
+    }
+
+    /// After Connect: "Connected Copilot CLI. Codex didn't connect."
+    public static func setupSummary(_ setup: AgentsSetup) -> String? {
+        guard setup.phase == .done, let result = setup.result else { return nil }
+        func name(_ id: String) -> String { setup.plans.first { $0.id == id }.map { PlainText.clean($0.name) } ?? AgentHarness(raw: id).displayName }
+        var bits: [String] = []
+        if !result.applied.isEmpty { bits.append("Connected \(list(result.applied.map(name))).") }
+        if !result.failed.isEmpty { bits.append("\(list(result.failed.map { name($0.id) })) didn't connect.") }
+        return bits.isEmpty ? "Nothing changed." : bits.joined(separator: " ")
     }
 
     private static func stripHumanSuffix(_ display: String) -> String {

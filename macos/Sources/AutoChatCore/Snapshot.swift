@@ -364,15 +364,20 @@ public struct Snapshot: Sendable, Equatable, Decodable {
     public var countdown: Countdown?
     public var banner: Banner?
     /// The local agent room's summary; nil until an agent has connected since the daemon
-    /// started (and always nil from a daemon without agent rooms).
+    /// started (and always nil from a daemon without agent rooms). P1 daemons send it whenever
+    /// they host a room.
     public var agents: LoungeAgents?
     /// The attention queue, urgent first; nil from a daemon that predates it.
     public var attention: [AttentionItem]?
+    /// Coding agents running on this Mac (the process scan); nil before the first scan and
+    /// from daemons that don't scan.
+    public var detected: DetectedAgents?
 
     public init(
         version: Int? = 1, now: Date? = nil, phase: Phase = .lounge, room: RoomInfo? = nil, me: Me? = nil, members: [Member] = [],
         messages: [ChatMessage] = [], request: CopilotRequest? = nil, sessions: [SessionInfo] = [],
-        countdown: Countdown? = nil, banner: Banner? = nil, agents: LoungeAgents? = nil, attention: [AttentionItem]? = nil
+        countdown: Countdown? = nil, banner: Banner? = nil, agents: LoungeAgents? = nil, attention: [AttentionItem]? = nil,
+        detected: DetectedAgents? = nil
     ) {
         self.version = version
         self.now = now
@@ -387,9 +392,10 @@ public struct Snapshot: Sendable, Equatable, Decodable {
         self.banner = banner
         self.agents = agents
         self.attention = attention
+        self.detected = detected
     }
 
-    enum CodingKeys: String, CodingKey { case v, now, phase, room, me, members, messages, request, sessions, countdown, banner, agents, attention }
+    enum CodingKeys: String, CodingKey { case v, now, phase, room, me, members, messages, request, sessions, countdown, banner, agents, attention, detected }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -406,6 +412,7 @@ public struct Snapshot: Sendable, Equatable, Decodable {
         banner = c.lenient(Banner.self, .banner)
         agents = c.lenient(LoungeAgents.self, .agents)
         attention = c.lenient(LossyList<AttentionItem>.self, .attention)?.items
+        detected = c.lenient(DetectedAgents.self, .detected)
     }
 
     /// Host handle from the room info, else from the member flagged as host.

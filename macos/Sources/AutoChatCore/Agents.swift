@@ -39,6 +39,19 @@ public enum AgentHarness: Sendable, Equatable, Hashable {
             name.map { String(PlainText.clean($0).prefix(16)) }.flatMap { $0.isEmpty ? nil : $0 } ?? "generic"
         }
     }
+
+    /// The tool's name, as autochat setup writes it.
+    public var displayName: String {
+        switch self {
+        case .copilot: "Copilot CLI"
+        case .claude: "Claude Code"
+        case .codex: "Codex"
+        case .opencode: "opencode"
+        case .gemini: "Gemini CLI"
+        case .pi: "pi"
+        case .generic: label
+        }
+    }
 }
 
 /// What an agent says it's doing (`status({state})`).
@@ -438,23 +451,286 @@ public struct AgentsSnapshot: Sendable, Equatable, Decodable {
     }
 }
 
-/// `agents` in the lounge `state` snapshot. The field is null until an agent has connected
-/// since the daemon started, so `Snapshot.agents != nil` means "this daemon hosts a room".
+/// `agents` in the lounge `state` snapshot. P1 daemons always send it while they host an
+/// agent room (issue #65); older ones only once an agent has connected since the daemon
+/// started. Either way, `Snapshot.agents != nil` means "this daemon hosts a room".
 public struct LoungeAgents: Sendable, Equatable, Decodable {
     public var present: Int
     public var openThreads: Int
+    /// Harnesses (ids) with autochat registered; nil from a daemon that doesn't say.
+    public var connected: [String]?
+    /// Installed harnesses without autochat registered: what Connect agents… can set up.
+    public var available: [String]?
 
-    public init(present: Int = 0, openThreads: Int = 0) {
+    public init(present: Int = 0, openThreads: Int = 0, connected: [String]? = nil, available: [String]? = nil) {
         self.present = present
         self.openThreads = openThreads
+        self.connected = connected
+        self.available = available
     }
 
-    enum CodingKeys: String, CodingKey { case present, openThreads }
+    enum CodingKeys: String, CodingKey { case present, openThreads, connected, available }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         present = max(0, c.lenientInt(.present) ?? 0)
         openThreads = max(0, c.lenientInt(.openThreads) ?? 0)
+        connected = c.lenient(LossyList<String>.self, .connected)?.items.filter { !$0.isEmpty }
+        available = c.lenient(LossyList<String>.self, .available)?.items.filter { !$0.isEmpty }
+    }
+}
+
+/// `detected` in the lounge snapshot (issue #61): the coding agents running on this Mac, from
+/// the process table, whether or not they reach autochat. A hint only.
+public struct DetectedAgents: Sendable, Equatable, Decodable {
+    public var scannedAt: Date?
+    public var agents: [DetectedAgent]
+
+    public init(scannedAt: Date? = nil, agents: [DetectedAgent] = []) {
+        self.scannedAt = scannedAt
+        self.agents = agents
+    }
+
+    enum CodingKeys: String, CodingKey { case scannedAt, agents }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        scannedAt = c.lenientDate(.scannedAt)
+        agents = c.lenient(LossyList<DetectedAgent>.self, .agents)?.items ?? []
+    }
+}
+
+public struct DetectedAgent: Sendable, Equatable, Decodable {
+    public var harness: AgentHarness
+    public var pid: Int?
+    public var cwd: String?
+    public var startedAt: Date?
+
+    public init(harness: AgentHarness, pid: Int? = nil, cwd: String? = nil, startedAt: Date? = nil) {
+        self.harness = harness
+        self.pid = pid
+        self.cwd = cwd
+        self.startedAt = startedAt
+    }
+
+    enum CodingKeys: String, CodingKey { case harness, pid, cwd, startedAt }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        harness = AgentHarness(raw: c.lenient(String.self, .harness))
+        pid = c.lenientInt(.pid)
+        cwd = c.nonEmpty(.cwd)
+        startedAt = c.lenientDate(.startedAt)
+    }
+}
+
+// MARK: - Connect agents (issue #65)
+
+/// What Connect agents… does for one harness (`agents.setupPlan`).
+public enum AgentSetupAction: Sendable, Equatable, Hashable {
+    /// Register autochat with it.
+    case add
+    /// Fix autochat's registration (it points at an old install, say).
+    case update
+    /// Already connected.
+    case ok
+    /// autochat won't change its config by itself: `detail` says why.
+    case manual
+    /// Not installed.
+    case absent
+    case unknown(String)
+
+    public init(raw: String?) {
+        switch raw?.trimmingCharacters(in: .whitespaces).lowercased() {
+        case "add": self = .add
+        case "update": self = .update
+        case "ok", "none": self = .ok
+        case "manual": self = .manual
+        case "absent": self = .absent
+        case let other: self = .unknown(other ?? "")
+        }
+    }
+
+    /// The sheet checks these, and you can uncheck them.
+    public var isSelectable: Bool { self == .add || self == .update }
+}
+
+/// One harness in the plan.
+public struct AgentSetupPlan: Sendable, Equatable, Decodable, Identifiable {
+    /// The harness id: what `agents.setup` takes.
+    public var id: String
+    /// "Copilot CLI"
+    public var name: String
+    public var action: AgentSetupAction
+    /// `where`: the file or command it changes.
+    public var location: String?
+    /// What changes, or why it can't.
+    public var detail: String?
+
+    public init(id: String, name: String? = nil, action: AgentSetupAction, location: String? = nil, detail: String? = nil) {
+        self.id = id
+        self.name = name ?? AgentHarness(raw: id).displayName
+        self.action = action
+        self.location = location
+        self.detail = detail
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, action, detail
+        case location = "where"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        guard let id = c.nonEmpty(.id) else {
+            throw DecodingError.keyNotFound(CodingKeys.id, .init(codingPath: c.codingPath, debugDescription: "plan without an id"))
+        }
+        self.id = id
+        name = c.nonEmpty(.name) ?? AgentHarness(raw: id).displayName
+        action = AgentSetupAction(raw: c.lenient(String.self, .action))
+        location = c.nonEmpty(.location)
+        detail = c.nonEmpty(.detail) ?? c.lenient(LossyList<String>.self, .detail)?.items.joined(separator: "\n").nilIfEmpty
+    }
+}
+
+/// `agents.setupPlan`'s result.
+public struct AgentSetupPlans: Sendable, Equatable, Decodable {
+    public var plans: [AgentSetupPlan]
+
+    enum CodingKeys: String, CodingKey { case plans }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        plans = c.lenient(LossyList<AgentSetupPlan>.self, .plans)?.items ?? []
+    }
+}
+
+/// `agents.setup`'s result: what it connected, and what it couldn't.
+public struct AgentSetupResult: Sendable, Equatable, Decodable {
+    public struct Failure: Sendable, Equatable, Decodable {
+        public var id: String
+        public var error: String?
+
+        public init(id: String, error: String? = nil) {
+            self.id = id
+            self.error = error
+        }
+
+        enum CodingKeys: String, CodingKey { case id, error }
+
+        /// `{id, error}`, or just the id.
+        public init(from decoder: Decoder) throws {
+            if let id = try? decoder.singleValueContainer().decode(String.self), !id.isEmpty {
+                self.id = id
+                error = nil
+                return
+            }
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            guard let id = c.nonEmpty(.id) else {
+                throw DecodingError.keyNotFound(CodingKeys.id, .init(codingPath: c.codingPath, debugDescription: "failure without an id"))
+            }
+            self.id = id
+            error = c.nonEmpty(.error)
+        }
+    }
+
+    public var applied: [String]
+    public var failed: [Failure]
+
+    public init(applied: [String] = [], failed: [Failure] = []) {
+        self.applied = applied
+        self.failed = failed
+    }
+
+    enum CodingKeys: String, CodingKey { case applied, failed }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        applied = c.lenient(LossyList<String>.self, .applied)?.items.filter { !$0.isEmpty } ?? []
+        failed = c.lenient(LossyList<Failure>.self, .failed)?.items ?? []
+    }
+
+    public func failure(_ id: String) -> Failure? { failed.first { $0.id == id } }
+}
+
+/// The Connect agents… sheet: load the plan, pick harnesses, connect, then say what happened.
+/// Pure state; `AgentsModel` sends the commands.
+public struct AgentsSetup: Sendable, Equatable {
+    public enum Phase: Sendable, Equatable {
+        /// No sheet.
+        case closed
+        /// Waiting for `agents.setupPlan`.
+        case loading
+        /// The plan, with checkboxes.
+        case ready
+        /// Waiting for `agents.setup`.
+        case connecting
+        /// `agents.setup` answered: `result`.
+        case done
+        /// No plan: `error`.
+        case failed
+    }
+
+    public private(set) var phase: Phase = .closed
+    public private(set) var plans: [AgentSetupPlan] = []
+    public private(set) var checked: Set<String> = []
+    public private(set) var result: AgentSetupResult?
+    /// Why the plan didn't load, or why connecting failed (the plan stays to try again).
+    public private(set) var error: String?
+
+    public init() {}
+
+    public var isShown: Bool { phase != .closed }
+    /// The checked harnesses, in plan order: what Connect sends.
+    public var selection: [String] { plans.filter { checked.contains($0.id) && $0.action.isSelectable }.map(\.id) }
+    public var canConnect: Bool { phase == .ready && !selection.isEmpty }
+
+    /// Connect agents…: the sheet opens and asks for the plan.
+    public mutating func begin() {
+        self = AgentsSetup()
+        phase = .loading
+    }
+
+    /// The plan arrived: `add` and `update` start checked.
+    public mutating func loaded(_ plans: [AgentSetupPlan]) {
+        guard phase == .loading else { return }
+        self.plans = plans
+        checked = Set(plans.filter(\.action.isSelectable).map(\.id))
+        phase = .ready
+    }
+
+    public mutating func loadFailed(_ error: String) {
+        guard phase == .loading else { return }
+        self.error = error
+        phase = .failed
+    }
+
+    public mutating func toggle(_ id: String) {
+        guard phase == .ready, plans.contains(where: { $0.id == id && $0.action.isSelectable }) else { return }
+        if checked.remove(id) == nil { checked.insert(id) }
+    }
+
+    public mutating func connecting() {
+        guard canConnect else { return }
+        error = nil
+        phase = .connecting
+    }
+
+    public mutating func finished(_ result: AgentSetupResult) {
+        guard phase == .connecting else { return }
+        self.result = result
+        phase = .done
+    }
+
+    /// `agents.setup` failed as a whole: back to the plan, with why.
+    public mutating func connectFailed(_ error: String) {
+        guard phase == .connecting else { return }
+        self.error = error
+        phase = .ready
+    }
+
+    public mutating func close() {
+        self = AgentsSetup()
     }
 }
 

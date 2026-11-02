@@ -16,6 +16,8 @@ public final class AgentsModel {
     public private(set) var collapsedChildren: Set<String> = []
     /// The "N idle sessions" row is open.
     public private(set) var idleExpanded = false
+    /// The Connect agents… sheet (issue #65).
+    public private(set) var setup = AgentsSetup()
     public var draft: String = "" {
         didSet { if draft.count > AgentsRules.maxSayLength { draft = String(draft.prefix(AgentsRules.maxSayLength)) } }
     }
@@ -34,6 +36,8 @@ public final class AgentsModel {
     @ObservationIgnored private var errorClear: DispatchWorkItem?
     /// When the latest snapshot arrived: its `now` ticks on from there.
     @ObservationIgnored private var receivedAt: Date?
+    /// Bumped per Connect agents… sheet, so a late answer can't land in a newer one.
+    @ObservationIgnored private var setupRun = 0
 
     /// How long the subscription outlives the window, so a quick hide/show doesn't resubscribe.
     static let idleGrace: TimeInterval = 15
@@ -60,7 +64,7 @@ public final class AgentsModel {
     /// Static model for snapshot rendering: nothing connects, actions are no-ops.
     public init(
         fixture: AgentsSnapshot?, selection: AgentStream = .main, intervening: Bool = false, draft: String = "",
-        collapsedChildren: Set<String> = [], idleExpanded: Bool = false
+        collapsedChildren: Set<String> = [], idleExpanded: Bool = false, setup: AgentsSetup = AgentsSetup()
     ) {
         self.socketPath = nil
         self.sendOverride = nil
@@ -71,6 +75,7 @@ public final class AgentsModel {
         self.draft = draft
         self.collapsedChildren = collapsedChildren
         self.idleExpanded = idleExpanded
+        self.setup = setup
         gate.update(daemonAck: fixture?.ack ?? false)
         if intervening { gate.requestIntervene() }
     }
@@ -233,10 +238,67 @@ public final class AgentsModel {
         }
     }
 
-    private func send(_ command: Command) async throws -> Reply {
+    private func send(_ command: Command, timeout: TimeInterval? = nil) async throws -> Reply {
         if let sendOverride { return try await sendOverride(command) }
         guard let client else { throw CommandError.notConnected }
-        return try await client.send(command)
+        return try await client.send(command, timeout: timeout)
+    }
+
+    // MARK: Connect agents (issue #65)
+
+    /// How long the daemon may take: setting up a harness can run its CLI (`claude mcp add`).
+    static let planTimeout: TimeInterval = 20
+    static let setupTimeout: TimeInterval = 60
+
+    /// Connect agents…: the sheet opens and asks the daemon what it would do for each harness.
+    public func openSetup() async {
+        guard !frozen, !setup.isShown || setup.phase == .failed else { return }
+        setupRun += 1
+        let run = setupRun
+        setup.begin()
+        do {
+            let reply = try await send(.agentsSetupPlan, timeout: Self.planTimeout)
+            guard run == setupRun else { return }
+            if reply.ok, let plans = reply.result?.decode(AgentSetupPlans.self)?.plans, !plans.isEmpty {
+                setup.loaded(plans)
+            } else {
+                setup.loadFailed(reply.ok ? "autochat didn't say which tools it can connect." : reply.error ?? "autochat didn't send a plan.")
+            }
+        } catch {
+            guard run == setupRun else { return }
+            setup.loadFailed(error.localizedDescription)
+        }
+    }
+
+    /// A checkbox in the sheet.
+    public func toggleSetup(_ id: String) {
+        setup.toggle(id)
+    }
+
+    /// The sheet's Connect button: `agents.setup` with the checked harnesses.
+    public func connectAgents() async {
+        guard !frozen, setup.canConnect else { return }
+        let run = setupRun
+        let ids = setup.selection
+        setup.connecting()
+        do {
+            let reply = try await send(.agentsSetup(harnesses: ids), timeout: Self.setupTimeout)
+            guard run == setupRun else { return }
+            if reply.ok {
+                setup.finished(reply.result?.decode(AgentSetupResult.self) ?? AgentSetupResult())
+            } else {
+                setup.connectFailed(reply.error ?? "autochat couldn't connect them.")
+            }
+        } catch {
+            guard run == setupRun else { return }
+            setup.connectFailed(error.localizedDescription)
+        }
+    }
+
+    /// Cancel, Done, or Esc.
+    public func closeSetup() {
+        setupRun += 1
+        setup.close()
     }
 
     private func report(_ message: String) {
