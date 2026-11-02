@@ -1,6 +1,6 @@
 import { sanitize, sanitizeMultiline, charCount } from '../text.js'
 import { fail, hex, isStr, label, opt } from './limits.js'
-import { overlapOn } from './overlap.js'
+import { overlapOn, pathIndex } from './overlap.js'
 
 // Threads: the `thread` command (open, resolve, list), thread ids and titles, and the decision a
 // resolve posts: its owner and next steps, who has seen it, its record, and the decisions that
@@ -14,6 +14,9 @@ function threadSlug (title) {
   }
   return slug || 'thread'
 }
+
+const sameList = (a, b) => a.length === b.length && a.every((x, i) => x === b[i])
+const sameFocus = (a, b) => !!a && !!b && a.issue === b.issue && sameList(a.components, b.components) && sameList(a.paths, b.paths)
 
 // The text cut at a word boundary to at most `max` characters, with "…" when cut.
 function cutAtWord (text, max) {
@@ -183,29 +186,35 @@ export const methods = {
     return out
   },
 
-  // A thread's focus, captured when it's resolved: its participants' repo, issue, components and
-  // paths, so its decision can find agents that overlap it after they have all left.
+  // A thread's focus, captured when it's resolved: its participants' repo, issue, components,
+  // paths and live paths (focus.live, overlap.js), so its decision can find agents that overlap it
+  // after they have all left.
   _threadFocus (t) {
     const out = []
     for (const id of t.participants) {
       const a = this.agents.get(id)
-      if (a?.repo) out.push({ repo: a.repo, focus: { ...a.focus }, pathIndex: a.pathIndex })
+      if (!a?.repo) continue
+      const live = [...(a.live || [])]
+      out.push({ repo: a.repo, focus: { ...a.focus, live }, pathIndex: pathIndex([...new Set([...a.focus.paths, ...live])]) })
     }
     return out
   },
 
-  // Up to 10 decisions whose thread's focus overlaps your card, posted before you joined or not.
-  // It leaves out what catchUp returns anyway: your unread messages (`inbox`) and the last 10
-  // decisions (`decisions`). The newest ones, oldest first.
-  _relevant (agent) {
+  // Up to 10 decisions whose thread's focus overlaps your card, posted before you joined or not,
+  // except your unread messages, which you get anyway, and what `leaveOut(entry)` says: by
+  // default the last 10 decisions, which catchUp returns as `decisions`. The newest, oldest first.
+  _relevant (agent, leaveOut = null) {
     const L = this.limits
-    const last = new Set(this.log.filter(e => e.msg.kind === 'decision').slice(-L.decisions))
+    if (!leaveOut) {
+      const last = new Set(this.log.filter(e => e.msg.kind === 'decision').slice(-L.decisions))
+      leaveOut = (e) => last.has(e)
+    }
     const out = []
     const resolved = [...this.threads.values()].filter(t => t.decision).sort((a, b) => b.decision.msg.seq - a.decision.msg.seq)
     for (const t of resolved) {
       if (out.length === L.relevant) break
       const e = t.decision
-      if (last.has(e) || agent.unread.has(e.msg.seq)) continue
+      if (leaveOut(e) || agent.unread.has(e.msg.seq)) continue
       if (t.focus.some(f => overlapOn(agent, f))) out.push(e)
     }
     return out.reverse()
@@ -265,6 +274,17 @@ export function register (r) {
   })
   r.contribute('catchUp', function ({ agent }) {
     return { relevant: this._deliver(agent, this._relevant(agent)) }
+  })
+  // Agents call catchUp before they have a focus, when nothing can be relevant. So a status
+  // returns `relevant` too, the first time the agent's focus is set and whenever it changes:
+  // the decisions it hasn't seen yet. relevantFocus: the focus the last ones were for.
+  r.on('join', function (agent, { resumed }) {
+    if (!resumed) agent.relevantFocus = agent.focus
+  })
+  r.contribute('status', function ({ agent, later }) {
+    if (later || sameFocus(agent.focus, agent.relevantFocus)) return null
+    agent.relevantFocus = agent.focus
+    return { relevant: this._deliver(agent, this._relevant(agent, (e) => e.decision.seenBy.has(agent.id))) }
   })
   r.contribute('post', function ({ thread }) {
     return thread ? { thread: this._threadView(thread) } : null

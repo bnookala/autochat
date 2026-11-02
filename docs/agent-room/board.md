@@ -13,7 +13,8 @@ See the [module map](README.md#module-map).
   `others` (`{agents, repos}`: the active agents the board left out, which `scope: "all"` adds,
   and how many repos they're in),
   `threads` (open first), `relevant` (older decisions that overlap your focus:
-  [threads.md](threads.md#decisions)), `decisions` (the last 10), `recent` (the last 20
+  [threads.md](threads.md#decisions); before you set a focus there are none, and your first
+  `status` with one returns them), `decisions` (the last 10), `recent` (the last 20
   main-stream messages), `inbox` (your unread inbox, oldest first, up to 100), `cursor`. Messages
   already in `inbox` aren't repeated in `decisions` or `recent`. It marks everything it returns as
   read. `pending`: what's still open for you ([inbox.md](inbox.md#pending)).

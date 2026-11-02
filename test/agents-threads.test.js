@@ -413,3 +413,71 @@ test('decisions outlive their agents: catchUp.relevant has the ones whose thread
   assert.deepEqual(texts(r.relevant), ['JWTs, not opaque tokens.', 'Refresh lives in the client.'])
   early.close()
 })
+
+test('status returns relevant too: the first time your focus is set and whenever it changes, the decisions you haven\'t seen (#84)', async (t) => {
+  const { room } = await start(t, { limits: { decisions: 1, statusGapMs: 0, resumeMs: 30, lingerMs: 60 } })
+  const a = await agent({ harness: 'copilot' })
+  const decide = async (focus, title, outcome) => {
+    ok(await a.cmd('status', { focus }))
+    const { thread } = ok(await a.cmd('thread', { action: 'open', title }))
+    ok(await a.cmd('thread', { action: 'resolve', thread: thread.id, outcome }))
+  }
+  await decide({ paths: ['src/auth.js'], issue: 12 }, 'token format', 'JWTs, not opaque tokens.')
+  await decide({ paths: ['src/ui.js'], issue: null }, 'buttons', 'Primary buttons are blue.')
+  await decide({ paths: ['docs/x.md'] }, 'docs', 'Docs live in docs/.')
+  a.close()
+  await until(() => room.agents.size === 0, 'a gone')
+
+  // Agents catch up first, before they have a focus: nothing is relevant yet.
+  const n = await agent({ harness: 'claude' })
+  const r = ok(await n.cmd('catchUp'))
+  assert.deepEqual([r.relevant, texts(r.decisions)], [[], ['Docs live in docs/.']])
+  // Its first focus: the status says what's relevant to it, and it has seen those now.
+  let s = ok(await n.cmd('status', { summary: 'auth', focus: { paths: ['src/auth.js'] } }))
+  assert.deepEqual(Object.keys(s), ['card', 'overlaps', 'knownComponents', 'relevant', 'pending'])
+  assert.deepEqual(texts(s.relevant), ['JWTs, not opaque tokens.'])
+  assert.deepEqual(s.relevant[0].decision.seenBy, ['copilot-repo', 'claude-repo'])
+  // The same focus again: no `relevant`.
+  s = ok(await n.cmd('status', { summary: 'still auth', focus: { paths: ['src/auth.js'] } }))
+  assert.equal(s.relevant, undefined)
+  assert.equal(ok(await n.cmd('status', { state: 'editing' })).relevant, undefined)
+  // A new focus: what it hasn't seen yet. catchUp gave it the last decision already.
+  s = ok(await n.cmd('status', { focus: { paths: ['src/auth.js', 'src/ui.js', 'docs/x.md'] } }))
+  assert.deepEqual(texts(s.relevant), ['Primary buttons are blue.'])
+  assert.deepEqual(ok(await n.cmd('status', { focus: { issue: 12 } })).relevant, [], 'changed, but nothing new')
+  // catchUp's own rules are as they were.
+  assert.deepEqual(texts(ok(await n.cmd('catchUp')).relevant), ['JWTs, not opaque tokens.', 'Primary buttons are blue.'])
+  n.close()
+})
+
+test('a status applied when its gap ends goes to nobody, so its relevant decisions wait for the next status (#84)', async (t) => {
+  const { room } = await start(t, { limits: { statusGapMs: 100 } })
+  const a = await agent({ harness: 'copilot' })
+  ok(await a.cmd('status', { focus: { paths: ['src/auth.js'] } }))
+  const { thread } = ok(await a.cmd('thread', { action: 'open', title: 'token format' }))
+  ok(await a.cmd('thread', { action: 'resolve', thread: thread.id, outcome: 'JWTs.' }))
+  const n = await agent({ harness: 'claude' })
+  assert.deepEqual(ok(await n.cmd('status', { summary: 'ui', focus: { paths: ['src/ui.js'] } })).relevant, [])
+  const deferred = ok(await n.cmd('status', { focus: { paths: ['src/auth.js'] } }))
+  assert.deepEqual([deferred.deferred, deferred.relevant], [true, undefined], 'its focus hasn\'t changed yet')
+  await sleep(300)
+  assert.deepEqual(room.snapshot().agents.find(c => c.name === 'claude-repo').focus.paths, ['src/auth.js'], 'applied')
+  assert.deepEqual(room.snapshot().messages.find(m => m.kind === 'decision').decision.seenBy, ['copilot-repo'], 'not seen: nobody got that result')
+  assert.deepEqual(texts(ok(await n.cmd('status', { summary: 'auth' })).relevant), ['JWTs.'])
+  for (const x of [a, n]) x.close()
+})
+
+test('a thread\'s focus has its participants\' live paths: a decision made on live paths alone is relevant to them (#84)', async (t) => {
+  const { room } = await start(t, { limits: { statusGapMs: 0 } })
+  const a = await agent({ harness: 'copilot' })
+  const b = await agent({ harness: 'claude' })
+  ok(await a.cmd('paths', { paths: ['src/live.js'] }))
+  const { thread } = ok(await a.cmd('thread', { action: 'open', title: 'live paths', with: ['claude-repo'] }))
+  ok(await b.cmd('thread', { action: 'resolve', thread: thread.id, outcome: 'Live paths count.' }))
+  assert.deepEqual(room.threads.get(thread.id).focus.map(f => [f.focus.paths, f.focus.live]), [[[], ['src/live.js']], [[], []]])
+  for (const x of [a, b]) x.close()
+  const n = await agent({ harness: 'codex' })
+  assert.deepEqual(texts(ok(await n.cmd('status', { focus: { paths: ['src/live.js'] } })).relevant), ['Live paths count.'])
+  assert.deepEqual(ok(await n.cmd('status', { focus: { paths: ['src/other.js'] } })).relevant, [])
+  n.close()
+})

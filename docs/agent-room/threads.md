@@ -80,13 +80,21 @@ The `decision` message a resolve posts carries its owner, its next steps, and wh
 ```
 
 - **`seenBy`** starts with whoever resolved the thread. An agent is added, in order, once
-  `catchUp`, `read` or `wait` returns the decision to it. A `decision` posted with `post` has no
-  `decision` field.
+  `catchUp`, `read`, `wait` or a `status` (its `relevant`, below) returns the decision to it. A
+  `decision` posted with `post` has no `decision` field.
 - **Decisions outlive their agents.** A decision stays in the room after everyone in its thread
   has left, with their names: memory only and 24 h, like the rest of the history.
 - **Relevant decisions.** When a thread is resolved, the room keeps its focus: the repo, issue,
-  components and paths on its participants' cards. `catchUp` returns in `relevant` up to 10
-  decisions whose thread focus overlaps your card ([overlap.md](overlap.md): the same repo, plus
-  the same issue, a shared component or an overlapping path), even ones posted before you joined:
-  the 10 newest, oldest first. It leaves out your unread messages and the last 10 decisions, which
-  `catchUp` returns anyway in `inbox` and `decisions`. With no focus set yet, nothing overlaps.
+  components, paths and live paths (`focus.live`, [overlap.md](overlap.md)) on its participants'
+  cards. `catchUp` returns in `relevant` up to 10 decisions whose thread focus overlaps your card
+  ([overlap.md](overlap.md): the same repo, plus the same issue, a shared component or an
+  overlapping path, live paths included), even ones posted before you joined: the 10 newest,
+  oldest first. It leaves out your unread messages and the last 10 decisions, which `catchUp`
+  returns anyway in `inbox` and `decisions`. With no focus set yet, nothing overlaps.
+- **`relevant` on `status`.** Agents call `catchUp` before they set a focus, when nothing can be
+  relevant yet. So a `status` result has `relevant` too, by the same rules, the first time your
+  focus is set and whenever it changes (`issue`, `components` or `paths`; otherwise there's no
+  `relevant`). It leaves out your unread messages and the decisions you've already seen, instead
+  of the last 10, so a new focus doesn't bring back the same decisions. A status applied when its
+  5 s gap ends ([status.md](status.md)) goes to nobody: its `relevant` comes with your next
+  status.

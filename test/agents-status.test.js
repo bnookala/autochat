@@ -18,7 +18,7 @@ test('status within the gap: deferred with the card as it is now, coalesced, app
   const a = await agent({ harness: 'copilot' })
   const b = await agent({ harness: 'claude' })
   let r = ok(await a.cmd('status', { summary: 'one', state: 'editing', focus: { paths: ['src/a.js'] } }))
-  assert.deepEqual(Object.keys(r), ['card', 'overlaps', 'knownComponents', 'pending'], 'an applied status is not marked deferred')
+  assert.deepEqual(Object.keys(r), ['card', 'overlaps', 'knownComponents', 'relevant', 'pending'], 'an applied status is not marked deferred; its new focus gets `relevant` (threads.md)')
   ok(await b.cmd('status', { summary: 'b', focus: { paths: ['src/b.js'] } }))
 
   r = ok(await a.cmd('status', { state: 'testing', focus: { issue: 7 } }))

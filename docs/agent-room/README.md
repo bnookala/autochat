@@ -116,8 +116,9 @@ A module exports `methods` (mixed into `AgentRoom.prototype`; a name defined twi
 | `r.on(hook, fn)` | runs `fn.call(room, ...args)` at a point of the room's life |
 
 Contribution targets and their `ctx`: `card` `{agent}`, `catchUp` `{agent, msg}`, `status`
-`{agent, msg}`, `post` `{agent, msg, entry, thread}`, `read` `{agent, msg}`, `message` `{entry}`
-(each message's view, wherever agents and humans see it).
+`{agent, msg, later}` (`later`: a deferred status applied when its gap ends, whose result goes to
+nobody), `post` `{agent, msg, entry, thread}`, `read` `{agent, msg}`, `message` `{entry}` (each
+message's view, wherever agents and humans see it).
 
 Hooks and their arguments: `init` `()` (a new room: set up your state on `this`), `join`
 `(agent, {resumed})` (after the welcome: set up per-agent state when `!resumed`), `leave`
