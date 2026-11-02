@@ -40,10 +40,10 @@ function runJob (job, ms) {
     if (ms) {
       timer = setTimeout(() => {
         reject(new Error(`the harness check timed out after ${ms / 1000} s`))
-        try {
-          if (process.platform === 'win32') child.kill('SIGKILL')
-          else process.kill(-child.pid, 'SIGKILL')
-        } catch {}
+        kill(child)
+        // On macOS, a harness CLI the job is spawning at that moment can miss the signal and run
+        // on as an orphan. It's in the group by the time the job has exited: kill it then (#100).
+        child.once('exit', () => kill(child))
       }, ms)
     }
     child.once('message', (m) => {
@@ -56,6 +56,14 @@ function runJob (job, ms) {
     // After 'message', if there was one: the IPC channel has closed by then.
     child.once('close', (code, signal) => { clearTimeout(timer); reject(new Error(`the harness check exited (${signal || code})`)) })
   })
+}
+
+// SIGKILL the job and, on POSIX, everything in its process group.
+function kill (child) {
+  try {
+    if (process.platform === 'win32') child.kill('SIGKILL')
+    else process.kill(-child.pid, 'SIGKILL')
+  } catch {}
 }
 
 // --- in the child ------------------------------------------------------------------------------

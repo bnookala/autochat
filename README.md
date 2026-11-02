@@ -211,6 +211,7 @@ There is only ever one core per user, the daemon or the terminal UI, and it owns
 - **No central server.** Peers find each other on the public [HyperDHT](https://github.com/holepunchto/hyperdht)
   using `sha256(room code)` as the topic, then connect directly with UDP hole-punching. Connections use Noise encryption.
 - Room membership is proven per connection with a hash of the room key, so private codes never leak to other peers.
+  A connection with no proof after 5 s is dropped, and the peers connect again.
 - Messages are signed with your ed25519 identity key (`~/.autochat/identity.json`) and relayed between peers, so a
   partial mesh still works. Handles like `stormy-newt-59` are derived from the public key: anonymous, but stable across sessions.
 - Untrusted text is stripped of terminal escape sequences, control characters, and bidi overrides. Chat is rate-limited.

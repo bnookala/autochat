@@ -69,6 +69,7 @@ export class Room extends EventEmitter {
     room, identity, status = 'active', bootstrap, announce = true,
     graceMs = 6000, heartbeatMs = 5000, expireMs = 16000,
     refreshMs = [2000, 5000, 10000, 15000, 20000, 30000, 45000, 60000], refreshEveryMs = 30000,
+    helloMs = 5000,
     chatRate = { count: 6, perMs: 5000 },
     now = Date.now
   }) {
@@ -86,6 +87,7 @@ export class Room extends EventEmitter {
     this.expireMs = expireMs
     this.refreshMs = refreshMs
     this.refreshEveryMs = refreshEveryMs
+    this.helloMs = helloMs
     this.chatRate = chatRate
     // Per-sender budget for all signed messages: heartbeats plus chat plus generous slack.
     this.senderBudget = Math.max(20, Math.ceil(BUDGET_WINDOW_MS / heartbeatMs) * 2 + chatRate.count * 2)
@@ -339,7 +341,7 @@ export class Room extends EventEmitter {
   }
 
   _onConnection (conn) {
-    const c = { conn, buf: '', mate: false, remoteKey: null, dir: null, lines: 0, window: 0 }
+    const c = { conn, buf: '', mate: false, remoteKey: null, dir: null, lines: 0, window: 0, helloTimer: null }
     this.conns.add(c)
     conn.on('error', () => {})
     conn.on('data', (chunk) => {
@@ -356,6 +358,7 @@ export class Room extends EventEmitter {
       }
     })
     conn.on('close', () => {
+      clearTimeout(c.helloTimer)
       this.conns.delete(c)
       if (c.mate && c.remoteKey) {
         // Let the member expire soon unless a relayed heartbeat proves it's still around.
@@ -366,6 +369,11 @@ export class Room extends EventEmitter {
     })
     const hello = { v: PROTOCOL_VERSION, from: this.me, tag: this.tag, proof: this._proof(conn), dir: this._dirInfo() }
     this._write(c, JSON.stringify({ h: hello }))
+    // hyperdht can open a connection the other side never gets: nothing ever arrives on it, and
+    // until it times out (about 13 s) Hyperswarm turns away the peer's working connections as
+    // duplicates of it. So a connection without a hello by now is dropped, and we connect again.
+    c.helloTimer = setTimeout(() => { if (!c.mate) conn.destroy() }, this.helloMs)
+    c.helloTimer.unref?.()
   }
 
   _proof (conn) {
@@ -388,6 +396,7 @@ export class Room extends EventEmitter {
     if (typeof h.proof !== 'string' || h.proof !== this._proof(c.conn)) return
     if (!isHex(h.from, 64) || !isHex(h.tag, 8)) return
     c.mate = true
+    clearTimeout(c.helloTimer)
     c.remoteKey = h.from + ':' + h.tag
     // Catch the newcomer up with our state plus everyone else's latest signed state.
     this._broadcastState()
