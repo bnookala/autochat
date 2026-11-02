@@ -12,7 +12,7 @@ test('catchUp: you, tier, board, threads, last decisions, recent main stream, un
   ok(await a.cmd('post', { text: 'for you', to: ['claude-repo'] }))
   const reply = await b.cmd('catchUp')
   const r = ok(reply)
-  assert.deepEqual(Object.keys(r), ['you', 'tier', 'board', 'threads', 'decisions', 'recent', 'inbox', 'cursor'])
+  assert.deepEqual(Object.keys(r), ['you', 'tier', 'board', 'threads', 'relevant', 'decisions', 'recent', 'inbox', 'cursor'])
   assert.equal(r.you.name, 'claude-repo')
   assert.equal(r.tier, 'local')
   assert.deepEqual(r.board.map(c => [c.name, c.summary, c.state, c.present]), [['copilot-repo', 'auth', 'exploring', true]])
