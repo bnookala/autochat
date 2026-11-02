@@ -76,11 +76,12 @@ test('cards: presence here → away → left, with leftAt; present is presence =
   const { room } = await start(t, { limits: { resumeMs: 200, lingerMs: 300 } })
   const a = await agent({ harness: 'copilot' })
   const b = await agent({ harness: 'claude' })
+  ok(await a.cmd('status', { state: 'editing' })) // active (#67): on boards, and its leaving is posted
   const card = () => room.snapshot().agents.find(c => c.id === a.welcome.agent.id)
   const seen = (c) => c && [c.presence, c.present, c.leftAt === null]
   assert.deepEqual(seen(card()), ['here', true, true])
   assert.deepEqual(seen(ok(await a.cmd('catchUp')).you), ['here', true, true])
-  assert.deepEqual(Object.keys(card()).slice(-6), ['present', 'joinedAt', 'updatedAt', 'presence', 'leftAt', 'overlaps'])
+  assert.deepEqual(Object.keys(card()).slice(-7), ['present', 'joinedAt', 'updatedAt', 'presence', 'leftAt', 'overlaps', 'active'])
 
   const t0 = Date.now()
   a.close()
@@ -104,6 +105,7 @@ test('bye: the agent leaves at once, the reply is the last line and the daemon c
   human.send({ type: 'subscribe', v: 1, stream: 'agents' })
   const a = await agent({ harness: 'copilot' })
   const b = await agent({ harness: 'claude' })
+  ok(await a.cmd('status', { state: 'editing' })) // active (#67), so its leaving is posted
   ok(await b.cmd('post', { text: 'for you', to: ['copilot-repo'] }))
   // A wait pending on the connection (it would return at once with an unread message, so read first).
   ok(await a.cmd('read'))
@@ -134,6 +136,7 @@ test('bye: the agent leaves at once, the reply is the last line and the daemon c
   const again = await agent({ harness: 'copilot', resume: a.welcome.resume })
   assert.notEqual(again.welcome.agent.id, a.welcome.agent.id)
   assert.equal(again.name, 'copilot-repo')
+  ok(await again.cmd('status', { state: 'exploring' })) // on the board once active (#67)
   assert.equal(ok(await b.cmd('catchUp')).board.filter(c => c.name === 'copilot-repo').map(c => c.presence).sort().join(), 'here,left')
   for (const x of [human, b, again]) x.close()
 })

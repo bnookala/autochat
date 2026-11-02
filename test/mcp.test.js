@@ -438,7 +438,8 @@ test('autochat mcp says bye when its harness closes it (stdin EOF, SIGTERM, SIGI
   watcher.start()
   t.after(() => watcher.close())
   assert.equal(await watcher.ready(5000), true)
-  const card = async (name) => (await watcher.request('catchUp')).result.board.find(c => c.name === name)
+  // Neither is in a repo, so only scope "all" puts the agent on the watcher's board (#67).
+  const card = async (name) => (await watcher.request('catchUp', { scope: 'all' })).result.board.find(c => c.name === name)
 
   for (const how of ['EOF', 'SIGTERM', 'SIGINT']) {
     const name = 'copilot-' + how.toLowerCase()
@@ -446,6 +447,7 @@ test('autochat mcp says bye when its harness closes it (stdin EOF, SIGTERM, SIGI
     t.after(() => p.child.kill('SIGKILL'))
     await p.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } })
     assert.equal((await p.tool('catch_up')).you.name, name)
+    await p.tool('status', { state: 'exploring' }) // active (#67): on the board, and its leaving is posted
     assert.equal((await card(name)).presence, 'here')
 
     const t0 = Date.now()
