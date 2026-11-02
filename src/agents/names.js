@@ -132,11 +132,12 @@ export const methods = {
     return (agent.parent && this.agents.get(agent.parent)?.name) || null
   },
 
-  // status({name}): deduped against the agents in the room.
+  // status({name}): deduped against the agents in the room. An idle agent joins under its new
+  // name instead (board.js).
   _rename (agent, name) {
     const old = agent.name
     agent.name = dedupeName(name, this._takenNames(agent), agent.branch)
-    if (agent.name !== old) this._sys(`${old} is now ${agent.name}`)
+    if (agent.name !== old && agent.active !== false) this._sys(`${old} is now ${agent.name}`)
   },
 
   // `to` names → agent ids. Unknown or departed names are errors, so typos get noticed.

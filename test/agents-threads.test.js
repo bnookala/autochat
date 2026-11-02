@@ -14,7 +14,7 @@ test('a question with `to` opens a thread automatically; thread open/resolve →
   assert.deepEqual({ ...thread, id: 0, openedAt: 0, lastAt: 0 }, { id: 0, title: 'Should token refresh live in src/auth.js or the client?', opener: 'copilot-repo', participants: ['copilot-repo', 'claude-repo'], status: 'open', outcome: null, messages: 1, openedAt: 0, lastAt: 0, owner: null, next: [], resolvedBy: null, resolvedAt: null })
   assert.equal(message.thread, thread.id)
   assert.equal(message.kind, 'question')
-  const sys = room.snapshot().messages.filter(m => m.kind === 'sys').at(-1)
+  const sys = room.snapshot().messages.filter(m => m.kind === 'sys' && m.text.startsWith('🧵')).at(-1)
   assert.equal(sys.text, '🧵 copilot-repo opened “Should token refresh live in src/auth.js or the client?” with claude-repo')
   assert.equal(sys.thread, null, 'the advertisement is on the main stream')
 
@@ -139,6 +139,7 @@ test('resolve with an owner and next steps: the thread fields, the decision mess
   assert.equal((await resolve({ next: ['x'.repeat(141)] })).error, 'next entries are at most 140 characters')
   assert.equal((await resolve({ next: ['set password = Hunter2Hunter2'] })).error, 'blocked: looks like a secret (credential assignment)')
   const gone = await agent({ harness: 'gemini' })
+  ok(await gone.cmd('status', { state: 'exploring' })) // active, so its leaving is posted (#67)
   gone.close()
   await until(() => room.snapshot().messages.some(m => m.text === 'gemini-repo left'), 'gemini-repo left')
   assert.equal((await resolve({ owner: 'gemini-repo' })).error, 'gemini-repo left the room')

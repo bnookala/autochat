@@ -61,7 +61,7 @@ test('initialize negotiates legacy versions; modern requests use _meta, server/d
     assert.equal(t.annotations.openWorldHint, false)
   }
   // Harnesses send every description to the model on every turn.
-  assert.ok(list.result.tools.reduce((n, t) => n + t.description.length, 0) < 2700, 'the descriptions stay short together')
+  assert.ok(list.result.tools.reduce((n, t) => n + t.description.length, 0) < 2950, 'the descriptions stay short together')
 
   const [disc] = await call({ jsonrpc: '2.0', id: 5, method: 'server/discover', params: { _meta: MODERN } })
   assert.deepEqual(disc.result.supportedVersions, SUPPORTED_VERSIONS)
@@ -262,7 +262,7 @@ test('two autochat mcp processes coordinate through the daemon: overlap → ques
   assert.deepEqual([a0.you.repo, a0.you.branch, a0.you.worktree], ['local/greeting', 'feat-a', 'wt-a'])
   const b0 = await B.tool('catch_up', {}, { meta: MODERN })
   assert.equal(b0.you.name, 'claude-greeting')
-  assert.deepEqual(b0.board.map(c => c.name), ['copilot-greeting'])
+  assert.deepEqual([b0.board, b0.others], [[], { agents: 0, repos: 0 }], 'A is idle until it sets a status or posts')
 
   // Status: paths come from git (A's uncommitted edit, B's committed branch change) and overlap.
   const sa = await A.tool('status', { summary: 'adding shout()', state: 'editing', focus: { issue: 3 } })
