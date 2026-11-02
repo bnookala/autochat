@@ -247,6 +247,34 @@ struct AgentsPresenceModelTests {
     }
 }
 
+@Suite("App model: names and child sessions")
+@MainActor
+struct AgentsNamesModelTests {
+    @Test func theDisclosureFoldsChildSessions() {
+        let model = AgentsModel(send: { _ in Reply(id: 1, ok: true) })
+        model.apply(Fixtures.agentsNames(now: Date()))
+        func names() -> [String] {
+            model.boardRows.compactMap { if case let .card(c, _) = $0 { c.name } else { nil } }
+        }
+        #expect(names() == ["autochat-p1-agent-rooms", "mac-app-presence-and-names", "daemon-names-and-hello-titles", "api-server-fix-session-expiry", "docs-site"])
+        let lead = model.snapshot!.agents.first { $0.name == "autochat-p1-agent-rooms" }!
+        model.toggleChildren(of: lead.id)
+        #expect(names() == ["autochat-p1-agent-rooms", "api-server-fix-session-expiry", "docs-site"])
+        #expect(model.boardRows.contains(.children(parent: lead.id, count: 2, depth: 1, expanded: false)))
+        // Folding survives new snapshots.
+        model.apply(Fixtures.agentsNames(now: Date()))
+        #expect(names().count == 3)
+        model.toggleChildren(of: lead.id)
+        #expect(names().count == 5)
+    }
+
+    @Test func indentationIsCapped() {
+        #expect(AgentsSidebarLayout.indent(0) == 0)
+        #expect(AgentsSidebarLayout.indent(1) > 0)
+        #expect(AgentsSidebarLayout.indent(9) == AgentsSidebarLayout.indent(3))
+    }
+}
+
 @Suite("Agents: plain-text rendering")
 @MainActor
 struct AgentsPlainTextTests {
@@ -260,6 +288,12 @@ struct AgentsPlainTextTests {
         #expect(human.runs.allSatisfy { $0.link == nil })
         let agent = AgentText.sender(AgentSenderLabel(owner: nil, name: "codex-*x*"))
         #expect(String(agent.characters) == "codex-*x*")
+        // Titles are peer text too; the handle beside one is plain.
+        #expect(AgentText.handle(AgentCardLabel(title: "[Mac app](https://evil.example) **now**", handle: "mac-app")) == "mac-app")
+        #expect(AgentText.handle(AgentCardLabel(title: "Mac app", handle: "mac-app", owner: "jade")) == "jade/mac-app")
+        #expect(AgentText.handle(AgentCardLabel(title: "copilot-x", owner: "jade")) == nil)
+        let bare = AgentText.name(owner: "jade", name: "copilot-x")
+        #expect(String(bare.characters) == "jade/copilot-x")
     }
 
     @Test func messageRowsHaveStableUniqueIDs() {
