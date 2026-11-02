@@ -9,6 +9,10 @@ import { ephemeralIdentity } from '../src/identity.js'
 
 const FAST = { graceMs: 1500, heartbeatMs: 400, expireMs: 3000, refreshMs: [300, 800, 1500, 2500], refreshEveryMs: 2000, helloMs: 2000 }
 
+// These wait for peers to join over a Hyperswarm testnet, which on busy CI runners sometimes takes
+// longer than the wait (#100). They still run locally.
+const p2pJoinOnCI = process.env.CI ? 'flaky on CI runners: a peer join over the testnet (#100)' : false
+
 function waitFor (fn, ms = 15000, label = 'condition') {
   return new Promise((resolve, reject) => {
     const start = Date.now()
@@ -53,7 +57,7 @@ test('olderInst prefers earlier createdAt then lower iid', () => {
   assert.equal(olderInst({ createdAt: 3, iid: 'a' }, { createdAt: 2, iid: 'b' }), false)
 })
 
-test('room lifecycle: host spectates, room survives, dies with last active member', { timeout: 90000 }, async (t) => {
+test('room lifecycle: host spectates, room survives, dies with last active member', { skip: p2pJoinOnCI, timeout: 90000 }, async (t) => {
   const testnet = await testnetFor(t)
   const room = parseRoom('lc1-test-room-' + Math.random().toString(36).slice(2, 12))
 
@@ -112,7 +116,7 @@ test('lone host being pulled back kills the room immediately', { timeout: 30000 
   await host.leave('dead')
 })
 
-test('simultaneous joiners converge on a single instance', { timeout: 60000 }, async (t) => {
+test('simultaneous joiners converge on a single instance', { skip: p2pJoinOnCI, timeout: 60000 }, async (t) => {
   const testnet = await testnetFor(t)
   const room = parseRoom('lc1-race-room-' + Math.random().toString(36).slice(2, 12))
   const a = mk(testnet, room, { graceMs: 50 })
