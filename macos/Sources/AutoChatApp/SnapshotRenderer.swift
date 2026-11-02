@@ -49,9 +49,18 @@ enum SnapshotRenderer {
                 AgentsModel(fixture: Fixtures.agents(now: now), intervening: true),
                 now: now, appearance: appearance, to: dir.appendingPathComponent("agents-ack\(suffix).png")
             ) && ok
-            // P1 (issue #50): here, reconnecting and left on the board; titles, handles and child sessions.
+            // P1 (issue #50): here, reconnecting and left on the board; titles, handles and child
+            // sessions; idle sessions folded into one row (and opened, in a taller window).
             ok = renderAgents(AgentsModel(fixture: Fixtures.agentsPresence(now: now)), now: now, appearance: appearance, to: dir.appendingPathComponent("agents-presence\(suffix).png")) && ok
             ok = renderAgents(AgentsModel(fixture: Fixtures.agentsNames(now: now)), now: now, appearance: appearance, to: dir.appendingPathComponent("agents-names\(suffix).png")) && ok
+            ok = renderAgents(
+                AgentsModel(fixture: Fixtures.agentsIdle(now: now), collapsedChildren: [Fixtures.leadAgent]),
+                now: now, appearance: appearance, to: dir.appendingPathComponent("agents-idle\(suffix).png")
+            ) && ok
+            ok = renderAgents(
+                AgentsModel(fixture: Fixtures.agentsIdle(now: now), collapsedChildren: [Fixtures.leadAgent], idleExpanded: true),
+                now: now, appearance: appearance, to: dir.appendingPathComponent("agents-idle-expanded\(suffix).png"), size: NSSize(width: 960, height: 1060)
+            ) && ok
             // The attention queue: the badge, the panel when agents are blocked on you, the
             // countdown with several agents, and the strip in the chat (collapsed, expanded, and
             // back in the lounge).
@@ -128,12 +137,12 @@ enum SnapshotRenderer {
 
     static let agentsSize = NSSize(width: 960, height: 760)
 
-    private static func renderAgents(_ agents: AgentsModel, now: Date, appearance: NSAppearance.Name, to url: URL) -> Bool {
+    private static func renderAgents(_ agents: AgentsModel, now: Date, appearance: NSAppearance.Name, to url: URL, size: NSSize = agentsSize) -> Bool {
         let model = AppModel(
             fixture: Fixtures.agentsLounge(), now: now, chatWindow: ChatWindowState(isVisible: true, isKey: true, appIsActive: true),
             agents: agents, tab: .agents
         )
-        let (controller, window) = ChatWindowController.makeForSnapshot(model: model, size: agentsSize, appearance: appearance)
+        let (controller, window) = ChatWindowController.makeForSnapshot(model: model, size: size, appearance: appearance)
         window.orderFrontRegardless()
         settle()
         if let editor = window.firstResponder as? NSTextView {

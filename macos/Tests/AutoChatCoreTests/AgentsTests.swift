@@ -178,6 +178,12 @@ struct AgentsDecodingTests {
         #expect(s.messages.map(\.from?.title) == ["Lolchat macos menu bar app", nil])
     }
 
+    @Test func activeDefaultsToTrue() throws {
+        let s = try decode(#"{"type":"agents","agents":[{"name":"a","active":true},{"name":"b","active":false},{"name":"c"},{"name":"d","active":"no"},{"name":"e","active":null}]}"#)
+        // A daemon without `active` (or a malformed one) means every card is active, as before.
+        #expect(s.agents.map(\.active) == [true, false, true, true, true])
+    }
+
     @Test func harnessesStatesAndKinds() {
         let names = ["copilot", "Claude", "codex", "opencode", "gemini", "pi", "agent", "", "x-agent"]
         #expect(names.map { AgentHarness(raw: $0) } == [.copilot, .claude, .codex, .opencode, .gemini, .pi, .generic(nil), .generic(nil), .generic("x-agent")])
@@ -405,6 +411,7 @@ struct AgentsRulesTests {
                 switch row {
                 case let .card(c, depth): String(repeating: "  ", count: depth) + c.name
                 case let .children(parent, count, depth, expanded): String(repeating: "  ", count: depth) + "\(expanded ? "▾" : "▸") \(count) under \(parent)"
+                case let .idle(count, _): "\(count) idle"
                 }
             }
         }
@@ -443,6 +450,49 @@ struct AgentsRulesTests {
         #expect(rows([card("x"), card("p", .left), card("k", parent: "p"), card("y", .away)]) == ["x", "p", "  ▾ 1 under p", "  k", "y"])
         // A human/ prefix on `parent` still finds the agent.
         #expect(rows([card("a"), card("b", parent: "stormy-newt-59/a")]) == ["a", "  ▾ 1 under a", "  b"])
+    }
+
+    @Test func idleSessionsCollapseIntoOneRow() {
+        func rows(_ cards: [AgentCard], idleExpanded: Bool = false) -> [String] {
+            AgentsRules.boardRows(cards, idleExpanded: idleExpanded).map { row in
+                switch row {
+                case let .card(c, depth): String(repeating: "  ", count: depth) + c.name
+                case let .children(_, count, depth, _): String(repeating: "  ", count: depth) + "\(count) children"
+                case let .idle(count, expanded): "\(expanded ? "▾" : "▸") \(count) idle"
+                }
+            }
+        }
+        let s = Fixtures.agentsIdle(now: t0)
+        #expect(rows(s.agents) == [
+            "autochat-p1-agent-rooms", "  2 children", "  mac-app-presence-and-names", "  daemon-names-and-hello-titles",
+            "api-server-fix-session-expiry", "docs-site", "▸ 3 idle"
+        ])
+        // Clicking the row shows them, after the active agents.
+        #expect(rows(s.agents, idleExpanded: true).suffix(4) == ["▾ 3 idle", "what-can-you-do", "scratch", "gemini"])
+        #expect(AgentsRules.idleLabel(3) == "3 idle sessions")
+        #expect(AgentsRules.idleLabel(1) == "1 idle session")
+        // The header and the window count active agents only.
+        #expect(AgentsRules.boardCounts(s.agents) == "4 active · 1 left")
+        #expect(AgentsRules.subtitle(snapshot: s, lounge: nil) == "Local · this Mac only · 4 active · 1 open thread")
+
+        func card(_ name: String, active: Bool = true, parent: String? = nil, _ presence: AgentPresence = .here) -> AgentCard {
+            AgentCard(id: name, name: name, parent: parent, presence: presence, active: active)
+        }
+        // Active first, whatever the presence; idle ones keep presence order inside the row.
+        #expect(rows([card("i1", active: false), card("a", .left), card("i2", active: false, .left), card("b")], idleExpanded: true) == [
+            "b", "a", "▾ 2 idle", "i1", "i2"
+        ])
+        #expect(AgentsRules.boardCounts([card("i1", active: false), card("a", .left), card("b"), card("c", .away)]) == "1 active · 1 reconnecting · 1 left")
+        #expect(AgentsRules.boardCounts([card("i1", active: false)]) == "0 active")
+        // No idle sessions, no row; a daemon without `active` never gets one.
+        #expect(rows([card("a"), card("b")]) == ["a", "b"])
+        #expect(!AgentsRules.boardRows(Fixtures.agentsNames(now: t0).agents).contains { if case .idle = $0 { true } else { false } })
+        // A coordinator that only delegated stays up with its active child; an idle child stays nested.
+        #expect(rows([card("lead", active: false), card("kid", parent: "lead"), card("lurker", active: false, parent: "kid")]) == [
+            "lead", "  1 children", "  kid", "    1 children", "    lurker"
+        ])
+        // An idle tree counts all of its sessions.
+        #expect(rows([card("a"), card("p", active: false), card("q", active: false, parent: "p")]) == ["a", "▸ 2 idle"])
     }
 
     @Test func peerTextStaysPlain() {

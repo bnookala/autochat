@@ -115,17 +115,20 @@ public struct AgentCardLabel: Sendable, Equatable {
     }
 }
 
-/// One row of the board: a card (indented under its parent), or the disclosure for a card's
-/// child sessions.
+/// One row of the board: a card (indented under its parent), the disclosure for a card's
+/// child sessions, or the one row the idle sessions collapse into.
 public enum AgentBoardRow: Sendable, Equatable, Identifiable {
     case card(AgentCard, depth: Int)
     /// "2 child sessions" under the card with id `parent`.
     case children(parent: String, count: Int, depth: Int, expanded: Bool)
+    /// "3 idle sessions": agents that haven't set a status or posted (issue #67).
+    case idle(count: Int, expanded: Bool)
 
     public var id: String {
         switch self {
         case let .card(card, _): "card:\(card.id)"
         case let .children(parent, _, _, _): "children:\(parent)"
+        case .idle: "idle"
         }
     }
 }
@@ -219,18 +222,20 @@ public enum AgentsRules {
     public static func subtitle(snapshot: AgentsSnapshot?, lounge: LoungeAgents?) -> String {
         var bits = [tierLabel(snapshot?.tier)]
         if isLocal(snapshot?.tier) { bits.append("this Mac only") }
-        let active = snapshot.map { $0.agents.filter(\.present).count } ?? lounge?.present ?? 0
+        let active = snapshot.map { $0.agents.filter { $0.present && $0.active }.count } ?? lounge?.present ?? 0
         let open = snapshot.map { $0.threads.filter { $0.status == .open }.count } ?? lounge?.openThreads ?? 0
         bits.append("\(active) active")
         bits.append(count(open, "open thread"))
         return bits.joined(separator: " · ")
     }
 
-    /// "2 active · 1 reconnecting · 1 left" for the board header.
+    /// "2 active · 1 reconnecting · 1 left" for the board header. It counts the agents that
+    /// have done something: idle sessions have their own row.
     public static func boardCounts(_ cards: [AgentCard]) -> String {
-        let here = cards.filter { $0.presence == .here }.count
-        let away = cards.filter { $0.presence == .away }.count
-        let gone = cards.filter { $0.presence == .left }.count
+        let busy = cards.filter(\.active)
+        let here = busy.filter { $0.presence == .here }.count
+        let away = busy.filter { $0.presence == .away }.count
+        let gone = busy.filter { $0.presence == .left }.count
         var bits = ["\(here) active"]
         if away > 0 { bits.append("\(away) reconnecting") }
         if gone > 0 { bits.append("\(gone) left") }
@@ -296,8 +301,10 @@ public enum AgentsRules {
     /// The board as rows: agents that are here first (see `board`), each followed by its child
     /// sessions (cards whose `parent` names it), one level in, behind a disclosure. A card whose
     /// parent isn't on the board is top-level, and so is the first card of a parent loop.
-    /// `collapsed` holds the ids of cards whose children are hidden.
-    public static func boardRows(_ cards: [AgentCard], collapsed: Set<String> = []) -> [AgentBoardRow] {
+    /// `collapsed` holds the ids of cards whose children are hidden. Idle sessions (issue #67)
+    /// come last, collapsed into one row that `idleExpanded` opens; a tree with an active card
+    /// in it stays up with the active ones.
+    public static func boardRows(_ cards: [AgentCard], collapsed: Set<String> = [], idleExpanded: Bool = false) -> [AgentBoardRow] {
         let ordered = board(cards)
         // By name, the first in board order: a name can be reused once its agent has left.
         var byName: [String: AgentCard] = [:]
@@ -338,13 +345,25 @@ public enum AgentsRules {
             rows.append(.children(parent: c.id, count: kids.count, depth: depth + 1, expanded: expanded))
             if expanded { for k in kids { add(k, depth: depth + 1) } }
         }
-        for r in sortedRoots { add(r, depth: 0) }
+        func isActive(_ c: AgentCard) -> Bool { c.active || (children[c.id] ?? []).contains { isActive($0) } }
+        func size(_ c: AgentCard) -> Int { (children[c.id] ?? []).reduce(1) { $0 + size($1) } }
+        let idle = sortedRoots.filter { !isActive($0) }
+        for r in sortedRoots where isActive(r) { add(r, depth: 0) }
+        if !idle.isEmpty {
+            rows.append(.idle(count: idle.reduce(0) { $0 + size($1) }, expanded: idleExpanded))
+            if idleExpanded { for r in idle { add(r, depth: 0) } }
+        }
         return rows
     }
 
     /// "2 child sessions"
     public static func childrenLabel(_ count: Int) -> String {
         AgentsRules.count(count, "child session")
+    }
+
+    /// "3 idle sessions"
+    public static func idleLabel(_ count: Int) -> String {
+        AgentsRules.count(count, "idle session")
     }
 
     /// "overlaps with claude-web", or with several.

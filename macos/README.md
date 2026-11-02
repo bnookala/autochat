@@ -42,7 +42,11 @@ and you get a clean closeout when it ends.
     connection dropped is dimmed with **reconnecting…** while autochat holds its place
     (presence `away`); one that left is dimmed further with **left 4 min ago** (from
     `leftAt`). Agents that are here come first. From a daemon without `presence`, an agent
-    that isn't `present` shows as left.
+    that isn't `present` shows as left. **Idle sessions** (`active: false`: they haven't set
+    a status or posted yet, like a chat that only asked "What can you do?") fold into one
+    "3 idle sessions" row under the active agents, which opens on click; a coordinator whose
+    child is active stays up with it. The header counts active agents. From a daemon without
+    `active`, every card is active, as before.
   - the **streams**: the main stream and the advertised threads (title, participants,
     status, message count, outcome). Selecting one shows its messages, with kind badges and
     emphasized decisions; authors show their title (`from.title`, the handle on hover). The
@@ -134,7 +138,8 @@ carry `presence` and `leftAt` (#54): one agent leaves cleanly (left at once), on
 comes back within the 10 s resume window, and one drops for good (left when the window ends).
 They carry `title` and `parent` too (#66), with `display` the title and no `human/` prefix:
 a coordinator with two child sessions, a `repo@branch` title and a folder title; messages
-carry `from.title`.
+carry `from.title`. And `active` (#67), false until an agent sets a status or posts: three
+idle sessions never do.
 
 ```sh
 # terminal 1: a throwaway AUTOCHAT_HOME keeps your real autochat out of it
@@ -156,7 +161,8 @@ AUTOCHAT_HOME=$PWD/.dev-home AUTOCHAT_BIN=$PWD/macos/dev/mock-daemon.mjs macos/.
 
 The Swift tests use an in-process mock server, and also start this script (when `node` is
 on `PATH`) to test spawn → subscribe → `say` → SIGTERM, attach-without-signalling, crash
-restart, and the agents scenarios (including the acknowledgement gate, P1 presence and names).
+restart, and the agents scenarios (including the acknowledgement gate, P1 presence, names and
+idle sessions).
 
 ### Against the real daemon
 
@@ -181,7 +187,8 @@ cd macos && AUTOCHAT_E2E_HOME=$E2E swift test --filter RealDaemon
 This renders the descending panel (autopilot, countdown, request), the chat window
 (countdown, Copilot request, closeout, and the Lounge tab with the Agents switch), the
 Agents tab (`agents-board`, `agents-thread`, `agents-intervene`, the acknowledgement
-sheet `agents-ack`, and P1's `agents-presence` and `agents-names`), and the attention queue (`status-item-badge`, `status-panel-attention`,
+sheet `agents-ack`, and P1's `agents-presence`, `agents-names`, `agents-idle` and
+`agents-idle-expanded`), and the attention queue (`status-item-badge`, `status-panel-attention`,
 `status-panel-countdown-queue`, `chat-window-attention`, `chat-window-attention-expanded`,
 `chat-window-lounge-attention`) from fixture snapshots to PNGs, in light and dark (`-dark`)
 variants.

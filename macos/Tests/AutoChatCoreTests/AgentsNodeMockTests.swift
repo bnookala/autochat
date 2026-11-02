@@ -157,8 +157,12 @@ struct AgentsNodeMockTests {
         let authored = s.messages.filter { $0.from?.name != nil }
         #expect(!authored.isEmpty)
         #expect(authored.allSatisfy { $0.from?.title != nil && AgentsRules.senderLabel($0, me: s.human, tier: s.tier)?.name == $0.from?.title })
-        // The lounge counts the agents that are here.
-        #expect(await eventually { lounge.value.last?.agents?.present == 3 })
-        #expect(lounge.value.contains { $0.agents?.present == 2 }, "two away at once")
+        // Idle sessions (#67): three never set a status or posted; everyone else did.
+        #expect(s.agents.filter { !$0.active }.map(\.name) == ["what-can-you-do", "scratch", "gemini"])
+        #expect(rows.last == .idle(count: 3, expanded: false))
+        #expect(!rows.contains { if case let .card(c, _) = $0 { !c.active } else { false } })
+        // The lounge counts the agents that are here, idle sessions too.
+        #expect(await eventually { lounge.value.last?.agents?.present == 6 })
+        #expect(lounge.value.contains { $0.agents?.present == 5 }, "two away at once")
     }
 }
