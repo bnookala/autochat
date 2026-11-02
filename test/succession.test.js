@@ -16,7 +16,7 @@ const {
   MAX_SUCCESSION, hostOf, signHandoff, signTimeout, verifySuccession
 } = await import('../src/protocol.js')
 
-const FAST = { graceMs: 1500, heartbeatMs: 400, expireMs: 3000, refreshMs: [300, 800, 1500, 2500], refreshEveryMs: 2000 }
+const FAST = { graceMs: 1500, heartbeatMs: 400, expireMs: 3000, refreshMs: [300, 800, 1500, 2500], refreshEveryMs: 2000, helloMs: 2000 }
 
 function waitFor (fn, ms = 15000, label = 'condition') {
   return new Promise((resolve, reject) => {

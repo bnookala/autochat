@@ -14,7 +14,7 @@ process.env.COPILOT_HOME = path.join(process.env.AUTOCHAT_HOME, 'copilot')
 const { Controller } = await import('../src/controller.js')
 const { ephemeralIdentity } = await import('../src/identity.js')
 
-const FAST = { graceMs: 1200, heartbeatMs: 300, expireMs: 3000, refreshMs: [300, 800, 1500, 2500], refreshEveryMs: 2000 }
+const FAST = { graceMs: 1200, heartbeatMs: 300, expireMs: 3000, refreshMs: [300, 800, 1500, 2500], refreshEveryMs: 2000, helloMs: 2000 }
 
 function waitFor (fn, ms = 15000, label = 'condition') {
   return new Promise((resolve, reject) => {
