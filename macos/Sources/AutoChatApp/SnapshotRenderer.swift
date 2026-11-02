@@ -49,6 +49,8 @@ enum SnapshotRenderer {
                 AgentsModel(fixture: Fixtures.agents(now: now), intervening: true),
                 now: now, appearance: appearance, to: dir.appendingPathComponent("agents-ack\(suffix).png")
             ) && ok
+            // P1 (issue #50): here, reconnecting and left on the board.
+            ok = renderAgents(AgentsModel(fixture: Fixtures.agentsPresence(now: now)), now: now, appearance: appearance, to: dir.appendingPathComponent("agents-presence\(suffix).png")) && ok
             // The attention queue: the badge, the panel when agents are blocked on you, the
             // countdown with several agents, and the strip in the chat (collapsed, expanded, and
             // back in the lounge).
@@ -404,7 +406,7 @@ extension SnapshotRenderer {
         if let s = agents.snapshot {
             log("agents snapshot: tier \(s.tier ?? "?"), human \(s.human ?? "?"), ack \(s.ack), \(s.agents.count) cards, \(s.threads.count) threads, \(s.messages.count) messages")
             for card in s.agents {
-                log("  card \(card.display ?? card.name) [\(card.harness.label)] \(AgentsRules.location(card) ?? "-") \(card.state?.label ?? "-") present=\(card.present) overlaps=\(card.overlaps)")
+                log("  card \(card.display ?? card.name) [\(card.harness.label)] \(AgentsRules.location(card) ?? "-") \(card.state?.label ?? "-") presence=\(card.presence)\(card.leftAt.map { " leftAt=\(AgentText.time($0))" } ?? "") overlaps=\(card.overlaps)")
             }
             for thread in s.threads { log("  thread “\(thread.title)” \(AgentsRules.threadMeta(thread))") }
         }

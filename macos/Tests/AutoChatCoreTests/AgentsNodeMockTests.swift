@@ -88,4 +88,64 @@ struct AgentsNodeMockTests {
         let loungeCommand = try await client.send(.say("hi"))
         #expect(loungeCommand.error == "unknown command")
     }
+
+    /// `--scenario agents-p1`: the P1 fields (issue #50) through the real client.
+    @Test func playsTheP1Room() async throws {
+        let paths = try makeTestHome()
+        defer { removeTestHome(paths) }
+        let mock = Process()
+        mock.executableURL = URL(fileURLWithPath: NodeMock.node!)
+        mock.arguments = [NodeMock.script, "daemon", "--quiet"]
+        var env = NodeMock.environment(paths, scenario: "agents-p1")
+        // Slower than the P0 test: the clients must catch states that last a few hundred ms.
+        env["AUTOCHAT_MOCK_SPEED"] = "10"
+        mock.environment = env
+        try mock.run()
+        defer {
+            if mock.isRunning {
+                mock.terminate()
+                mock.waitUntilExit()
+            }
+        }
+        #expect(await eventually(timeout: 10) { await DaemonClient.ping(socketPath: paths.sockPath) != nil })
+
+        let lounge = Box<[Snapshot]>([])
+        let loungeClient = DaemonClient(socketPath: paths.sockPath, callbackQueue: DispatchQueue(label: "lounge"))
+        loungeClient.setHandlers(onSnapshot: { s in lounge.mutate { $0.append(s) } })
+        loungeClient.start()
+        defer { loungeClient.stop() }
+
+        let snapshots = Box<[AgentsSnapshot]>([])
+        let client = DaemonClient(socketPath: paths.sockPath, stream: .agents, callbackQueue: DispatchQueue(label: "agents"))
+        client.setAgentsHandlers(onAgents: { s in snapshots.mutate { $0.append(s) } })
+        client.start()
+        defer { client.stop() }
+
+        @Sendable func card(_ name: String, in s: AgentsSnapshot?) -> AgentCard? { s?.agents.first { $0.name == name } }
+        let (daemon, web, docs) = ("daemon-presence-and-bye", "api-server-fix-session-expiry", "docs-site")
+
+        // Presence (#54): a clean exit is left at once, with its sys line in the same snapshot.
+        #expect(await eventually(timeout: 15) { card(docs, in: snapshots.value.last)?.presence == .left })
+        let bye = try #require(snapshots.value.first { card(docs, in: $0)?.presence == .left })
+        #expect(card(docs, in: bye)?.leftAt != nil)
+        #expect(bye.messages.contains { $0.kind == .sys && $0.text == "\(docs) left" })
+        // A dropped connection is away, then here again once it resumes: no sys line.
+        #expect(await eventually(timeout: 15) {
+            let all = snapshots.value
+            guard let away = all.firstIndex(where: { card(daemon, in: $0)?.presence == .away }) else { return false }
+            return all[away...].contains { card(daemon, in: $0)?.presence == .here }
+        })
+        // One that doesn't come back is left once the resume window ends.
+        #expect(await eventually(timeout: 15) { card(web, in: snapshots.value.last)?.presence == .left })
+        #expect(snapshots.value.contains { card(web, in: $0)?.presence == .away })
+        let s = try #require(snapshots.value.last)
+        #expect(card(web, in: s)?.leftAt != nil)
+        #expect(card(daemon, in: s)?.presence == .here)
+        #expect(!s.messages.contains { $0.kind == .sys && $0.text == "\(daemon) left" })
+        #expect(s.messages.contains { $0.kind == .sys && $0.text == "\(web) left" })
+        #expect(AgentsRules.boardCounts(s.agents) == "3 active · 2 left")
+        // The lounge counts the agents that are here.
+        #expect(await eventually { lounge.value.last?.agents?.present == 3 })
+        #expect(lounge.value.contains { $0.agents?.present == 2 }, "two away at once")
+    }
 }

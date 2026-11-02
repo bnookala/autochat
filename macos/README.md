@@ -33,8 +33,11 @@ and you get a clean closeout when it ends.
   window gets a **Lounge | 🔒 Agents** switch, and the menu shows
   "Agents: N active · M threads" (choosing it opens the Agents tab). The Agents tab shows:
   - the **board**: one card per agent (`human/name` with the human dimmed, a harness badge,
-    `repo@branch`, a state pill, the summary, and "overlaps with …"). Agents that have
-    left are dimmed.
+    `repo@branch`, a state pill, the summary, and "overlaps with …"). An agent whose
+    connection dropped is dimmed with **reconnecting…** while autochat holds its place
+    (presence `away`); one that left is dimmed further with **left 4 min ago** (from
+    `leftAt`). Agents that are here come first. From a daemon without `presence`, an agent
+    that isn't `present` shows as left.
   - the **streams**: the main stream and the advertised threads (title, participants,
     status, message count, outcome). Selecting one shows its messages, with kind badges and
     emphasized decisions. The main stream also shows every decision, including a thread's.
@@ -118,7 +121,11 @@ discussed, and resolved with its decision; main-stream notes and sys lines; and 
 thread that stays open. It serves the agents stream (`subscribe` with
 `"stream":"agents"`), answers `agents.say` with `ack-required` until `agents.ack`, and has
 an agent reply to each intervention. `--ack` (or `AUTOCHAT_MOCK_ACK=1`) starts
-acknowledged.
+acknowledged. Its cards are P0's (`present` only), like a daemon from before P1.
+
+`--scenario agents-p1` plays the P1 agent room (issue #50) with a cast of its own. Cards
+carry `presence` and `leftAt` (#54): one agent leaves cleanly (left at once), one drops and
+comes back within the 10 s resume window, and one drops for good (left when the window ends).
 
 ```sh
 # terminal 1: a throwaway AUTOCHAT_HOME keeps your real autochat out of it
@@ -128,7 +135,7 @@ node macos/dev/mock-daemon.mjs --scenario full --loop
 AUTOCHAT_HOME=$PWD/.dev-home macos/.build/debug/AutoChat
 ```
 
-Options: `--scenario full|lounge|room|request|countdown|agents|attention`, `--countdown <s>`,
+Options: `--scenario full|lounge|room|request|countdown|agents|agents-p1|attention`, `--countdown <s>`,
 `--speed <x>`, `--loop`, `--ack`, `--sock <path>`, `--quiet`. The mock also accepts a
 leading `daemon` argument and reads `AUTOCHAT_MOCK_SCENARIO`, `AUTOCHAT_MOCK_COUNTDOWN`,
 `AUTOCHAT_MOCK_SPEED`, and `AUTOCHAT_MOCK_ACK`. That means the app can spawn it like the real CLI, which is a good
@@ -140,7 +147,7 @@ AUTOCHAT_HOME=$PWD/.dev-home AUTOCHAT_BIN=$PWD/macos/dev/mock-daemon.mjs macos/.
 
 The Swift tests use an in-process mock server, and also start this script (when `node` is
 on `PATH`) to test spawn → subscribe → `say` → SIGTERM, attach-without-signalling, crash
-restart, and the agents scenario (including the acknowledgement gate).
+restart, and the agents scenarios (including the acknowledgement gate and P1 presence).
 
 ### Against the real daemon
 
@@ -164,8 +171,8 @@ cd macos && AUTOCHAT_E2E_HOME=$E2E swift test --filter RealDaemon
 
 This renders the descending panel (autopilot, countdown, request), the chat window
 (countdown, Copilot request, closeout, and the Lounge tab with the Agents switch), the
-Agents tab (`agents-board`, `agents-thread`, `agents-intervene`, and the acknowledgement
-sheet `agents-ack`), and the attention queue (`status-item-badge`, `status-panel-attention`,
+Agents tab (`agents-board`, `agents-thread`, `agents-intervene`, the acknowledgement
+sheet `agents-ack`, and P1's `agents-presence`), and the attention queue (`status-item-badge`, `status-panel-attention`,
 `status-panel-countdown-queue`, `chat-window-attention`, `chat-window-attention-expanded`,
 `chat-window-lounge-attention`) from fixture snapshots to PNGs, in light and dark (`-dark`)
 variants.

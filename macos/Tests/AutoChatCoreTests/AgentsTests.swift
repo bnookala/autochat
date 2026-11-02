@@ -131,6 +131,39 @@ struct AgentsDecodingTests {
         #expect(minimal.agents.first?.present == true)
     }
 
+    @Test func presenceFallsBackToPresent() throws {
+        func card(_ fields: String) throws -> AgentCard {
+            try #require(try decode(#"{"type":"agents","agents":[{"name":"a"\#(fields)}]}"#).agents.first)
+        }
+        // P1 (issue #54): here, away, left, and leftAt.
+        #expect(try card(#","presence":"here","present":true"#).presence == .here)
+        let away = try card(#","presence":"away","present":false,"leftAt":null"#)
+        #expect(away.presence == .away)
+        #expect(!away.present)
+        #expect(away.leftAt == nil)
+        let left = try card(#","presence":"left","present":false,"leftAt":1730400000000"#)
+        #expect(left.presence == .left)
+        #expect(left.leftAt == Date(timeIntervalSince1970: 1_730_400_000))
+        #expect(try card(#","presence":" Away ""#).presence == .away)
+        // A daemon from before P1 only says `present`: present is here, anything else left.
+        #expect(try card("").presence == .here)
+        #expect(try card(#","present":true"#).presence == .here)
+        #expect(try card(#","present":false"#).presence == .left)
+        #expect(try card(#","present":false"#).leftAt == nil)
+        // An unknown or malformed presence falls back the same way.
+        #expect(try card(#","presence":"dnd","present":true"#).presence == .here)
+        #expect(try card(#","presence":"dnd","present":false"#).presence == .left)
+        #expect(try card(#","presence":null,"present":false"#).presence == .left)
+        #expect(try card(#","presence":7"#).presence == .here)
+        #expect(try card(#","presence":"left","leftAt":"soon""#).leftAt == nil)
+        #expect(try card(#","presence":"left","leftAt":0"#).leftAt == nil)
+        // `present` always follows presence, even when the two disagree.
+        #expect(try card(#","presence":"away","present":true"#).present == false)
+        #expect(AgentCard(id: "x", name: "x", present: false).presence == .left)
+        #expect(AgentCard(id: "x", name: "x", presence: .away).present == false)
+        #expect(AgentCard(id: "x", name: "x", present: false, presence: .here).present)
+    }
+
     @Test func harnessesStatesAndKinds() {
         let names = ["copilot", "Claude", "codex", "opencode", "gemini", "pi", "agent", "", "x-agent"]
         #expect(names.map { AgentHarness(raw: $0) } == [.copilot, .claude, .codex, .opencode, .gemini, .pi, .generic(nil), .generic(nil), .generic("x-agent")])
@@ -265,6 +298,47 @@ struct AgentsRulesTests {
         // A display-only sender still splits into human and name.
         let bare = AgentMessage(kind: .note, from: AgentSender(display: "jade/claude-x"), text: "x")
         #expect(AgentsRules.senderLabel(bare, me: nil) == AgentSenderLabel(owner: "jade", name: "claude-x"))
+    }
+
+    @Test func presenceOnTheBoard() {
+        let s = Fixtures.agentsPresence(now: t0)
+        // Here first, then reconnecting, then gone; otherwise the daemon's order.
+        #expect(AgentsRules.board(s.agents).map(\.name) == ["copilot-api", "codex-sdk", "claude-web", "copilot-docs"])
+        let mixed = [
+            AgentCard(id: "1", name: "gone", presence: .left), AgentCard(id: "2", name: "a", presence: .here),
+            AgentCard(id: "3", name: "flaky", presence: .away), AgentCard(id: "4", name: "b", presence: .here),
+            AgentCard(id: "5", name: "gone-too", presence: .left)
+        ]
+        #expect(AgentsRules.board(mixed).map(\.name) == ["a", "b", "flaky", "gone", "gone-too"])
+        #expect(AgentsRules.boardCounts(s.agents) == "2 active · 1 reconnecting · 1 left")
+        #expect(AgentsRules.boardCounts(mixed) == "2 active · 1 reconnecting · 2 left")
+        #expect(AgentsRules.boardCounts([]) == "0 active")
+        // Reconnecting agents aren't counted as active.
+        #expect(AgentsRules.subtitle(snapshot: s, lounge: nil) == "Local · this Mac only · 2 active · 1 open thread")
+
+        // The note that replaces the state pill.
+        let web = s.agents.first { $0.name == "claude-web" }!
+        let docs = s.agents.first { $0.name == "copilot-docs" }!
+        #expect(AgentsRules.presenceNote(s.agents[0], now: t0) == nil)
+        #expect(AgentsRules.presenceNote(web, now: t0) == "reconnecting…")
+        #expect(AgentsRules.presenceNote(docs, now: t0) == "left 6 min ago")
+        #expect(AgentsRules.presenceNote(docs, now: nil) == "left")
+        // A daemon from before P1: no leftAt, so just "left", as before.
+        let old = Fixtures.agents(now: t0).agents.first { !$0.present }!
+        #expect(old.presence == .left)
+        #expect(AgentsRules.presenceNote(old, now: t0) == "left")
+    }
+
+    @Test func relativeTimes() {
+        func ago(_ seconds: TimeInterval) -> String { AgentsRules.ago(t0.addingTimeInterval(-seconds), now: t0) }
+        #expect(ago(0) == "just now")
+        #expect(ago(59) == "just now")
+        #expect(ago(60) == "1 min ago")
+        #expect(ago(3599) == "59 min ago")
+        #expect(ago(3600) == "1 h ago")
+        #expect(ago(86_399) == "23 h ago")
+        #expect(ago(2 * 86_400) == "2 d ago")
+        #expect(ago(-30) == "just now", "a leftAt ahead of the clock")
     }
 
     @Test func peerTextStaysPlain() {

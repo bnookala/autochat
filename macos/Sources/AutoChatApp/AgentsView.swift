@@ -88,8 +88,14 @@ private struct AgentsSidebar: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 4)
                 }
-                ForEach(Self.board(snapshot.agents)) { card in
-                    AgentCardView(card: card)
+                // Ticks so "left 4 min ago" stays true between snapshots.
+                TimelineView(.periodic(from: .now, by: 20)) { context in
+                    let now = agents.daemonNow(at: context.date)
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(AgentsRules.board(snapshot.agents)) { card in
+                            AgentCardView(card: card, now: now)
+                        }
+                    }
                 }
                 SidebarHeader(title: "Streams", detail: nil)
                     .padding(.top, 10)
@@ -107,11 +113,6 @@ private struct AgentsSidebar: View {
         }
         .scrollIndicators(.automatic)
         .background(Theme.sidebarFill)
-    }
-
-    /// Present agents first, otherwise in the daemon's order.
-    static func board(_ cards: [AgentCard]) -> [AgentCard] {
-        cards.filter(\.present) + cards.filter { !$0.present }
     }
 
     /// Open threads first, most recently active first.
@@ -175,12 +176,14 @@ private struct SidebarHeader: View {
 
 struct AgentCardView: View {
     let card: AgentCard
+    /// The daemon's clock, for "left 4 min ago".
+    var now: Date?
 
     var body: some View {
         let parts = AgentName.split(display: card.display, human: card.human, name: card.name)
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                PresenceDot(present: card.present)
+                PresenceDot(presence: card.presence)
                 Text(AgentText.name(owner: parts.human.map { PlainText.clean($0) }, name: PlainText.clean(parts.name), font: .body))
                     .lineLimit(1)
                     .truncationMode(.head)
@@ -204,10 +207,13 @@ struct AgentCardView: View {
                 .foregroundStyle(.secondary)
             }
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                if card.present {
+                switch card.presence {
+                case .here:
                     if let state = card.state { StatePill(state: state) }
-                } else {
-                    Pill(text: "left", symbol: "door.left.hand.open", tint: Palette.gray)
+                case .away:
+                    Pill(text: AgentsRules.presenceNote(card, now: now) ?? "reconnecting…", symbol: "arrow.triangle.2.circlepath", tint: Palette.amber)
+                case .left:
+                    Pill(text: AgentsRules.presenceNote(card, now: now) ?? "left", symbol: "door.left.hand.open", tint: Palette.gray)
                 }
                 if let summary = card.summary.map({ PlainText.clean($0) }), !summary.isEmpty {
                     Text(verbatim: summary)
@@ -232,20 +238,56 @@ struct AgentCardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: Theme.cardCorner, style: .continuous).fill(Theme.cardFill))
         .overlay(RoundedRectangle(cornerRadius: Theme.cardCorner, style: .continuous).strokeBorder(Theme.cardStroke, lineWidth: 0.5))
-        .opacity(card.present ? 1 : 0.55)
-        .help(AgentsRules.focusHelp(card) ?? "")
+        .opacity(Self.opacity(card.presence))
+        .help(help)
         .accessibilityElement(children: .combine)
+    }
+
+    /// Dimmed once it isn't here; a little less while it may still come back.
+    static func opacity(_ presence: AgentPresence) -> Double {
+        switch presence {
+        case .here: 1
+        case .away: 0.7
+        case .left: 0.55
+        }
+    }
+
+    private var help: String {
+        var lines: [String] = []
+        switch card.presence {
+        case .here: break
+        case .away: lines.append("Its connection dropped. autochat keeps its place for a few seconds in case it comes back.")
+        case .left: if let leftAt = card.leftAt { lines.append("Left at \(AgentText.time(leftAt))") }
+        }
+        if let focus = AgentsRules.focusHelp(card) { lines.append(focus) }
+        return lines.joined(separator: "\n")
     }
 }
 
 struct PresenceDot: View {
-    let present: Bool
+    let presence: AgentPresence
 
     var body: some View {
-        Image(systemName: present ? "circle.fill" : "circle")
-            .font(.system(size: 7, weight: .bold))
-            .foregroundStyle(present ? AnyShapeStyle(Theme.active) : AnyShapeStyle(.secondary))
-            .accessibilityLabel(present ? "present" : "left")
+        Group {
+            switch presence {
+            case .here:
+                Image(systemName: "circle.fill").foregroundStyle(Theme.active)
+            case .away:
+                Image(systemName: "circle.dotted").foregroundStyle(Palette.amber)
+            case .left:
+                Image(systemName: "circle").foregroundStyle(.secondary)
+            }
+        }
+        .font(.system(size: 7, weight: .bold))
+        .accessibilityLabel(Self.label(presence))
+    }
+
+    static func label(_ presence: AgentPresence) -> String {
+        switch presence {
+        case .here: "here"
+        case .away: "reconnecting"
+        case .left: "left"
+        }
     }
 }
 

@@ -5,7 +5,7 @@
 // `agents.ack` / `agents.say`), over the same unix socket path as src/paths.js sockPath()
 // (respects AUTOCHAT_HOME). No dependencies.
 //
-//   node macos/dev/mock-daemon.mjs [daemon] [--scenario full|lounge|room|request|countdown|agents|attention]
+//   node macos/dev/mock-daemon.mjs [daemon] [--scenario full|lounge|room|request|countdown|agents|agents-p1|attention]
 //        [--countdown 30] [--speed 1] [--loop] [--ack] [--sock PATH] [--quiet]
 //
 // The leading `daemon` argument is accepted and ignored, so the app can spawn this file
@@ -16,7 +16,13 @@
 // `--scenario agents` stays in the lounge and plays an agent room: three agents over two
 // harnesses (one leaves), an overlap, a thread that's opened, discussed and resolved with a
 // decision, main-stream notes and sys lines, and a second thread that stays open. `--ack`
-// starts with the intervention warning already acknowledged.
+// starts with the intervention warning already acknowledged. Its cards are P0's: `present`
+// only, like a daemon from before P1.
+//
+// `--scenario agents-p1` plays the P1 agent room (issue #50) with a cast of its own. Presence
+// (#54): cards carry `presence` (here, away, left) and `leftAt`; one agent leaves cleanly
+// (`bye`: left at once), one drops and comes back within the 10 s resume window, and one drops
+// for good (left once the window ends).
 //
 // `--scenario attention` (issue #37) runs four agents over three harnesses at once: one finishes,
 // two get blocked on you (one with Copilot's question), one fails. Jump to a blocked one and it
@@ -212,6 +218,7 @@ function runScenario (name, delay = 0) {
   const t = (sec, fn) => at(delay + sec, fn)
   if (name === 'lounge') return
   if (name === 'agents') return runAgents(t)
+  if (name === 'agents-p1') return runAgentsP1(t)
   if (name === 'attention') return runAttention(t)
   if (name === 'room' || name === 'request' || name === 'countdown') {
     enterRoom()
@@ -338,6 +345,7 @@ function runAttention (t) {
 const REPO = 'bnookala/api-server'
 const room = {
   seen: false, // an agent has connected since start → the lounge snapshot's `agents` is non-null
+  p1: false, // agents-p1: cards carry the P1 fields
   ack: values.ack,
   cards: new Map(), // name → card
   threads: new Map(), // id → thread
@@ -391,7 +399,7 @@ function agentJoin (name, harness, branch, extra = {}) {
   room.cards.set(name, {
     id: hex(8), name, display: `${ME.handle}/${name}`, human: ME.handle, harness, repo: REPO, branch, worktree: name.split('-')[1] || name,
     state: 'exploring', summary: null, focus: { issue: null, components: [], paths: [] },
-    present: true, joinedAt: now, updatedAt: now, overlaps: [], ...extra
+    present: true, ...(room.p1 ? { presence: 'here', leftAt: null } : {}), joinedAt: now, updatedAt: now, overlaps: [], ...extra
   })
   postAgentMessage({ kind: 'sys', text: `${name} joined` })
   recomputeOverlaps()
@@ -433,7 +441,8 @@ function overlapOn (a, b) {
 }
 
 function recomputeOverlaps () {
-  const cards = [...room.cards.values()].filter(c => c.present)
+  // An agent that's reconnecting is still in the room; one that left overlaps with no one.
+  const cards = [...room.cards.values()].filter(c => c.present || c.presence === 'away')
   for (const c of room.cards.values()) c.overlaps = []
   const now = new Set()
   for (let i = 0; i < cards.length; i++) {
@@ -553,6 +562,110 @@ function runAgents (t) {
   }))
 }
 
+// --- agent room P1 (issue #50) ---------------------------------------------------------
+
+// Presence (#54): `present` stays, and equals presence === 'here'.
+const drops = new Map() // name → the drop that may still time out
+
+function setPresence (c, presence) {
+  c.presence = presence
+  c.present = presence === 'here'
+  c.leftAt = presence === 'left' ? Date.now() : null
+  c.updatedAt = Date.now()
+  recomputeOverlaps()
+  changed()
+  agentsChanged()
+}
+
+// A clean exit (`bye`): left at once, and the sys line right away.
+function agentBye (name) {
+  const c = room.cards.get(name)
+  if (!c || c.presence === 'left') return
+  drops.delete(name)
+  setPresence(c, 'left')
+  postAgentMessage({ kind: 'sys', text: `${name} left` })
+}
+
+// A dropped connection: away for the resume window, then left unless it comes back.
+function agentDrop (name) {
+  const c = room.cards.get(name)
+  if (c?.presence !== 'here') return
+  const drop = {}
+  drops.set(name, drop)
+  setPresence(c, 'away')
+  timers.push(setTimeout(() => {
+    if (drops.get(name) !== drop) return
+    drops.delete(name)
+    setPresence(c, 'left')
+    postAgentMessage({ kind: 'sys', text: `${name} left` })
+  }, AGENT_LEFT_MS / speed))
+}
+
+// Resumed within the window: the same card, and no sys line.
+function agentResume (name) {
+  const c = room.cards.get(name)
+  if (c?.presence !== 'away') return
+  drops.delete(name)
+  setPresence(c, 'here')
+}
+
+const P1_REPO = 'bnookala/autochat'
+const P1 = {
+  lead: 'autochat-p1-agent-rooms',
+  app: 'mac-app-presence-and-names',
+  daemon: 'daemon-presence-and-bye',
+  web: 'api-server-fix-session-expiry',
+  docs: 'docs-site'
+}
+
+function runAgentsP1 (t) {
+  room.p1 = true
+  const { lead, app, daemon, web, docs } = P1
+  t(0, () => agentJoin(lead, 'copilot', 'main', {
+    repo: P1_REPO, worktree: 'autochat', state: 'editing', summary: 'Coordinating the P1 agent room layers',
+    focus: { issue: 50, components: ['agent room'], paths: [] }
+  }))
+  t(0.3, () => agentJoin(app, 'copilot', 'app/p1-presence', { repo: P1_REPO, worktree: 'p1-app' }))
+  t(0.6, () => agentJoin(daemon, 'copilot', 'core/p1-presence', { repo: P1_REPO, worktree: 'p1-core' }))
+  t(0.9, () => agentJoin(web, 'claude', 'fix/session-expiry', { worktree: 'api-server-web', summary: 'Looking into web sessions expiring mid-request' }))
+  t(1.2, () => agentJoin(docs, 'codex', null, { repo: null, worktree: 'docs-site', state: 'done', summary: 'Proofread the agent room docs' }))
+  t(2, () => agentStatus(app, {
+    state: 'editing', summary: 'Showing here, reconnecting and left on the Agents board',
+    focus: { issue: 54, components: ['presence'], paths: ['macos/Sources/AutoChatApp/AgentsView.swift'] }
+  }))
+  t(2.5, () => agentStatus(daemon, {
+    state: 'editing', summary: 'Adding bye and the away state to the agent room',
+    focus: { issue: 54, components: ['presence'], paths: ['src/agents/presence.js'] }
+  }))
+  let away = null
+  let question = null
+  t(4, () => {
+    away = threadOpen(app, 'away vs present', [daemon])
+    question = agentPost(app, {
+      kind: 'question', thread: away, to: [daemon],
+      text: 'When a connection drops, does present go false right away, or only once the agent has left?'
+    })
+  })
+  t(5.5, () => agentPost(daemon, {
+    kind: 'reply', thread: away, replyTo: question?.seq ?? null,
+    text: 'Right away: present stays and equals presence == "here". away means the daemon still holds its place for 10 s.'
+  }))
+  t(7, () => threadResolve(app, away, 'present equals presence == "here". The board dims away cards with "reconnecting…" and left cards with "left <time>".'))
+  t(8, () => agentPost(docs, { kind: 'handoff', to: [lead], text: 'Handing off: the presence section of docs/protocol.md needs the bye command once it lands.' }))
+  t(9, () => agentBye(docs))
+  t(10, () => agentDrop(daemon))
+  t(12, () => agentDrop(web))
+  let order = null
+  let orderQuestion = null
+  t(14, () => {
+    order = threadOpen(lead, 'layer order', [app])
+    orderQuestion = agentPost(lead, { kind: 'question', thread: order, to: [app], text: 'Does the names layer go on top of presence, or next to it?' })
+  })
+  t(15.5, () => agentPost(app, { kind: 'reply', thread: order, replyTo: orderQuestion?.seq ?? null, text: 'On top: each app layer builds on the one below.' }))
+  t(17, () => agentResume(daemon))
+  t(18, () => agentPost(daemon, { text: 'Back: my connection dropped while the tests ran. Nothing was lost.' }))
+}
+
 // A human intervention, and a polite reaction from a participant a moment later.
 function agentsSay (msg) {
   if (!room.ack) return { ok: false, error: 'ack-required' }
@@ -567,7 +680,7 @@ function agentsSay (msg) {
     kind: 'human', intervention: true, thread, to, text,
     from: { name: null, display: `${ME.handle} (human)`, human: ME.handle, harness: null, repo: null }
   })
-  const responder = (t ? t.participants : ['copilot-api', 'claude-web']).find(n => room.cards.get(n)?.present)
+  const responder = (t ? t.participants : room.p1 ? [...room.cards.keys()] : ['copilot-api', 'claude-web']).find(n => room.cards.get(n)?.present)
   if (responder) {
     setTimeout(() => agentPost(responder, {
       kind: 'reply', thread, replyTo: said.seq, text: 'Noted. I read that as information from a human, and it fits what I\'m doing.'

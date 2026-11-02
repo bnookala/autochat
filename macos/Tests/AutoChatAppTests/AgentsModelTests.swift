@@ -210,6 +210,43 @@ struct AgentsInterventionTests {
     }
 }
 
+@Suite("App model: presence")
+@MainActor
+struct AgentsPresenceModelTests {
+    @Test func leftTimesTickOnTheDaemonClock() {
+        let daemon = FakeAgentsDaemon()
+        let model = AgentsModel(send: { try await daemon.send($0) })
+        let daemonNow = Date(timeIntervalSince1970: 1_730_400_000)
+        let local = Date(timeIntervalSince1970: 1_730_400_042)
+        model.apply(Fixtures.agentsPresence(now: daemonNow), receivedAt: local)
+        #expect(model.daemonNow(at: local) == daemonNow)
+        // Between snapshots the daemon's clock moves on with ours, skew and all.
+        #expect(model.daemonNow(at: local.addingTimeInterval(90)) == daemonNow.addingTimeInterval(90))
+        let docs = model.snapshot!.agents.first { $0.presence == .left }!
+        #expect(AgentsRules.presenceNote(docs, now: model.daemonNow(at: local)) == "left 6 min ago")
+        #expect(AgentsRules.presenceNote(docs, now: model.daemonNow(at: local.addingTimeInterval(120))) == "left 8 min ago")
+        // Without the daemon's `now`, the local clock.
+        var bare = Fixtures.agentsPresence(now: daemonNow)
+        bare.now = nil
+        model.apply(bare, receivedAt: local)
+        #expect(model.daemonNow(at: local.addingTimeInterval(5)) == local.addingTimeInterval(5))
+    }
+
+    @Test func aFixtureStaysAtItsNow() {
+        let now = Date(timeIntervalSince1970: 1_730_400_000)
+        let model = AgentsModel(fixture: Fixtures.agentsPresence(now: now))
+        #expect(model.daemonNow(at: Date()) == now)
+        #expect(AgentsModel(fixture: nil).daemonNow() == nil)
+    }
+
+    @Test func cardsDimOnceTheAgentIsNotHere() {
+        #expect(AgentCardView.opacity(.here) == 1)
+        #expect(AgentCardView.opacity(.away) < 1)
+        #expect(AgentCardView.opacity(.left) < AgentCardView.opacity(.away))
+        #expect([AgentPresence.here, .away, .left].map(PresenceDot.label) == ["here", "reconnecting", "left"])
+    }
+}
+
 @Suite("Agents: plain-text rendering")
 @MainActor
 struct AgentsPlainTextTests {

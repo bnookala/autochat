@@ -28,6 +28,8 @@ public final class AgentsModel {
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var stopWork: DispatchWorkItem?
     @ObservationIgnored private var errorClear: DispatchWorkItem?
+    /// When the latest snapshot arrived: its `now` ticks on from there.
+    @ObservationIgnored private var receivedAt: Date?
 
     /// How long the subscription outlives the window, so a quick hide/show doesn't resubscribe.
     static let idleGrace: TimeInterval = 15
@@ -73,6 +75,15 @@ public final class AgentsModel {
     /// The selected stream is a resolved thread, which takes no more messages.
     public var streamIsClosed: Bool { !AgentsRules.acceptsInterventions(stream, in: snapshot) }
     public var isFixture: Bool { frozen }
+
+    /// The daemon's clock at local time `date`, for "left 4 min ago": the snapshot's `now`
+    /// moved on by the time since it arrived (the local clock if it has none). A fixture's
+    /// stays at its `now`.
+    public func daemonNow(at date: Date = Date()) -> Date? {
+        guard let now = snapshot?.now else { return frozen ? nil : date }
+        guard !frozen, let receivedAt else { return now }
+        return now.addingTimeInterval(date.timeIntervalSince(receivedAt))
+    }
 
     // MARK: Subscription
 
@@ -127,8 +138,9 @@ public final class AgentsModel {
         connection = s
     }
 
-    func apply(_ s: AgentsSnapshot) {
+    func apply(_ s: AgentsSnapshot, receivedAt: Date = Date()) {
         snapshot = s
+        self.receivedAt = receivedAt
         gate.update(daemonAck: s.ack)
         if selection != .main, AgentsRules.resolve(selection, in: s) == .main { selection = .main }
     }
