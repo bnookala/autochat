@@ -55,7 +55,27 @@ final class ChatWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate 
         animateResize = true
         if !wasVisible { DebugLog.log("chat window shows \(model.effectiveTab)") }
         if window.isMiniaturized { window.deminiaturize(nil) }
+        // While the chat is open, AutoChat is a regular app: in the Dock and ⌘-Tab, with its
+        // menus. Closing the chat puts it back in the menu bar only.
+        if NSApp.activationPolicy() == .accessory { NSApp.setActivationPolicy(.regular) }
         NSApp.activate()
+        window.makeKeyAndOrderFront(nil)
+        // macOS can decline that activation: since macOS 26 it does for a menu bar click while
+        // another app is in front, which left the window behind that app. Bring it up anyway.
+        window.orderFrontRegardless()
+        reportState()
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(200))
+            self?.insistOnActivation()
+        }
+    }
+
+    /// Every way to open the chat is a click (the icon, its menu, the panel), so if macOS still
+    /// hasn't activated the app, insist: what the user types next belongs in the chat.
+    private func insistOnActivation() {
+        guard let window = _window, window.isVisible, !NSApp.isActive else { return }
+        DebugLog.log("activation declined; activating anyway")
+        (NSApp as LegacyActivation).activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         reportState()
     }
@@ -63,6 +83,7 @@ final class ChatWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate 
     func hide() {
         guard let window = _window, window.isVisible else { return }
         window.orderOut(nil)
+        if NSApp.activationPolicy() == .regular { NSApp.setActivationPolicy(.accessory) }
         reportState()
     }
 
@@ -336,3 +357,11 @@ struct MeChip: View {
         .accessibilityLabel("You are \(handle)")
     }
 }
+
+/// `activate(ignoringOtherApps:)` without its deprecation warning. macOS 14 deprecated it in
+/// favor of cooperative activation, which since macOS 26 declines menu bar clicks.
+@MainActor private protocol LegacyActivation {
+    func activate(ignoringOtherApps flag: Bool)
+}
+
+extension NSApplication: LegacyActivation {}
