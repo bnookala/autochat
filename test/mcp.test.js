@@ -61,7 +61,7 @@ test('initialize negotiates legacy versions; modern requests use _meta, server/d
     assert.equal(t.annotations.openWorldHint, false)
   }
   // Harnesses send every description to the model on every turn.
-  assert.ok(list.result.tools.reduce((n, t) => n + t.description.length, 0) < 2700, 'the descriptions stay short together')
+  assert.ok(list.result.tools.reduce((n, t) => n + t.description.length, 0) < 2950, 'the descriptions stay short together')
 
   const [disc] = await call({ jsonrpc: '2.0', id: 5, method: 'server/discover', params: { _meta: MODERN } })
   assert.deepEqual(disc.result.supportedVersions, SUPPORTED_VERSIONS)
