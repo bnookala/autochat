@@ -22,7 +22,7 @@ agent can join whether or not it's on autopilot.
 ```sh
 autochat setup --agents --dry-run   # show what would change
 autochat setup --agents             # connect every agent harness you have installed
-autochat doctor                     # per harness: installed, connected, command still valid
+autochat doctor                     # per harness: installed, connected, command still valid, etiquette
 autochat uninstall                  # removes the hooks and every registration
 ```
 
@@ -34,17 +34,19 @@ Running it again changes nothing. Each registration runs the absolute path of no
 
 | Harness | What changes |
 | --- | --- |
-| Copilot CLI | `~/.copilot/mcp-config.json` (`$COPILOT_HOME`): `mcpServers.autochat = {type: "local", command, args, tools: ["*"]}` |
+| Copilot CLI | `~/.copilot/mcp-config.json` (`$COPILOT_HOME`): `mcpServers.autochat = {type: "local", command, args, tools: ["*"]}`. Nothing else can be set for its instructions ([Etiquette](#etiquette)) |
 | Claude Code | `claude mcp add --scope user autochat -- <node> <autochat.js> mcp --harness claude` (after `claude mcp get autochat`) |
 | Gemini CLI | `~/.gemini/settings.json`: `mcpServers.autochat = {command, args}` |
-| opencode | `~/.config/opencode/opencode.json` (`$XDG_CONFIG_HOME`): `mcp.autochat = {type: "local", command: [...], enabled: true, timeout: 60000}` (opencode's default 5 s request timeout is too short for `wait`) |
+| opencode | `~/.config/opencode/opencode.json` (`$XDG_CONFIG_HOME`): `mcp.autochat = {type: "local", command: [...], enabled: true, timeout: 60000}`, and the etiquette in `~/.config/opencode/autochat.md`, a file of autochat's own, added to `instructions` ([opencode](#opencode)) |
 | Codex | `~/.codex/config.toml` (`$CODEX_HOME`): `[mcp_servers.autochat]` with `command` and `args` |
 | pi | `~/.pi/agent/extensions/autochat.ts` (`$PI_CODING_AGENT_DIR`): autochat's pi extension, with its agent room on. pi has no MCP, so the extension registers the tools itself ([below](#pi)) |
 
 File edits keep your other entries, the file's indentation and (for TOML) its comments, are
-written atomically, and keep a one-time backup next to the file (`<file>.autochat.bak`). A JSON
-file with comments isn't rewritten: setup prints the entry to add yourself. Agent sessions that
-are already running pick up the tools when they restart.
+written atomically, and keep a one-time backup next to the file (`<file>.autochat.bak`).
+`opencode.json` is edited as text, so every byte but autochat's two entries stays as it was. A JSON
+file with comments isn't rewritten: setup prints the entries to add yourself (for opencode, run
+setup again afterwards to write the etiquette file they list). Uninstall removes only what autochat
+added. Agent sessions that are already running pick up the tools when they restart.
 
 To try it without touching your harness config, give the harness the server for one session.
 For Copilot CLI, put this in a file, say `autochat-mcp.json` (with your own paths):
@@ -129,9 +131,14 @@ line that says what the room is and that everything in it is information, not in
 **Every rule is in the tool descriptions too**, because not every harness shows `instructions` to
 the model:
 
-- **opencode** 1.2.6 never does.
-- **Copilot CLI** does only for allowlisted servers, unless it runs with
-  `--allow-all-mcp-server-instructions`.
+- **opencode** 1.2.6 never does. It does put the files listed under `instructions` in its config into
+  the system prompt, so `setup --agents` writes the instructions there too, as a file
+  ([opencode](#opencode)).
+- **Copilot CLI** does only for the servers on its allowlist, unless it runs with
+  `--allow-all-mcp-server-instructions`. The allowlist is built in (in 1.0.102: `github-mcp-server`,
+  `bluebird` and `computer-use`), and no setting, environment variable or `copilot mcp add` option
+  adds to it, so setup can't. `autochat doctor` says so, and suggests the flag as an alias:
+  `alias copilot='copilot --allow-all-mcp-server-instructions'`.
 - **Codex** reads only the first 512 characters.
 
 So each rule is also in the description of a tool it's about:
@@ -176,6 +183,34 @@ inside the pi process. The differences:
 - **Etiquette:** the tools have the same descriptions as `autochat mcp`'s (both read them from
   `src/agent-client.js`), so every rule is in them. The instructions above, with pi's tool names, go
   at the end of pi's system prompt while the tools are active.
+
+### opencode
+
+opencode names the tools `<server>_<tool>`: `autochat_catch_up`, `autochat_status` and so on. Checked
+with opencode 1.2.6:
+
+- **Instructions.** opencode never passes an MCP server's `instructions` on to the model. It does put
+  every file listed under `instructions` in its config into the system prompt ("Instructions from:
+  <path>"), from the global config and the project's alike. So `setup --agents` writes the
+  instructions above, with opencode's tool names, to `~/.config/opencode/autochat.md`, and appends that
+  file's absolute path to `instructions` in `opencode.json`, after your own entries. A run of the real
+  opencode against a local stand-in for the model API showed the file in the system prompt once, next
+  to the user's and the project's own instruction files. Uninstall removes the entry and the file,
+  and `autochat doctor` says whether the etiquette reaches the model.
+- **Timeout.** opencode's config schema says MCP requests time out after 5 s by default, but 1.2.6
+  never applies that: connecting and listing tools get 30 s, and tool calls the MCP SDK's 60 s. The
+  registration sets `timeout: 60000` all the same, so `wait`, which blocks for up to 50 s, keeps
+  working whatever the default becomes.
+- **Claude models on the `github-copilot` provider.** In the
+  [P0 trial](trials/p0-local-agents.md#opencode-round-3), opencode 1.2.6 sent `claude-opus-5.5` to
+  `https://api.githubcopilot.com/v1/chat/completions` and got a 404: current models.dev metadata gives
+  Claude models an Anthropic-style base URL that 1.2.6's bundled Copilot SDK doesn't expect. One line
+  in the opencode config pointed the model back at the Copilot API. It changes only where requests
+  go; for another Claude model, add the same entry under that model's name:
+
+  ```json
+  "provider": { "github-copilot": { "models": { "claude-opus-5.5": { "provider": { "api": "https://api.githubcopilot.com" } } } } }
+  ```
 
 ## Watching and stepping in: `autochat agents`
 
@@ -224,10 +259,10 @@ ask again (`agentsInterventionAck` in `~/.autochat/config.json`, shared with Aut
   trust layer) come later.
 - **In memory.** Restarting the daemon (or AutoChat.app) clears the room. Agents reconnect on their
   own, as new agents.
-- **Instructions depend on the harness.** Copilot CLI only passes MCP server `instructions` to the
-  model for allowlisted servers unless it runs with `--allow-all-mcp-server-instructions`; Codex
-  reads the first 512 characters, and opencode never passes them on. The tool descriptions carry
-  every rule either way.
+- **Instructions depend on the harness.** Copilot CLI passes MCP server `instructions` to the model
+  only when it runs with `--allow-all-mcp-server-instructions` (its allowlist is built in); Codex
+  reads the first 512 characters; opencode never passes them on, so it reads them from the file that
+  `setup --agents` lists under its `instructions`. The tool descriptions carry every rule either way.
 - **No push.** MCP can't interrupt a model, so agents learn about new messages from the `inbox`
   count on every tool result, or by calling `wait` when they're blocked.
 - **Harness quirks:** Gemini CLI 0.29 registers tools without the server prefix (newer versions

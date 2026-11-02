@@ -39,7 +39,7 @@ exports one object:
 | `follow(sid)` | no | The harness's own session log, for what no hook reports. An EventEmitter like Copilot's `SessionLog`: `start({since})`, `poll()`, `stop()`, and events `mode`, `task-complete`, `abort`, `shutdown`, `activity`. |
 | `continues(session)` | no | After `idle`, true keeps the session in the room a while longer (Copilot: an active autopilot objective). |
 | `focus(origin)` | no | Put focus back on the agent's terminal. Default: `focusOrigin` (tmux pane, else the terminal app). |
-| `mcp` | yes | `where`, `status`, `plan`, `unplan`: registering `autochat mcp` (`autochat setup --agents`). `jsonServer()` in `mcp-config.js` covers harnesses with a JSON config file. |
+| `mcp` | yes | `where`, `status`, `plan`, `unplan`: registering `autochat mcp` (`autochat setup --agents`). `jsonServer()` in `mcp-config.js` covers harnesses with a JSON config file. `status` may add `etiquette: {shown, note}` for doctor, where the room's etiquette doesn't simply reach the model as the server's instructions (Copilot CLI, opencode). |
 
 `ctx` is `harnessContext()` from `src/harness/util.js`: `env`, `home`, `node`, `bin` (the absolute
 paths hooks run), `copilotHome`, `claudeHome` (`$CLAUDE_CONFIG_DIR`), `configHome`
@@ -198,7 +198,7 @@ event happened (`ts` is when it was sent). Messages without `harness` (or
 | Copilot CLI | `$COPILOT_HOME/hooks/autochat.json` (a file of our own) | `autopilot`, from `session-state/<id>/events.jsonl` | the session-state scan | `mcp-config.json` |
 | Claude Code | `$CLAUDE_CONFIG_DIR/settings.json`, merged ([below](#claude-code)) | `auto` (`permission_mode`); headless: `CLAUDE_CODE_SESSION_ATTENDED=0` | none needed: running sessions pick up new hooks | `claude mcp add` |
 | Gemini CLI | not yet | | | `~/.gemini/settings.json` |
-| opencode | a plugin of our own, `$XDG_CONFIG_HOME/opencode/plugin/autochat.js` ([below](#opencode)) | headless: `opencode run` (the plugin's `process.argv`), or a server's session that denies the question tool (`run --attach`); never the TUI; the agent is the mode | none yet: opencode processes started before setup don't have the plugin | `opencode.json` |
+| opencode | a plugin of our own, `$XDG_CONFIG_HOME/opencode/plugin/autochat.js` ([below](#opencode)) | headless: `opencode run` (the plugin's `process.argv`), or a server's session that denies the question tool (`run --attach`); never the TUI; the agent is the mode | none yet: opencode processes started before setup don't have the plugin | `opencode.json`, and the etiquette file under `instructions` |
 | Codex | `$CODEX_HOME/hooks.json`, merged ([below](#codex)); Codex runs them once you trust them | `headless`: `codex exec`, from the session's rollout; `bypassPermissions` for approval policy `never` | none yet | `config.toml` |
 | pi | `$PI_CODING_AGENT_DIR/extensions/autochat.ts`, an extension of our own ([below](#pi)) | `headless`: print and json mode (`ctx.hasUI` is false) | none: pi reports nothing without the extension | the same extension |
 
@@ -454,3 +454,18 @@ build agent too.
 `run` rejects its own session's permission requests, within milliseconds, but a subagent's it
 leaves waiting, and it never answers a question: either hangs `opencode run`, which shows as a
 request until you stop it (Ctrl+C, see above).
+
+**MCP and the etiquette.** `autochat setup --agents` registers `autochat mcp` under `mcp` in
+`opencode.json`. opencode never shows the model an MCP server's instructions, but it does load the
+files listed under `instructions`, so setup also writes the room's etiquette, with opencode's tool
+names, to `autochat.md` next to `opencode.json` (a file of our own) and appends its absolute path
+there ([agents.md](agents.md#opencode)). Both edits are made to the file's text
+(`src/harness/json-edit.js`): everything else stays byte-for-byte. A config with comments or
+trailing commas, which opencode accepts, isn't rewritten: setup prints both entries, and once the
+config lists them a rerun writes `autochat.md`. Doctor and uninstall read such a config as opencode
+does, and uninstall says to take the entries out by hand. Uninstall removes the two entries and the
+file, then an `mcp` or `instructions` they leave empty, unless the file had it before autochat first
+wrote to it (its `.autochat.bak`; a backup holding only autochat's entries doesn't count, and none is
+taken of a config that holds nothing else), and `opencode.json` itself when autochat made it and
+nothing else is left. A `timeout` of 60 s keeps `wait` working: 1.2.6 never uses the 5 s its schema
+documents ([agents.md](agents.md#opencode)).

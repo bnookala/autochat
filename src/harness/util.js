@@ -58,17 +58,17 @@ export function readText (file) {
   try { return fs.readFileSync(file, 'utf8') } catch (err) { if (err.code === 'ENOENT') return null; throw err }
 }
 
-// Atomic (temp file + rename), with a one-time backup. A symlinked config (stow, chezmoi,
-// home-manager) is written through to its target, so the link stays a link.
-export function writeFileSafely (file, text) {
+// Atomic (temp file + rename), with a one-time backup (unless `backup` is false). A symlinked
+// config (stow, chezmoi, home-manager) is written through to its target, so the link stays a link.
+export function writeFileSafely (file, text, { backup = true } = {}) {
   let target = file
   try { target = fs.realpathSync(file) } catch {}
   fs.mkdirSync(path.dirname(target), { recursive: true })
   let mode = 0o600
   if (exists(target)) {
     mode = fs.statSync(target).mode & 0o777
-    const backup = file + '.autochat.bak'
-    if (!fs.existsSync(backup)) fs.copyFileSync(target, backup)
+    const bak = file + '.autochat.bak'
+    if (backup && !fs.existsSync(bak)) fs.copyFileSync(target, bak)
   }
   const tmp = `${target}.autochat-${process.pid}.tmp`
   fs.writeFileSync(tmp, text, { mode })

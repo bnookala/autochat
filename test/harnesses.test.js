@@ -10,6 +10,9 @@ const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'bi
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'autochat-harnesses-'))
 process.env.AUTOCHAT_HOME = path.join(tmp, 'ac')
 const { harnessContext, planAgents, setupAgents, removeAgents, agentsStatus, describePlan } = await import('../src/harnesses.js')
+const { describeAgentStatus } = await import('../src/harness/index.js')
+const { etiquetteSource } = await import('../src/harness/opencode.js')
+const { instructions, TOOLS } = await import('../src/agent-client.js')
 
 let n = 0
 // A fresh fake user: its own HOME (and COPILOT_HOME, XDG_CONFIG_HOME, CODEX_HOME), harness
@@ -102,7 +105,8 @@ test('Gemini CLI and opencode: their formats, the file indentation is kept, comm
   const opencode = JSON.parse(read(u.file('.config', 'opencode', 'opencode.json')))
   assert.deepEqual(opencode, {
     $schema: 'https://opencode.ai/config.json',
-    mcp: { autochat: { type: 'local', command: [u.node, u.autochat, 'mcp', '--harness', 'opencode'], enabled: true, timeout: 60000 } }
+    mcp: { autochat: { type: 'local', command: [u.node, u.autochat, 'mcp', '--harness', 'opencode'], enabled: true, timeout: 60000 } },
+    instructions: [u.file('.config', 'opencode', 'autochat.md')]
   })
   assert.equal(fs.existsSync(u.file('.config', 'opencode', 'opencode.json.autochat.bak')), false, 'nothing to back up for a new file')
   assert.deepEqual(setupAgents({ ctx: u.ctx, ...quiet }).applied, [], 'idempotent')
@@ -127,7 +131,8 @@ test('Gemini CLI and opencode: their formats, the file indentation is kept, comm
   assert.equal(read(u.file('.gemini', 'settings.json')), jsonc)
 
   removeAgents({ ctx: u.ctx, ...quiet })
-  assert.deepEqual(JSON.parse(read(u.file('.config', 'opencode', 'opencode.json'))), { $schema: 'https://opencode.ai/config.json', mcp: {} })
+  assert.equal(fs.existsSync(u.file('.config', 'opencode', 'opencode.json')), false, 'autochat made it, and nothing else is in it')
+  assert.deepEqual(fs.readdirSync(u.file('.config', 'opencode')), [])
 })
 
 test('Codex: [mcp_servers.autochat] in $CODEX_HOME/config.toml, edited as text', () => {
@@ -251,4 +256,236 @@ test('changes made between showing the plan and applying it are kept; symlinked 
   removeAgents({ ctx: u.ctx, ...quiet })
   assert.ok(fs.lstatSync(u.file('.codex', 'config.toml')).isSymbolicLink())
   assert.equal(read(path.join(dot, 'codex.toml')), 'model = "o3"\n')
+})
+
+const ETIQUETTE_LINE = "         + ~/.config/opencode/autochat.md: the agent-room etiquette (opencode doesn't show MCP server instructions to the model)"
+
+test('opencode: the etiquette goes in a file of autochat\'s own, listed under "instructions"; every other byte stays; uninstall gives the file back', () => {
+  const u = user({ bins: ['opencode'] })
+  const dir = u.file('.config', 'opencode')
+  const file = path.join(dir, 'opencode.json')
+  const notes = path.join(dir, 'autochat.md')
+  fs.mkdirSync(path.join(dir, 'plugin'), { recursive: true })
+  fs.writeFileSync(path.join(dir, 'AGENTS.md'), 'my rules\n')
+  fs.writeFileSync(path.join(dir, 'plugin', 'notify.js'), 'export default async () => ({})\n')
+  const before = [
+    '{',
+    '  "$schema": "https://opencode.ai/config.json",',
+    '  "model": "github-copilot/claude-opus-5.5",',
+    '  "instructions": ["CONTRIBUTING.md", "docs/*.md"],',
+    '  "mcp": {',
+    '    "github": { "type": "remote", "url": "https://api.githubcopilot.com/mcp/" }',
+    '  },',
+    '  "provider": { "github-copilot": { "models": { "claude-opus-5.5": { "provider": { "api": "https://api.githubcopilot.com" } } } } }',
+    '}',
+    ''
+  ].join('\n')
+  fs.writeFileSync(file, before)
+
+  // Shown, then made.
+  const lines = []
+  assert.deepEqual(setupAgents({ ctx: u.ctx, out: (l) => lines.push(l) }).applied, ['opencode'])
+  const at = lines.indexOf('  opencode add to ~/.config/opencode/opencode.json')
+  assert.ok(at > 0, lines.join('\n'))
+  assert.match(lines[at + 1], /^ {11}\+ "autochat": \{"type":"local","command":\[.*\],"enabled":true,"timeout":60000\}$/)
+  assert.deepEqual(lines.slice(at + 2, at + 4), ['           + "instructions": […, "~/.config/opencode/autochat.md"]', '  ' + ETIQUETTE_LINE])
+
+  // The etiquette is what `autochat mcp` serves, with opencode's names for the tools.
+  const text = read(notes)
+  assert.equal(text, etiquetteSource())
+  assert.match(text, /^<!-- autochat's etiquette for opencode: .* -->\n## autochat agent room\n/)
+  assert.ok(text.includes(instructions((tool) => `autochat_${tool}`)))
+  const named = [...text.matchAll(/`(autochat_\w+)`/g)].map(m => m[1])
+  assert.ok(named.length >= 5, named.join(' '))
+  for (const name of named) assert.ok(TOOLS.some(t => `autochat_${t.name}` === name), `${name} is one of the tools`)
+  assert.doesNotMatch(text, new RegExp('`(' + TOOLS.map(t => t.name).join('|') + ')`'), 'no bare tool names')
+
+  // opencode.json: our two entries at the end of their lists, every other byte as it was.
+  const entry = { type: 'local', command: [u.node, u.autochat, 'mcp', '--harness', 'opencode'], enabled: true, timeout: 60000 }
+  assert.equal(read(file), before
+    .replace('"docs/*.md"]', `"docs/*.md", ${JSON.stringify(notes)}]`)
+    .replace('/mcp/" }\n  }', `/mcp/" },\n    "autochat": ${JSON.stringify(entry, null, 2).replace(/\n/g, '\n    ')}\n  }`))
+  assert.equal(read(file + '.autochat.bak'), before)
+  assert.equal(read(path.join(dir, 'AGENTS.md')), 'my rules\n')
+  assert.equal(read(path.join(dir, 'plugin', 'notify.js')), 'export default async () => ({})\n')
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['AGENTS.md', 'autochat.md', 'opencode.json', 'opencode.json.autochat.bak', 'plugin'])
+
+  // Doctor: connected, and the etiquette reaches the model.
+  assert.deepEqual(describeAgentStatus(agentsStatus(u.ctx).find(h => h.id === 'opencode')), [
+    [true, 'opencode: connected to the agent room (~/.config/opencode/opencode.json)'],
+    [true, 'opencode: the etiquette reaches the model from ~/.config/opencode/autochat.md, listed under "instructions" (opencode doesn\'t show MCP server instructions)']
+  ])
+
+  // Rerunning writes nothing.
+  const mtimes = [file, notes].map(f => fs.statSync(f).mtimeMs)
+  const again = setupAgents({ ctx: u.ctx, ...quiet })
+  assert.deepEqual([again.applied, again.plans.find(p => p.id === 'opencode').action], [[], 'none'])
+  assert.deepEqual([file, notes].map(f => fs.statSync(f).mtimeMs), mtimes)
+
+  // Uninstall: our entries and our file go, and opencode.json is byte-for-byte what it was.
+  const out = []
+  assert.deepEqual(removeAgents({ ctx: u.ctx, out: (l) => out.push(l) }), ['opencode'])
+  assert.deepEqual(out, ["removed the autochat MCP server and autochat's etiquette from opencode (~/.config/opencode/opencode.json, ~/.config/opencode/autochat.md)"])
+  assert.equal(read(file), before)
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['AGENTS.md', 'opencode.json', 'opencode.json.autochat.bak', 'plugin'])
+  assert.equal(read(path.join(dir, 'AGENTS.md')), 'my rules\n')
+  assert.deepEqual(removeAgents({ ctx: u.ctx, ...quiet }), [], 'nothing left to remove')
+})
+
+test('opencode: a registration from before gets the etiquette; a stale etiquette or a moved install is updated in place; someone else\'s autochat.md and unparseable configs are left alone', () => {
+  const u = user({ bins: ['opencode'] })
+  const dir = u.file('.config', 'opencode')
+  const file = path.join(dir, 'opencode.json')
+  const notes = path.join(dir, 'autochat.md')
+  fs.mkdirSync(dir, { recursive: true })
+  const entry = { type: 'local', command: [u.node, u.autochat, 'mcp', '--harness', 'opencode'], enabled: true, timeout: 60000 }
+  const status = (ctx = u.ctx) => describeAgentStatus(agentsStatus(ctx).find(h => h.id === 'opencode'))
+  const plan = (ctx = u.ctx) => planAgents(ctx).find(p => p.id === 'opencode')
+
+  // What setup --agents wrote before there was an etiquette file: doctor says what that means.
+  const old = JSON.stringify({ $schema: 'https://opencode.ai/config.json', mcp: { autochat: entry } }, null, 2) + '\n'
+  fs.writeFileSync(file, old)
+  assert.deepEqual(status()[1], [false, 'opencode: opencode doesn\'t show MCP server instructions to the model, and autochat\'s etiquette isn\'t listed under "instructions", so opencode agents get the tool descriptions alone (run autochat setup --agents)'])
+  const up = plan()
+  assert.deepEqual(describePlan(up, u.ctx), ['opencode update in ~/.config/opencode/opencode.json', '         + "instructions": ["~/.config/opencode/autochat.md"]', ETIQUETTE_LINE])
+  up.apply()
+  assert.equal(read(file), old.replace(/\n}\n$/, `,\n  "instructions": [\n    ${JSON.stringify(notes)}\n  ]\n}\n`))
+  assert.equal(read(notes), etiquetteSource())
+  assert.equal(status()[1][0], true)
+
+  // An etiquette from another autochat version is rewritten; the config isn't touched.
+  fs.writeFileSync(notes, etiquetteSource().replace('1. Start', '1. Begin'))
+  assert.deepEqual(status()[1], [false, 'opencode: ~/.config/opencode/autochat.md holds an older etiquette (run autochat setup --agents)'])
+  const config = read(file)
+  const stale = plan()
+  assert.deepEqual(describePlan(stale, u.ctx), ['opencode update in ~/.config/opencode/opencode.json', ETIQUETTE_LINE])
+  stale.apply()
+  assert.deepEqual([read(notes), read(file)], [etiquetteSource(), config])
+
+  // A moved install: our server entry is replaced where it is, keeping what the user added to it.
+  fs.writeFileSync(file, config.replace('"timeout": 60000', '"timeout": 60000,\n      "environment": { "AUTOCHAT_DEBUG": "1" }'))
+  const moved = harnessContext({ env: u.env, node: u.node, bin: path.join(u.root, 'new', 'autochat.js'), run: u.ctx.run })
+  const mv = plan(moved)
+  assert.equal(mv.action, 'update')
+  mv.apply()
+  const cfg = JSON.parse(read(file))
+  assert.deepEqual(cfg.mcp.autochat, { ...entry, command: [u.node, path.join(u.root, 'new', 'autochat.js'), 'mcp', '--harness', 'opencode'], environment: { AUTOCHAT_DEBUG: '1' } })
+  assert.deepEqual(cfg.instructions, [notes], 'listed once')
+  assert.equal(plan(moved).action, 'none')
+
+  // Someone else's autochat.md is never overwritten, nor removed.
+  fs.writeFileSync(notes, 'my own notes\n')
+  const foreign = plan()
+  assert.deepEqual([foreign.action, foreign.apply], ['manual', undefined])
+  assert.match(describePlan(foreign, u.ctx)[0], /~\/\.config\/opencode\/autochat\.md isn't autochat's, so autochat won't overwrite it \(move it aside and rerun\)\. Add this yourself:$/)
+  assert.equal(status()[1][0], false)
+  removeAgents({ ctx: u.ctx, ...quiet })
+  assert.equal(read(notes), 'my own notes\n')
+  fs.rmSync(notes)
+
+  // "instructions" that isn't a list isn't rewritten.
+  fs.writeFileSync(file, '{"instructions": "AGENTS.md"}\n')
+  assert.match(describePlan(plan(), u.ctx)[0], /"instructions" in ~\/\.config\/opencode\/opencode\.json isn't a list/)
+  fs.rmSync(file)
+
+  // Nor is JSON with comments: setup shows both entries to add by hand, then a rerun writes the
+  // etiquette file they list, and doctor reads the file as opencode does.
+  const jsonc = path.join(dir, 'opencode.jsonc')
+  fs.writeFileSync(jsonc, '{\n  // mine\n  "model": "x",\n}\n')
+  const manual = plan()
+  assert.equal(manual.action, 'manual')
+  const shown = describePlan(manual, u.ctx)
+  assert.match(shown[0], /opencode\.jsonc isn't plain JSON \(comments\?\), so autochat won't rewrite it\. Add this yourself:$/)
+  assert.deepEqual(JSON.parse(shown.slice(1, -1).join('\n')), { mcp: { autochat: entry }, instructions: [notes] })
+  assert.equal(shown.at(-1), '         Then rerun autochat setup --agents, which writes ~/.config/opencode/autochat.md.')
+  setupAgents({ ctx: u.ctx, ...quiet })
+  assert.equal(fs.existsSync(notes), false)
+  const pasted = `{\n  // mine\n  "model": "x",\n  "mcp": { "autochat": ${JSON.stringify(entry)} }, // added by hand\n  "instructions": [${JSON.stringify(notes)}],\n}\n`
+  fs.writeFileSync(jsonc, pasted)
+  assert.deepEqual(status()[1], [false, 'opencode: ~/.config/opencode/autochat.md is listed under "instructions", but missing (run autochat setup --agents)'])
+  const rerun = plan()
+  assert.deepEqual(describePlan(rerun, u.ctx), ['opencode update in ~/.config/opencode/opencode.jsonc', ETIQUETTE_LINE])
+  rerun.apply()
+  assert.deepEqual([read(notes), read(jsonc)], [etiquetteSource(), pasted])
+  assert.deepEqual(status(), [[true, 'opencode: connected to the agent room (~/.config/opencode/opencode.jsonc)'], [true, 'opencode: the etiquette reaches the model from ~/.config/opencode/autochat.md, listed under "instructions" (opencode doesn\'t show MCP server instructions)']])
+  const out = []
+  removeAgents({ ctx: u.ctx, out: (l) => out.push(l) })
+  assert.deepEqual(out, ["removed autochat's etiquette from opencode (~/.config/opencode/autochat.md); ~/.config/opencode/opencode.jsonc isn't plain JSON, so take autochat's entries out of it yourself"])
+  assert.deepEqual([fs.existsSync(notes), read(jsonc)], [false, pasted])
+  out.length = 0
+  removeAgents({ ctx: u.ctx, out: (l) => out.push(l) })
+  assert.deepEqual(out, ["opencode: ~/.config/opencode/opencode.jsonc isn't plain JSON, so take autochat's entries out of it yourself"])
+})
+
+test('opencode uninstall: an "mcp" or "instructions" the file had before stays, even empty; ones autochat made go', () => {
+  const u = user({ bins: ['opencode'] })
+  const file = u.file('.config', 'opencode', 'opencode.json')
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const before = '{\n  "mcp": {},\n  "instructions": []\n}\n'
+  fs.writeFileSync(file, before)
+  setupAgents({ ctx: u.ctx, ...quiet })
+  assert.deepEqual(Object.keys(JSON.parse(read(file)).mcp), ['autochat'])
+  removeAgents({ ctx: u.ctx, ...quiet })
+  assert.equal(read(file), before)
+
+  // autochat made opencode.json, and the user added a model since: that stays, and uninstall takes
+  // no backup, so the next round still knows the rest was autochat's.
+  const v = user({ bins: ['opencode'] })
+  const made = v.file('.config', 'opencode', 'opencode.json')
+  setupAgents({ ctx: v.ctx, ...quiet })
+  fs.writeFileSync(made, read(made).replace('"$schema": "https://opencode.ai/config.json",', '"$schema": "https://opencode.ai/config.json",\n  "model": "x",'))
+  removeAgents({ ctx: v.ctx, ...quiet })
+  const kept = '{\n  "$schema": "https://opencode.ai/config.json",\n  "model": "x"\n}\n'
+  assert.equal(read(made), kept)
+  assert.equal(fs.existsSync(made + '.autochat.bak'), false)
+  setupAgents({ ctx: v.ctx, ...quiet })
+  removeAgents({ ctx: v.ctx, ...quiet })
+  assert.equal(read(made), kept)
+
+  // A config that holds only autochat's entries is autochat's: setting it up again (a moved
+  // install, or one from before the etiquette file) takes no backup, and uninstall still deletes it.
+  const w = user({ bins: ['opencode'] })
+  const own = w.file('.config', 'opencode', 'opencode.json')
+  fs.mkdirSync(path.dirname(own), { recursive: true })
+  fs.writeFileSync(own, JSON.stringify({ $schema: 'https://opencode.ai/config.json', mcp: { autochat: { type: 'local', command: ['/old/node', '/old/autochat.js', 'mcp', '--harness', 'opencode'], enabled: true, timeout: 60000 } } }, null, 2) + '\n')
+  assert.deepEqual(setupAgents({ ctx: w.ctx, ...quiet }).applied, ['opencode'])
+  assert.equal(fs.existsSync(own + '.autochat.bak'), false, 'nothing of the user\'s to keep')
+  removeAgents({ ctx: w.ctx, ...quiet })
+  assert.deepEqual(fs.readdirSync(path.dirname(own)), [])
+
+  // A backup that does hold only autochat's entries (an older autochat took it) counts as autochat's.
+  fs.writeFileSync(own, '{\n  "$schema": "https://opencode.ai/config.json",\n  "model": "x"\n}\n')
+  setupAgents({ ctx: w.ctx, ...quiet })
+  fs.writeFileSync(own + '.autochat.bak', JSON.stringify({ $schema: 'https://opencode.ai/config.json', mcp: { autochat: {} }, instructions: [w.file('.config', 'opencode', 'autochat.md')] }))
+  removeAgents({ ctx: w.ctx, ...quiet })
+  assert.equal(read(own), '{\n  "$schema": "https://opencode.ai/config.json",\n  "model": "x"\n}\n')
+})
+
+test('Copilot CLI: its allowlist for server instructions is built in, so setup adds nothing and doctor says how to pass them on', () => {
+  const u = user({ bins: ['copilot'] })
+  const status = () => describeAgentStatus(agentsStatus(u.ctx).find(h => h.id === 'copilot'))
+  assert.deepEqual(status(), [[null, 'copilot: installed, not connected to the agent room (autochat setup --agents)']])
+  setupAgents({ ctx: u.ctx, ...quiet })
+  const [connected, note] = status()
+  assert.deepEqual(connected, [true, 'copilot: connected to the agent room (~/.copilot/mcp-config.json)'])
+  assert.equal(note[0], null, "a note: autochat can't change it")
+  assert.match(note[1], /^copilot: autochat's instructions reach the model only when Copilot CLI runs with --allow-all-mcp-server-instructions \(its allowlist is built in, and no setting adds to it\); without it, Copilot agents get the tool descriptions alone\. To always pass it: alias copilot='copilot --allow-all-mcp-server-instructions'$/)
+  assert.deepEqual(fs.readdirSync(u.file('.copilot')), ['mcp-config.json'], 'nothing else to write')
+  assert.deepEqual(describeAgentStatus({ id: 'opencode', installed: false, registered: false }), [[null, 'opencode: not installed']])
+})
+
+test('CLI: setup --agents --dry-run shows the opencode etiquette and writes nothing; uninstall says what it removed', () => {
+  const u = user({ bins: ['opencode'] })
+  const env = { ...process.env, ...u.env, AUTOCHAT_HOME: path.join(u.root, 'ac'), COPILOT_HOME: u.file('.copilot'), XDG_CONFIG_HOME: u.file('.config'), CODEX_HOME: u.file('.codex'), AUTOCHAT_APP_DIRS: path.join(u.root, 'no-apps') }
+  const cli = (...args) => spawnSync(process.execPath, [BIN, ...args], { env, encoding: 'utf8' })
+  const dry = cli('setup', '--agents', '--dry-run')
+  assert.equal(dry.status, 0, dry.stderr)
+  assert.match(dry.stdout, /opencode add to ~\/\.config\/opencode\/opencode\.json\n.*\n {11}\+ "instructions": \["~\/\.config\/opencode\/autochat\.md"\]\n {11}\+ ~\/\.config\/opencode\/autochat\.md: the agent-room etiquette/)
+  assert.equal(fs.existsSync(u.file('.config', 'opencode')), false)
+  assert.match(cli('setup', '--agents').stdout, /✔ opencode connected/)
+  assert.equal(read(u.file('.config', 'opencode', 'autochat.md')), etiquetteSource())
+  const un = cli('uninstall')
+  assert.equal(un.status, 0, un.stderr)
+  assert.match(un.stdout, /removed the autochat MCP server and autochat's etiquette from opencode \(~\/\.config\/opencode\/opencode\.json, ~\/\.config\/opencode\/autochat\.md\)\n$/)
+  assert.deepEqual(fs.readdirSync(u.file('.config', 'opencode')), [])
 })

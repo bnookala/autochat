@@ -191,13 +191,28 @@ export function unplanAgents (ctx = harnessContext()) {
   return ADAPTERS.map(h => ({ name: h.name, where: h.mcp.where(ctx), ...h.mcp.unplan(ctx) }))
 }
 
-/** Per harness, for `autochat doctor`: installed, registered, command still valid. */
+/** Per harness, for `autochat doctor`: installed, registered, command still valid, etiquette. */
 export function agentsStatus (ctx = harnessContext()) {
   return ADAPTERS.map((h) => {
     const det = h.detect(ctx)
     const st = det.installed || h.id !== 'claude' ? h.mcp.status(ctx) : { registered: false }
     return { id: h.id, name: h.name, installed: det.installed, where: h.mcp.where(ctx), ...st }
   })
+}
+
+/**
+ * What doctor says about one harness from agentsStatus(): [ok, text] lines, where ok is true (✔),
+ * false (✘) or null (… a note). `etiquette` ({shown, note}) says how the room's etiquette reaches
+ * the model, where the harness doesn't simply show it the server's instructions.
+ */
+export function describeAgentStatus (h) {
+  if (h.unsupported) return h.installed ? [[null, `${h.id}: installed, but it has no MCP support yet`]] : []
+  if (!h.registered) return [[null, h.installed ? `${h.id}: installed, not connected to the agent room (autochat setup --agents)` : `${h.id}: not installed`]]
+  const lines = [h.valid
+    ? [true, `${h.id}: connected to the agent room (${h.where})`]
+    : [false, `${h.id}: registered, but its command no longer exists: ${h.command} (run autochat setup --agents)`]]
+  if (h.etiquette) lines.push([h.etiquette.shown, `${h.id}: ${h.etiquette.note}`])
+  return lines
 }
 
 const short = (s, ctx) => String(s).split(ctx.bin).join(tilde(ctx.bin, ctx)).split(ctx.node).join(tilde(ctx.node, ctx))
@@ -209,7 +224,7 @@ export function describePlan (p, ctx) {
     case 'absent': return [`${label}not installed`]
     case 'unsupported': return [`${label}${p.reason}`]
     case 'none': return [`${label}${p.file || p.id === 'claude' ? 'already connected' : 'nothing to do'}${p.where ? ` (${p.where})` : ''}`]
-    case 'manual': return [`${label}${p.reason}. Add this yourself:`, ...String(typeof p.snippet === 'string' ? p.snippet : JSON.stringify(p.snippet, null, 2)).split('\n').map(l => ' '.repeat(9) + l)]
+    case 'manual': return [`${label}${p.reason}. Add this yourself:`, ...String(typeof p.snippet === 'string' ? p.snippet : JSON.stringify(p.snippet, null, 2)).split('\n').map(l => ' '.repeat(9) + l), ...(p.after ? [' '.repeat(9) + p.after] : [])]
     case 'add':
     case 'update':
     case 'remove': {
@@ -256,14 +271,17 @@ export function setupAgents ({ ctx = harnessContext(), dryRun = false, out = con
   return { plans, applied, failed }
 }
 
-/** `autochat uninstall`: remove every registration. */
+/** `autochat uninstall`: remove every registration, and say what's left to take out by hand. */
 export function removeAgents ({ ctx = harnessContext(), out = console.log } = {}) {
   const removed = []
-  for (const p of unplanAgents(ctx).filter(p => p.apply)) {
+  for (const p of unplanAgents(ctx)) {
+    if (p.action === 'manual') out(`${p.name}: ${p.reason}`)
+    if (!p.apply) continue
     try {
       p.apply()
       removed.push(p.id)
-      out(`removed the autochat MCP server from ${p.name}${p.file ? ` (${tilde(p.file, ctx)})` : ''}`)
+      const files = [p.file, ...(p.also || [])].filter(Boolean).map(f => tilde(f, ctx))
+      out(`removed ${p.what || 'the autochat MCP server'} from ${p.name}${files.length ? ` (${files.join(', ')})` : ''}${p.note ? `; ${p.note}` : ''}`)
     } catch (err) {
       out(`✘ ${p.id}: ${err.message}`)
     }

@@ -576,16 +576,11 @@ async function doctorAgents (ping, ok) {
   } else {
     console.log('… agent room: autochat isn\'t running (AutoChat.app or `autochat daemon` hosts it)')
   }
-  const { agentsStatus } = await import('../src/harness/index.js')
+  const { agentsStatus, describeAgentStatus } = await import('../src/harness/index.js')
   for (const h of agentsStatus()) {
-    if (h.unsupported) {
-      if (h.installed) console.log(`… ${h.id}: installed, but it has no MCP support yet`)
-    } else if (h.registered) {
-      ok(h.valid, h.valid ? `${h.id}: connected to the agent room (${h.where})` : `${h.id}: registered, but its command no longer exists: ${h.command} (run autochat setup --agents)`)
-    } else if (h.installed) {
-      console.log(`… ${h.id}: installed, not connected to the agent room (autochat setup --agents)`)
-    } else {
-      console.log(`… ${h.id}: not installed`)
+    for (const [good, text] of describeAgentStatus(h)) {
+      if (good === null) console.log(`… ${text}`)
+      else ok(good, text)
     }
   }
 }
