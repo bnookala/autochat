@@ -5,11 +5,11 @@ import Testing
 
 /// Opt-in end-to-end check against a real `autochat daemon` (not the mock):
 ///
-///     AUTOCHAT_HOME=$E2E COPILOT_HOME=$E2E/copilot AUTOCHAT_NO_NOTIFY=1 AUTOCHAT_NO_FOCUS=1 \
-///       AUTOCHAT_COUNTDOWN_MS=6000 autochat daemon &
+///     AUTOCHAT_HOME=$E2E autochat host        # a private room, so nobody else is in it
+///     AUTOCHAT_HOME=$E2E COPILOT_HOME=$E2E/copilot AUTOCHAT_NO_NOTIFY=1 AUTOCHAT_NO_FOCUS=1 autochat daemon &
 ///     AUTOCHAT_E2E_HOME=$E2E swift test --filter RealDaemon
 ///
-/// Use a private room (`AUTOCHAT_HOME=$E2E autochat host`) so nobody else is in it.
+/// The daemon joins its room at start and stays there; it leaves it only while the lounge is off.
 @Suite("Real autochat daemon (opt-in)", .serialized, .enabled(if: ProcessInfo.processInfo.environment["AUTOCHAT_E2E_HOME"] != nil))
 struct RealDaemonE2ETests {
     let paths = AutochatPaths(home: ProcessInfo.processInfo.environment["AUTOCHAT_E2E_HOME"] ?? "")
@@ -37,7 +37,7 @@ struct RealDaemonE2ETests {
         _ = try oneShot(msg)
     }
 
-    @Test func subscribeChatCountdownAndCloseout() async throws {
+    @Test func alwaysInTheLoungeWithTheAttentionQueue() async throws {
         let ping = await DaemonClient.ping(socketPath: paths.sockPath, timeout: 1)
         #expect(ping?.isDaemon == true)
 
@@ -51,13 +51,12 @@ struct RealDaemonE2ETests {
         #expect(first.version == 1)
         #expect(first.me?.handle?.isEmpty == false)
         #expect(first.room?.display?.isEmpty == false)
+        if first.loungeOn == false { #expect(try await client.send(.lounge(true)).ok) }
 
-        // A hook puts a session on autopilot → the daemon enters the room.
-        let sid = "e2e-\(UUID().uuidString.prefix(8))"
-        try hook("activity", sid: sid)
-        #expect(await eventually(timeout: 10) { snapshots.value.last?.phase == .room })
+        // In the room with no agent running at all.
+        #expect(await eventually(timeout: 10) { snapshots.value.last.map { $0.phase == .room && $0.loungeOn == true } == true })
         #expect(snapshots.value.last?.members.contains { $0.isYou } == true)
-        #expect(snapshots.value.last?.sessions.contains { $0.sid == sid } == true)
+        #expect(snapshots.value.last?.sessions.isEmpty == true)
 
         // say → reply → the message comes back in a snapshot, flagged as ours.
         let said = try await client.send(.say("hello from the swift e2e test"))
@@ -66,46 +65,22 @@ struct RealDaemonE2ETests {
             snapshots.value.last?.messages.contains { $0.isSelf && $0.text == "hello from the swift e2e test" && $0.kind == .chat } == true
         })
 
-        let noCountdown = try await client.send(.returnNow)
-        #expect(!noCountdown.ok)
-        #expect(noCountdown.error?.isEmpty == false)
-
-        // The session completes → a non-blocking countdown; chatting still works.
+        // A session works on its own, then completes: its result is in the attention queue (one
+        // agent: no badge, no panel), and the room doesn't change.
+        let sid = "e2e-\(UUID().uuidString.prefix(8))"
+        try hook("activity", sid: sid)
+        #expect(await eventually(timeout: 10) { snapshots.value.last?.sessions.contains { $0.sid == sid } == true })
         try hook("complete", sid: sid, extra: ["summary": "Refactored the API client. **Tests** pass."])
-        #expect(await eventually(timeout: 10) { snapshots.value.last?.countdown != nil })
-        let counting = try #require(snapshots.value.last)
-        #expect(counting.phase == .room)
-        let countdown = try #require(counting.countdown)
-        #expect(countdown.reason == "complete")
-        // Its result is in the attention queue (one agent: no badge, no panel).
-        let finished = try #require(counting.attention?.first { $0.sid == sid })
+        #expect(await eventually(timeout: 10) { snapshots.value.last?.attention?.contains { $0.sid == sid } == true })
+        let done = try #require(snapshots.value.last)
+        let finished = try #require(done.attention?.first { $0.sid == sid })
         #expect(finished.kind == .finished)
         #expect(finished.harness == .copilot)
         #expect(finished.summary?.contains("Refactored") == true)
-        #expect(AttentionRules.urgentCount(counting.attention) == 0)
-        #expect(countdown.endsAt > (counting.now ?? Date()))
-        let during = try await client.send(.say("still typing during the countdown"))
-        #expect(during.ok, "say during countdown failed: \(during.error ?? "")")
-
-        // The daemon re-publishes once per second while counting down.
-        let before = snapshots.value.count
-        try await Task.sleep(for: .milliseconds(2300))
-        #expect(snapshots.value.count >= before + 2)
-
-        // Return now → reality banner with Copilot's summary, then back to the lounge.
-        let back = try await client.send(.returnNow)
-        #expect(back.ok, "returnNow failed: \(back.error ?? "")")
-        #expect(await eventually(timeout: 5) { snapshots.value.last?.phase == .reality || snapshots.value.last?.phase == .spectating })
-        if let last = snapshots.value.last, last.phase == .reality {
-            #expect(last.countdown == nil)
-            #expect(last.banner?.kind == .reality)
-            #expect(last.banner?.reason == "complete")
-            #expect(last.banner?.summary?.contains("Refactored") == true)
-            #expect(ChatPresentation(snapshot: last, connected: true, countdown: nil, now: Date()).closeout?.title == "Back to reality")
-        }
-        #expect(await eventually(timeout: 12) { snapshots.value.last?.phase == .lounge })
-        // One agent: the pull-back focused it, which handles its item.
-        #expect(snapshots.value.last?.attention?.contains { $0.sid == sid } == false)
+        #expect(AttentionRules.urgentCount(done.attention) == 0)
+        #expect(done.phase == .room)
+        #expect(try await client.send(.dismissAttention(finished.id)).ok)
+        #expect(await eventually(timeout: 5) { snapshots.value.last?.attention?.isEmpty == true })
 
         // Two agents at once: one blocked on you; Jump to keeps it until it carries on.
         let other = "e2e-\(UUID().uuidString.prefix(8))"
@@ -121,25 +96,19 @@ struct RealDaemonE2ETests {
         #expect(await eventually(timeout: 5) { snapshots.value.last?.attention?.isEmpty == true })
         try hook("complete", sid: sid)
         try hook("end", sid: other)
-        #expect(await eventually(timeout: 10) { snapshots.value.last?.countdown != nil })
-        #expect(snapshots.value.last?.attention?.count == 2)
-        let skip = try await client.send(.returnNow)
-        #expect(skip.ok)
-        #expect(await eventually(timeout: 12) { snapshots.value.last?.phase == .lounge })
-        let kept = snapshots.value.last?.attention ?? []
-        #expect(kept.count == 2, "several agents: nothing took focus, the queue keeps both")
-        for item in kept { #expect(try await client.send(.dismissAttention(item.id)).ok) }
+        #expect(await eventually(timeout: 10) { snapshots.value.last?.attention?.count == 2 })
+        #expect(snapshots.value.last?.phase == .room)
+        for item in snapshots.value.last?.attention ?? [] { #expect(try await client.send(.dismissAttention(item.id)).ok) }
         #expect(await eventually(timeout: 5) { snapshots.value.last?.attention?.isEmpty == true })
-
-        // Manual join, then leave with the banner.
-        let join = try await client.send(.joinNow)
-        #expect(join.ok)
-        #expect(await eventually(timeout: 10) { snapshots.value.last?.phase == .room })
         #expect(try await client.send(.dismissRequest).ok)
         #expect(try await client.send(.jumpToCopilot).ok)
-        let leave = try await client.send(.leaveRoom)
-        #expect(leave.ok, "leaveRoom failed: \(leave.error ?? "")")
-        #expect(await eventually(timeout: 5) { snapshots.value.last?.phase == .left })
-        #expect(snapshots.value.last?.banner?.kind == .left)
+
+        // Join the Lounge off: out of the room at once, and nothing to say there.
+        #expect(try await client.send(.lounge(false)).ok)
+        #expect(await eventually(timeout: 5) { snapshots.value.last.map { $0.phase == .lounge && $0.loungeOn == false && $0.members.isEmpty } == true })
+        #expect(try await client.send(.say("anyone?")).error == "not in a room")
+        // …and on again: back in the room.
+        #expect(try await client.send(.lounge(true)).ok)
+        #expect(await eventually(timeout: 10) { snapshots.value.last.map { $0.phase == .room && $0.loungeOn == true } == true })
     }
 }

@@ -420,12 +420,11 @@ struct AgentsRulesTests {
         #expect(AgentsRules.setupSummary(summary) == "Nothing changed.")
     }
 
-    @Test func openChatPrefersTheLoungeWhenSomethingHappensThere() {
+    @Test func openChatPrefersTheLoungeWhenAQuestionWaitsThere() {
         #expect(AgentsRules.tabOnOpen(current: .agents, lounge: Fixtures.agentsLounge()) == .agents)
         #expect(AgentsRules.tabOnOpen(current: .lounge, lounge: Fixtures.agentsLounge()) == .lounge)
-        #expect(AgentsRules.tabOnOpen(current: .agents, lounge: Fixtures.room(now: t0)) == .lounge)
-        #expect(AgentsRules.tabOnOpen(current: .agents, lounge: Fixtures.countdown(now: t0)) == .lounge)
-        #expect(AgentsRules.tabOnOpen(current: .agents, lounge: Fixtures.reality(now: t0)) == .lounge)
+        #expect(AgentsRules.tabOnOpen(current: .agents, lounge: Fixtures.room(now: t0)) == .agents, "the room is always there")
+        #expect(AgentsRules.tabOnOpen(current: .agents, lounge: Fixtures.request(now: t0)) == .lounge)
         #expect(AgentsRules.tabOnOpen(current: .agents, lounge: nil) == .agents)
     }
 
@@ -743,15 +742,15 @@ struct InterventionGateTests {
 
 @Suite("Agents: panel rules")
 struct AgentsPanelTests {
-    @Test func theAgentsTabDoesNotHideLoungeEvents() {
+    @Test func theAgentsTabDoesNotHideTheQueue() {
         let key = ChatWindowState(isVisible: true, isKey: true, appIsActive: true)
-        let c = Countdown(endsAt: t0.addingTimeInterval(20), total: 30)
-        let onLounge = PanelInputs(connected: true, phase: .room, countdown: c, chat: key, chatShowsLounge: true, now: t0)
-        #expect(PanelRules.decide(onLounge) == nil)
-        let onAgents = PanelInputs(connected: true, phase: .room, countdown: c, chat: key, chatShowsLounge: false, now: t0)
-        #expect(PanelRules.decide(onAgents) == .countdown)
+        let blocked = [AttentionItem(id: "b", harness: .claude, kind: .blocked, title: "Permission needed")]
+        let onLounge = PanelInputs(connected: true, chat: key, chatShowsLounge: true, attention: blocked)
+        #expect(!PanelRules.showsPanel(onLounge))
+        let onAgents = PanelInputs(connected: true, chat: key, chatShowsLounge: false, attention: blocked)
+        #expect(PanelRules.showsPanel(onAgents))
         // Nothing about agents ever descends a panel.
-        let quiet = PanelInputs(connected: true, phase: .lounge, chat: .closed, chatShowsLounge: false, now: t0)
-        #expect(PanelRules.decide(quiet) == nil)
+        let quiet = PanelInputs(connected: true, chat: .closed, chatShowsLounge: false)
+        #expect(!PanelRules.showsPanel(quiet))
     }
 }

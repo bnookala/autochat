@@ -41,23 +41,16 @@ struct ChatView: View {
     private func lounge(_ snapshot: Snapshot) -> some View {
         let p = model.presentation
         return VStack(spacing: 0) {
-            if snapshot.phase.isInRoom || (snapshot.phase.isCloseout && !snapshot.messages.isEmpty) {
+            if snapshot.inRoom {
                 roomBody(snapshot, p)
-            } else if snapshot.phase.isCloseout {
-                Spacer(minLength: 0)
             } else {
+                // Out of the lounge, what your agents need still shows here.
                 attentionStrip(snapshot)
+                requestCard(snapshot)
                 LoungeView(model: model, presentation: p)
             }
         }
         .animation(.smooth(duration: 0.2), value: AttentionRules.stripItems(snapshot).map(\.id))
-        .overlay {
-            if let closeout = p.closeout {
-                CloseoutOverlay(closeout: closeout, secondsLeft: model.closeoutSecondsLeft, onKeepOpen: { model.cancelCloseout() })
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
-            }
-        }
-        .animation(.smooth(duration: 0.25), value: p.closeout)
     }
 
     @ViewBuilder
@@ -67,25 +60,21 @@ struct ChatView: View {
             Divider()
         }
         attentionStrip(snapshot)
+        requestCard(snapshot)
+        MessageList(messages: snapshot.messages)
+            .animation(.default, value: snapshot.request)
+        InputBar(model: model, presentation: p)
+            .background(.bar)
+    }
+
+    @ViewBuilder
+    private func requestCard(_ snapshot: Snapshot) -> some View {
         if let request = snapshot.request {
             RequestCard(request: request, model: model)
                 .padding(.horizontal, 12)
                 .padding(.top, 10)
                 .transition(.move(edge: .top).combined(with: .opacity))
         }
-        MessageList(messages: snapshot.messages)
-            .animation(.default, value: snapshot.request)
-        VStack(spacing: 0) {
-            if let countdown = snapshot.countdown {
-                CountdownStrip(countdown: countdown, now: model.now, canReturn: p.canReturnNow) {
-                    model.perform(.returnNow)
-                }
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-            InputBar(model: model, presentation: p)
-        }
-        .background(.bar)
-        .animation(.smooth(duration: 0.25), value: snapshot.countdown == nil)
     }
 
     /// The attention queue, minus the question the request card shows. One slim line.
@@ -128,7 +117,7 @@ private struct TabSwitch: NSViewRepresentable {
             .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))
         control.setImage(lock, forSegment: 1)
         control.setImageScaling(.scaleNone, forSegment: 1)
-        control.setToolTip("The lounge: chat with people on autopilot", forSegment: 0)
+        control.setToolTip("The lounge: chat with everyone in your room", forSegment: 0)
         control.setToolTip("The local agent room: your agents on this Mac. Nothing leaves it.", forSegment: 1)
         control.setAccessibilityLabel("View")
         return control
@@ -221,15 +210,16 @@ struct MemberChip: View {
             Image(systemName: "circle.fill")
                 .font(.system(size: 7))
                 .foregroundStyle(Theme.active)
-                .accessibilityLabel("on autopilot")
+                .accessibilityLabel("here")
         }
     }
 
+    // Peers on older versions still say needed and away (spectating).
     private var statusHelp: String {
         switch member.status {
         case .needed: "\(member.handle)'s copilot is asking them something"
         case .away: "\(member.handle) is spectating"
-        default: "\(member.handle) is on autopilot"
+        default: "\(member.handle) is here"
         }
     }
 }
@@ -387,7 +377,7 @@ struct RequestCard: View {
                     Label("Autopilot carried on without you", systemImage: "checkmark.circle")
                         .font(.callout)
                         .foregroundStyle(.secondary)
-                } else {
+                } else if model.presentation.inputEnabled {
                     Text("⏎ on an empty line also jumps to Copilot")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
@@ -404,52 +394,6 @@ struct RequestCard: View {
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.orange.opacity(request.resolved ? 0.2 : 0.4), lineWidth: 1))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Copilot request")
-    }
-}
-
-// MARK: - Countdown strip (non-blocking)
-
-struct CountdownStrip: View {
-    let countdown: Countdown
-    let now: Date
-    let canReturn: Bool
-    let onReturn: () -> Void
-
-    var body: some View {
-        let remaining = CountdownClock.remainingSeconds(until: countdown.endsAt, now: now)
-        let fraction = CountdownClock.fractionLeft(endsAt: countdown.endsAt, total: countdown.total, now: now)
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "hourglass")
-                    .foregroundStyle(Theme.countdown)
-                    .font(.callout.weight(.semibold))
-                Text(verbatim: CountdownClock.title(remaining: remaining))
-                    .font(.callout.weight(.semibold))
-                    .monospacedDigit()
-                    .contentTransition(.numericText(countsDown: true))
-                Text(verbatim: "· \(CountdownClock.reasonPhrase(countdown.reason)) · keep chatting")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Spacer(minLength: 8)
-                Button("Return Now", action: onReturn)
-                    .buttonStyle(.action(tint: Theme.countdown, size: .small))
-                    .disabled(!canReturn || remaining == 0)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            GeometryReader { geo in
-                Rectangle()
-                    .fill(Theme.countdown)
-                    .frame(width: geo.size.width * fraction)
-                    .animation(.linear(duration: 0.4), value: remaining)
-            }
-            .frame(height: 2)
-        }
-        .background(Theme.countdown.opacity(0.10))
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(CountdownClock.title(remaining: remaining))
     }
 }
 
@@ -516,84 +460,6 @@ struct InputBar: View {
     }
 }
 
-// MARK: - Closeout
-
-struct CloseoutOverlay: View {
-    let closeout: Closeout
-    let secondsLeft: Int?
-    let onKeepOpen: () -> Void
-
-    var body: some View {
-        ZStack {
-            Rectangle()
-                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.82))
-                .ignoresSafeArea()
-            VStack(spacing: 10) {
-                Image(systemName: closeout.symbol)
-                    .font(.system(size: 40, weight: .regular))
-                    .symbolRenderingMode(.multicolor)
-                    .foregroundStyle(Theme.countdown)
-                    .padding(.bottom, 2)
-                Text(verbatim: closeout.title)
-                    .font(.title2.weight(.bold))
-                Text(verbatim: closeout.body)
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                if let cwd = closeout.cwd {
-                    Label {
-                        Text(verbatim: PlainText.clean(cwd))
-                    } icon: {
-                        Image(systemName: "folder")
-                    }
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                }
-                if let summary = closeout.summary {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Copilot's summary")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        ScrollView {
-                            Text(verbatim: summary)
-                                .font(.callout)
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .frame(maxHeight: 120)
-                        .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(10)
-                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.05)))
-                }
-                if let secondsLeft {
-                    HStack(spacing: 10) {
-                        Text(verbatim: "Closing in \(secondsLeft)s")
-                            .font(.callout)
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                        Button("Keep Open", action: onKeepOpen)
-                            .buttonStyle(.action(size: .small))
-                    }
-                    .padding(.top, 4)
-                } else {
-                    Text("Go examine your situation.")
-                        .font(.callout)
-                        .foregroundStyle(.tertiary)
-                        .padding(.top, 4)
-                }
-            }
-            .padding(24)
-            .frame(maxWidth: 400)
-            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(.regularMaterial))
-            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.primary.opacity(0.08)))
-            .shadow(color: .black.opacity(0.15), radius: 20, y: 6)
-            .padding(24)
-        }
-        .accessibilityElement(children: .contain)
-    }
-}
-
 // MARK: - Lounge and connection states
 
 struct LoungeView: View {
@@ -606,9 +472,9 @@ struct LoungeView: View {
             Image(systemName: "bubble.left.and.bubble.right")
                 .font(.system(size: 46, weight: .light))
                 .foregroundStyle(.secondary)
-            Text("Waiting for autopilot")
+            Text("You're not in the lounge")
                 .font(.title2.weight(.semibold))
-            Text(verbatim: "When a Copilot CLI session goes on autopilot, you drop into \(model.snapshot?.room?.display ?? "#lobby") with everyone else on autopilot.")
+            Text(verbatim: "The lounge is a chat room with everyone else in \(model.snapshot?.room?.display ?? "#lobby"). Join it, and you stay until you leave.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 340)
@@ -621,10 +487,10 @@ struct LoungeView: View {
                         .foregroundStyle(model.snapshot?.me?.color.color ?? .primary)
                 }
             }
-            Button("Join Now") { model.perform(.joinNow) }
+            Button("Join the Lounge") { model.setLounge(true) }
                 .buttonStyle(.action(prominent: true, size: .large))
-                .disabled(!presentation.canJoinNow)
-                .help("Join the room now, without autopilot")
+                .disabled(!presentation.canToggleLounge)
+                .help("Join your room (autochat config lounge on)")
             Text("Change rooms with autochat join <code> · autochat host")
                 .font(.caption)
                 .foregroundStyle(.tertiary)

@@ -37,11 +37,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         supervisor = DaemonSupervisor(socketPath: paths.sockPath, logURL: logs)
         model = AppModel(client: client, supervisor: supervisor)
         chat = ChatWindowController(model: model)
-        statusItem = StatusItemController(model: model, paths: paths, actions: .init(
+        statusItem = StatusItemController(model: model, actions: .init(
             openChat: { [weak self] in self?.openChat() },
             openAgents: { [weak self] in self?.openAgents() },
             locateCLI: { [weak self] in self?.locateCLI() },
-            togglePause: { [weak self] in self?.togglePause() },
             toggleLoginItem: { [weak self] in self?.toggleLoginItem() },
             quit: { NSApp.terminate(nil) }
         ))
@@ -53,7 +52,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        // Finder/Spotlight relaunch opens the chat; a background `open -g` from a hook doesn't.
+        // Finder/Spotlight relaunch opens the chat; a background `open -g` (`autochat mcp` waking
+        // the app for an agent) doesn't.
         if NSApp.isActive { openChat() }
         return false
     }
@@ -100,20 +100,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         guard open.runModal() == .OK, let url = open.url else { return }
         UserDefaults.standard.set(url.path, forKey: DaemonLocator.overrideDefaultsKey)
         supervisor.retry()
-    }
-
-    private func togglePause() {
-        guard let binary = supervisor.binary else { return }
-        let paused = AutochatConfig.isPaused(paths: paths)
-        let paths = self.paths
-        Task {
-            if !(await AutochatConfig.setPaused(!paused, paths: paths, binary: binary)) {
-                let alert = NSAlert()
-                alert.messageText = "Couldn't change the autochat launch setting"
-                alert.informativeText = "Try `autochat config launch \(paused ? "auto" : "off")` in a terminal."
-                alert.runModal()
-            }
-        }
     }
 
     private func toggleLoginItem() {

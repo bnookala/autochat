@@ -5,15 +5,19 @@
 // `agents.ack` / `agents.say`), over the same unix socket path as src/paths.js sockPath()
 // (respects AUTOCHAT_HOME). No dependencies.
 //
-//   node macos/dev/mock-daemon.mjs [daemon] [--scenario full|lounge|room|request|countdown|agents|agents-p1|attention]
-//        [--countdown 30] [--speed 1] [--loop] [--ack] [--sock PATH] [--quiet]
+//   node macos/dev/mock-daemon.mjs [daemon] [--scenario full|lounge|room|request|agents|agents-p1|attention]
+//        [--speed 1] [--loop] [--ack] [--sock PATH] [--quiet]
 //
 // The leading `daemon` argument is accepted and ignored, so the app can spawn this file
 // in place of the real CLI: AUTOCHAT_BIN=macos/dev/mock-daemon.mjs. Options can also come
-// from AUTOCHAT_MOCK_SCENARIO / AUTOCHAT_MOCK_COUNTDOWN / AUTOCHAT_MOCK_SPEED /
-// AUTOCHAT_MOCK_ACK=1 for that case.
+// from AUTOCHAT_MOCK_SCENARIO / AUTOCHAT_MOCK_SPEED / AUTOCHAT_MOCK_ACK=1 for that case.
 //
-// `--scenario agents` stays in the lounge and plays an agent room: three agents over two
+// Like the core, it's in the lounge's room from the start (`full`, `room`, `request`,
+// `attention`), until the `lounge` command turns the lounge off. `--scenario lounge` starts with
+// the lounge off. `full` plays a Copilot question that gets answered, then the run finishing;
+// `--loop` plays it again.
+//
+// `--scenario agents` stays out of the lounge and plays an agent room: three agents over two
 // harnesses (one leaves), an overlap, a thread that's opened, discussed and resolved with a
 // decision, main-stream notes and sys lines, and a second thread that stays open. `--ack`
 // starts with the intervention warning already acknowledged. Its cards are P0's: `present`
@@ -32,8 +36,8 @@
 //
 // `--scenario attention` (issue #37) runs four agents over three harnesses at once: one finishes,
 // two get blocked on you (one with Copilot's question), one fails. Jump to a blocked one and it
-// carries on a moment later, then finishes; when the last one stops, the countdown lists the
-// queue, and nothing takes focus. Every snapshot carries `attention` like the real daemon's.
+// carries on a moment later, then finishes. Every snapshot carries `attention` like the real
+// daemon's.
 import net from 'node:net'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -44,7 +48,6 @@ const { values } = parseArgs({
   args: process.argv.slice(2).filter(a => a !== 'daemon'),
   options: {
     scenario: { type: 'string', default: process.env.AUTOCHAT_MOCK_SCENARIO || 'full' },
-    countdown: { type: 'string', default: process.env.AUTOCHAT_MOCK_COUNTDOWN || '30' },
     speed: { type: 'string', default: process.env.AUTOCHAT_MOCK_SPEED || '1' },
     loop: { type: 'boolean', default: false },
     ack: { type: 'boolean', default: process.env.AUTOCHAT_MOCK_ACK === '1' },
@@ -55,12 +58,10 @@ const { values } = parseArgs({
 
 const MAX_LINE = 256 * 1024
 const MAX_SUBSCRIBERS = 8
-const BANNER_MS = 6000
 const AGENT_HISTORY = 300
 const AGENT_LEFT_MS = 10000
 const MAX_SAY = 2000
 const speed = Math.max(0.05, Number(values.speed) || 1)
-const countdownSecs = Math.max(1, Number(values.countdown) || 30)
 // LOLCHAT_HOME is the pre-rename fallback, as in src/env.js.
 const home = (process.env.AUTOCHAT_HOME ?? process.env.LOLCHAT_HOME) || path.join(os.homedir(), '.autochat')
 const sock = path.resolve(values.sock || path.join(home, 'run', 'ui.sock'))
@@ -95,40 +96,37 @@ const AGENTS = {
 const HOTFIX = 'Which branch should the hotfix go on? [main / release-2.3]'
 
 const s = {
+  // Join the Lounge (`autochat config lounge`): in the room while it's on.
+  lounge: true,
   phase: 'lounge',
   room: null,
   members: [],
   messages: [],
   request: null,
-  sessions: [],
-  countdown: null,
-  banner: null
+  sessions: []
 }
 
 let nextMessageId = 1
 let timers = []
-let countdownTimer = null
-let tickTimer = null
-let bannerTimer = null
 
 const at = (sec, fn) => { timers.push(setTimeout(fn, (sec * 1000) / speed)) }
 const clearScenario = () => { for (const t of timers) clearTimeout(t); timers = [] }
 
 function snapshot () {
-  const now = Date.now()
   return {
     type: 'state',
     v: 1,
-    now,
+    now: Date.now(),
     phase: s.phase,
+    lounge: s.lounge ? 'on' : 'off',
     room: s.room || { display: '#lobby', isHost: false, activeCount: 0, hostHandle: null, peers: 0 },
     me: ME,
     members: s.members,
     messages: s.messages,
     request: s.request,
     sessions: s.sessions,
-    countdown: s.countdown && { ...s.countdown, remaining: Math.max(0, Math.ceil((s.countdown.endsAt - now) / 1000)) },
-    banner: s.banner,
+    countdown: null,
+    banner: null,
     agents: agentsSummary(),
     attention: attentionList(),
     ...(room.p1 ? { detected: { scannedAt: Date.now(), agents: P1_DETECTED } } : {}),
@@ -142,35 +140,33 @@ function push (m) {
   changed()
 }
 const sys = (text, color) => push({ kind: 'sys', text, color })
-const chat = (p, text) => push({ kind: 'chat', from: p.handle, text, color: p.color })
+// Peers only talk to you while you're in the room.
+const chat = (p, text) => { if (s.phase === 'room') push({ kind: 'chat', from: p.handle, text, color: p.color }) }
 
 function member (p, extra = {}) {
   return { handle: p.handle, color: p.color, status: 'active', isHost: false, you: false, needed: false, ...extra }
 }
 
-// Like the core: you first, `needed` flags a pending Copilot question, `away` = spectating.
+// Like the core: you first, everyone active.
 function setMembers () {
   s.members = [
-    member(ME, { you: true, needed: !!(s.request && !s.request.resolved) }),
+    member(ME, { you: true }),
     member(PEERS.jade, { isHost: true }),
     member(PEERS.brisk),
-    member(PEERS.heron, { status: 'away' })
+    member(PEERS.heron)
   ]
   if (s.room) {
-    s.room.activeCount = s.members.filter(m => m.status !== 'away').length
+    s.room.activeCount = s.members.length
     s.room.peers = s.members.length - 1
   }
 }
 
-function enterRoom (manual = false) {
-  clearTimeout(bannerTimer)
+function enterRoom () {
   s.phase = 'room'
-  s.banner = null
   s.messages = []
   s.room = { display: '#lobby', isHost: false, activeCount: 1, hostHandle: PEERS.jade.handle, peers: 0 }
-  s.sessions = [{ sid: manual ? 'manual' : 'mock-session-1', state: 'running', cwd: CWD }]
   s.members = [member(ME, { you: true })]
-  sys('entering #lobby, looking for other autopiloters…')
+  sys('entering #lobby, looking for others…')
 }
 
 function joinPeers () {
@@ -179,81 +175,55 @@ function joinPeers () {
   sys(`joined a live room hosted by ${PEERS.jade.handle}`)
 }
 
-function startCountdown (reason = 'complete', { summary = SUMMARY, cwd = CWD } = {}) {
-  s.sessions = []
-  // Like the core: the run that just ended is in the queue (and, with one agent, handled at zero).
-  if (!several) attend('main', 'finished', 'Copilot CLI finished', summary)
-  s.countdown = { endsAt: Date.now() + countdownSecs * 1000, total: countdownSecs, reason, summary, cwd }
-  sys(`your copilot finished. back to reality in ${countdownSecs}s (keep chatting)`)
-  clearTimeout(countdownTimer)
-  countdownTimer = setTimeout(expire, countdownSecs * 1000)
-  clearInterval(tickTimer)
-  // The core re-emits once per second during a countdown so simple clients can re-render.
-  tickTimer = setInterval(changed, 1000)
-}
-
-function expire () {
-  clearTimeout(countdownTimer)
-  clearInterval(tickTimer)
-  const c = s.countdown
-  s.countdown = null
-  s.phase = 'reality'
-  s.banner = { kind: 'reality', reason: c?.reason || 'complete', summary: c?.summary || SUMMARY, cwd: c?.cwd || CWD }
+function leaveRoom () {
+  s.phase = 'lounge'
   s.room = null
   s.members = []
-  s.request = null
-  // One agent: focus goes back to it, which handles its item. Several: the queue takes over.
-  if (several) log('back to reality: several agents, so nothing takes focus')
-  else unattend('main')
-  log('back to reality')
-  afterBanner()
+  changed()
 }
 
-function afterBanner () {
-  clearTimeout(bannerTimer)
-  bannerTimer = setTimeout(() => {
-    s.phase = 'lounge'
-    s.banner = null
-    changed()
-    if (values.loop) { log('looping scenario'); runScenario('full', 4) }
-  }, BANNER_MS)
+// The `lounge` command (`autochat config lounge on|off`): join or leave right away.
+function setLounge (on) {
+  s.lounge = on
+  log(`lounge ${on ? 'on' : 'off'}`)
+  if (!on && s.phase === 'room') leaveRoom()
+  if (on && s.phase !== 'room') { enterRoom(); at(1, joinPeers) }
   changed()
 }
 
 function runScenario (name, delay = 0) {
   clearScenario()
   const t = (sec, fn) => at(delay + sec, fn)
-  if (name === 'lounge') return
+  if (name === 'lounge' || name === 'agents' || name === 'agents-p1') s.lounge = false
+  if (name === 'lounge') return changed()
   if (name === 'agents') return runAgents(t)
   if (name === 'agents-p1') return runAgentsP1()
   if (name === 'attention') return runAttention(t)
-  if (name === 'room' || name === 'request' || name === 'countdown') {
+  if (name === 'room' || name === 'request') {
     enterRoom()
     joinPeers()
     chat(PEERS.jade, "anyone else's copilot rewriting their whole test suite rn")
     chat(PEERS.brisk, 'mine is 40 tool calls deep into a yaml file')
     push({ kind: 'chat', from: ME.handle, text: 'lol same. it keeps renaming things back and forth', color: ME.color, you: true })
+    s.sessions = [{ sid: AGENTS.main.sid, state: 'running', cwd: CWD }]
     if (name === 'request') {
       s.request = { ...REQUEST }
       attend('main', 'blocked', REQUEST.title, REQUEST.message)
-      setMembers()
     }
-    if (name === 'countdown') startCountdown()
     changed()
     return
   }
-  // full: lounge → room → request → countdown → reality banner → lounge
-  t(3, () => { log('autopilot started'); enterRoom() })
-  t(4.5, joinPeers)
+  // full: the room → Copilot's question → answered → the run finishes (an attention item)
+  if (s.lounge && s.phase !== 'room') enterRoom()
+  t(1.5, joinPeers)
+  t(3, () => { log('copilot started'); s.sessions = [{ sid: AGENTS.main.sid, state: 'running', cwd: CWD }]; changed() })
   t(6, () => chat(PEERS.jade, "anyone else's copilot rewriting their whole test suite rn"))
   t(9, () => chat(PEERS.brisk, 'mine is 40 tool calls deep into a yaml file'))
   t(12, () => {
-    if (s.phase !== 'room') return
     log('copilot request')
     s.request = { ...REQUEST }
     attend('main', 'blocked', REQUEST.title, REQUEST.message)
-    s.sessions = [{ sid: 'mock-session-1', state: 'needed', cwd: CWD }]
-    setMembers()
+    s.sessions = [{ sid: AGENTS.main.sid, state: 'needed', cwd: CWD }]
     changed()
   })
   t(14, () => chat(PEERS.jade, 'lol mine asked about migrations too'))
@@ -261,15 +231,18 @@ function runScenario (name, delay = 0) {
     if (!s.request) return
     s.request = { ...s.request, resolved: true }
     unattend('main')
-    s.sessions = [{ sid: 'mock-session-1', state: 'running', cwd: CWD }]
-    setMembers()
+    s.sessions = [{ sid: AGENTS.main.sid, state: 'running', cwd: CWD }]
     changed()
   })
   t(24, () => { if (s.request) { s.request = null; changed() } })
   t(26, () => chat(PEERS.brisk, 'say ping and I pong. scientifically proven'))
-  t(28, () => { if (s.phase === 'room') { log('copilot finished: countdown'); startCountdown() } })
-  t(28 + countdownSecs * 0.3, () => { if (s.countdown) chat(PEERS.brisk, 'gl out there') })
-  t(28 + countdownSecs * 0.6, () => { if (s.countdown) chat(PEERS.jade, 'see you on the other side') })
+  t(28, () => {
+    log('copilot finished')
+    s.sessions = []
+    attend('main', 'finished', 'Copilot CLI finished', SUMMARY)
+  })
+  t(32, () => chat(PEERS.brisk, 'gl out there'))
+  if (values.loop) t(40, () => { log('looping scenario'); unattend('main'); runScenario('full') })
 }
 
 // --- attention queue (issue #37) ---------------------------------------------------------
@@ -279,7 +252,6 @@ const queue = new Map()
 const working = new Set()
 const RANK = { blocked: 0, failed: 1, finished: 2 }
 let attentionSeq = 0
-let several = false
 
 function attend (key, kind, title, summary = null) {
   const a = AGENTS[key]
@@ -304,7 +276,7 @@ function agentBlocked (key, title, message) {
   if (!working.has(key)) return
   log(`${key} is blocked: ${title}`)
   attend(key, 'blocked', title, message)
-  if (key === 'main') { s.request = { sid: AGENTS.main.sid, cwd: AGENTS.main.cwd, title, message, resolved: false }; setMembers() }
+  if (key === 'main') s.request = { sid: AGENTS.main.sid, cwd: AGENTS.main.cwd, title, message, resolved: false }
   agentSessions()
   changed()
 }
@@ -314,7 +286,7 @@ function agentCarriesOn (key) {
   if (queue.get(key)?.kind !== 'blocked') return
   log(`${key} carries on`)
   unattend(key)
-  if (key === 'main' && s.request) { s.request = null; setMembers() }
+  if (key === 'main') s.request = null
   agentSessions()
   changed()
   at(4, () => agentEnds(key, 'finished', `${AGENTS[key].name} finished`, key === 'main' ? SUMMARY : 'Ran the migration on staging; all 212 web tests pass.'))
@@ -325,13 +297,10 @@ function agentEnds (key, kind, title, summary) {
   log(`${key} ${kind}`)
   attend(key, kind, title, summary)
   agentSessions()
-  // The countdown only runs when the last agent stops.
-  if (!working.size && s.phase === 'room') startCountdown(kind === 'failed' ? 'failed' : 'complete', { summary, cwd: AGENTS[key].cwd })
   changed()
 }
 
 function runAttention (t) {
-  several = true
   enterRoom()
   joinPeers()
   chat(PEERS.jade, "anyone else's copilot rewriting their whole test suite rn")
@@ -804,28 +773,19 @@ function command (msg, stream = 'lounge') {
   switch (msg.cmd) {
     case 'say': {
       const text = typeof msg.text === 'string' ? msg.text.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').trim().slice(0, 500) : ''
-      if (s.phase !== 'room') return { ok: false, error: 'not in a room' }
       if (!text) return { ok: false, error: 'empty message' }
+      if (s.phase !== 'room') return { ok: false, error: 'not in a room' }
       push({ kind: 'chat', from: ME.handle, text, color: ME.color, you: true })
-      if (/\bping\b/i.test(text)) setTimeout(() => { if (s.phase === 'room') chat(PEERS.brisk, 'pong') }, 600)
+      if (/\bping\b/i.test(text)) setTimeout(() => chat(PEERS.brisk, 'pong'), 600)
       return { ok: true }
     }
-    case 'returnNow':
-      if (!s.countdown) return { ok: false, error: 'no countdown running' }
-      expire()
+    case 'lounge':
+      if (typeof msg.on !== 'boolean') return { ok: false, error: 'on must be true or false' }
+      setLounge(msg.on)
       return { ok: true }
+    // From clients before `lounge`: the same as turning it off.
     case 'leaveRoom':
-      if (s.phase !== 'room' && s.phase !== 'spectating') return { ok: false, error: 'not in a room' }
-      clearScenario()
-      clearTimeout(countdownTimer)
-      clearInterval(tickTimer)
-      s.countdown = null
-      s.request = null
-      s.room = null
-      s.members = []
-      s.phase = 'left'
-      s.banner = { kind: 'left' }
-      afterBanner()
+      setLounge(false)
       return { ok: true }
     case 'jumpToCopilot':
       log('jumpToCopilot (would focus the Copilot terminal)')
@@ -847,14 +807,6 @@ function command (msg, stream = 'lounge') {
     }
     case 'dismissRequest':
       s.request = null
-      if (s.phase === 'room') setMembers()
-      changed()
-      return { ok: true }
-    case 'joinNow':
-      if (s.phase === 'room') return { ok: true }
-      clearScenario()
-      enterRoom(true)
-      at(1, joinPeers)
       changed()
       return { ok: true }
     default:
@@ -864,7 +816,7 @@ function command (msg, stream = 'lounge') {
 
 function oneShot (msg) {
   if (msg?.type === 'ping') return { ok: true, pong: true, phase: s.phase, daemon: true, pid: process.pid }
-  if (msg?.type === 'status') return { ok: true, phase: s.phase, room: s.room?.display || '#lobby', sessions: s.sessions }
+  if (msg?.type === 'status') return { ok: true, phase: s.phase, lounge: s.lounge ? 'on' : 'off', room: s.room?.display || '#lobby', sessions: s.sessions }
   if (msg?.type === 'hook') return { ok: true, tracked: false }
   return { ok: false }
 }
@@ -966,7 +918,7 @@ function listen (retried) {
   })
   server.listen(listenPath(), () => {
     try { fs.chmodSync(sock, 0o600) } catch {}
-    log(`listening on ${sock} (scenario ${values.scenario}, countdown ${countdownSecs}s, speed ${speed}x)`)
+    log(`listening on ${sock} (scenario ${values.scenario}, speed ${speed}x)`)
     runScenario(values.scenario)
   })
 }
@@ -980,9 +932,6 @@ async function shutdown (sig) {
   stopping = true
   log(`${sig}: leaving the room cleanly`)
   clearScenario()
-  clearTimeout(countdownTimer)
-  clearInterval(tickTimer)
-  clearTimeout(bannerTimer)
   await new Promise(resolve => setTimeout(resolve, 200))
   for (const c of subscribers) c.destroy()
   for (const c of agentSubscribers) c.destroy()

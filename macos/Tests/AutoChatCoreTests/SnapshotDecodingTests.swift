@@ -11,6 +11,7 @@ struct SnapshotDecodingTests {
         return s
     }
 
+    /// Issue #2's snapshot, from a daemon before always-on: it still decodes, countdown and all.
     @Test func decodesTheIssueExample() throws {
         let s = try decode(Fixtures.issueExampleJSON.replacingOccurrences(of: "\n", with: ""))
         #expect(s.version == 1)
@@ -30,18 +31,17 @@ struct SnapshotDecodingTests {
         #expect(s.request?.title == "Copilot needs you")
         #expect(s.request?.resolved == false)
         #expect(s.sessions.first?.state == "running")
-        #expect(s.countdown?.endsAt == Date(timeIntervalSince1970: 1_730_400_030))
-        #expect(s.countdown?.total == 30)
-        #expect(s.countdown?.reason == "complete")
-        #expect(s.banner == nil)
         #expect(s.hostHandle == "jade-lynx-0c")
+        #expect(s.loungeOn == nil)
+        #expect(s.inRoom && s.isLoungeOn, "without `lounge`, Join the Lounge follows the room")
     }
 
-    /// The example from docs/protocol.md on core/daemon-countdown (the real daemon's shape).
+    /// The example from docs/protocol.md (the real daemon's shape).
     @Test func decodesTheProtocolDocExample() throws {
         let s = try decode(##"""
         {"type":"state","v":1,"now":1730400005000,
          "phase":"room",
+         "lounge":"on",
          "room":{"display":"#lobby","isHost":false,"activeCount":3,"hostHandle":"jade-lynx-0c","peers":2},
          "me":{"handle":"stormy-newt-59","color":"#00afff"},
          "members":[{"handle":"jade-lynx-0c","color":"#5fd787","status":"active","isHost":true,"you":false,"needed":false},
@@ -50,26 +50,50 @@ struct SnapshotDecodingTests {
                      {"id":13,"kind":"sys","from":null,"text":"x joined","ts":1730400000001,"color":null,"you":false}],
          "request":{"sid":"5d0c","cwd":"/Users/me/code/x","title":"Permission needed","message":"Run tests?","resolved":false},
          "sessions":[{"sid":"5d0c","state":"running","cwd":"/Users/me/code/x"}],
-         "countdown":{"endsAt":1730400030000,"total":30,"reason":"complete","summary":"Shipped it.","cwd":"/Users/me/code/x","remaining":23},
+         "countdown":null,
          "banner":null}
         """##.replacingOccurrences(of: "\n", with: ""))
         #expect(s.now == Date(timeIntervalSince1970: 1_730_400_005))
+        #expect(s.phase == .room)
+        #expect(s.loungeOn == true)
         #expect(s.room?.host == "jade-lynx-0c")
         #expect(s.room?.mates == 2)
         #expect(s.me?.color == .rgb(0x00, 0xaf, 0xff))
         #expect(s.members[0].status == .active)
-        #expect(s.members[1].status == .needed)
+        #expect(s.members[1].status == .needed, "an older peer still says so")
         #expect(s.members[1].isYou)
         #expect(s.messages.map(\.mid) == ["12", "13"])
         #expect(s.messages[1].from == nil)
         #expect(s.messages[1].color == nil)
-        #expect(s.countdown?.total == 30)
         #expect(s.request?.title == "Permission needed")
-        // The countdown is re-based onto the local clock using the daemon's `now`.
-        let local = Date(timeIntervalSince1970: 1_730_400_007)
-        let aligned = s.alignedToLocalClock(receivedAt: local)
-        #expect(aligned.countdown?.endsAt == Date(timeIntervalSince1970: 1_730_400_032))
-        #expect(CountdownClock.remainingSeconds(until: aligned.countdown!.endsAt, now: local) == 25)
+    }
+
+    @Test func theLoungeSetting() throws {
+        let off = try decode(#"{"type":"state","v":1,"phase":"lounge","lounge":"off"}"#)
+        #expect(off.loungeOn == false && !off.inRoom && !off.isLoungeOn)
+        let on = try decode(#"{"type":"state","v":1,"phase":"room","lounge":"on"}"#)
+        #expect(on.loungeOn == true && on.inRoom && on.isLoungeOn)
+        for odd in [#""maybe""#, "true", "1", "null"] {
+            #expect(try decode(#"{"type":"state","v":1,"phase":"lounge","lounge":\#(odd)}"#).loungeOn == nil)
+        }
+        #expect(try decode(#"{"type":"state","v":1,"phase":"lounge"}"#).isLoungeOn == false)
+    }
+
+    /// A daemon from before always-on still counting down, spectating or showing its closeout:
+    /// those phases are just out of a room, and nothing of the countdown comes back.
+    @Test func olderDaemonsPhasesAndCountdownsDecodeAsOutOfTheRoom() throws {
+        for phase in ["spectating", "reality", "dead", "left"] {
+            let s = try decode(#"""
+            {"type":"state","v":1,"phase":"\#(phase)","room":{"display":"#lobby"},
+             "countdown":{"endsAt":1730400030000,"total":30,"reason":"complete"},
+             "banner":{"kind":"\#(phase)","summary":"done"}}
+            """#.replacingOccurrences(of: "\n", with: ""))
+            #expect(s.phase == .unknown(phase))
+            #expect(!s.inRoom && !s.isLoungeOn)
+            #expect(StatusIconState.from(connected: true, snapshot: s) == .outOfLounge)
+            let p = ChatPresentation(snapshot: s, connected: true)
+            #expect(!p.showsRoom && p.subtitle == "not in the lounge")
+        }
     }
 
     @Test func missingOptionalsAreNil() throws {
@@ -80,16 +104,15 @@ struct SnapshotDecodingTests {
         #expect(s.members.isEmpty)
         #expect(s.messages.isEmpty)
         #expect(s.request == nil)
-        #expect(s.countdown == nil)
-        #expect(s.banner == nil)
+        #expect(s.loungeOn == nil)
         #expect(s.sessions.isEmpty)
     }
 
     @Test func nullsAreNil() throws {
-        let s = try decode(#"{"type":"state","v":1,"phase":"room","room":null,"me":null,"members":null,"messages":null,"request":null,"sessions":null,"countdown":null,"banner":null}"#)
+        let s = try decode(#"{"type":"state","v":1,"phase":"room","lounge":null,"room":null,"me":null,"members":null,"messages":null,"request":null,"sessions":null,"countdown":null,"banner":null}"#)
         #expect(s.room == nil)
         #expect(s.members.isEmpty)
-        #expect(s.countdown == nil)
+        #expect(s.loungeOn == nil)
     }
 
     @Test func unknownAndExtraFieldsAreIgnored() throws {
@@ -117,9 +140,6 @@ struct SnapshotDecodingTests {
         #expect(s.messages[1].kind == .sys)
         #expect(s.messages[2].from == "jade")
         #expect(s.messages[2].isSelf)
-        // A countdown without endsAt can't be shown; it decodes as absent rather than failing.
-        #expect(s.countdown == nil)
-        #expect(s.banner?.kind == .unknown("party"))
         #expect(s.request?.title == nil)
         #expect(s.request?.resolved == false)
     }
@@ -156,11 +176,12 @@ struct SnapshotDecodingTests {
         #expect(say?["id"] as? Int == 7)
         #expect(say?["cmd"] as? String == "say")
         #expect(say?["text"] as? String == "lol \"same\"")
-        let line = Command.returnNow.encodedLine(id: 8)
+        let line = Command.lounge(false).encodedLine(id: 8)
         #expect(line.last == 0x0A)
-        #expect(String(decoding: line, as: UTF8.self) == "{\"cmd\":\"returnNow\",\"id\":8,\"type\":\"cmd\"}\n")
-        let names = [Command.leaveRoom, .jumpToCopilot, .dismissRequest, .joinNow].map(\.name)
-        #expect(names == ["leaveRoom", "jumpToCopilot", "dismissRequest", "joinNow"])
+        #expect(String(decoding: line, as: UTF8.self) == "{\"cmd\":\"lounge\",\"id\":8,\"on\":false,\"type\":\"cmd\"}\n")
+        #expect(String(decoding: Command.lounge(true).encodedLine(id: 9), as: UTF8.self) == "{\"cmd\":\"lounge\",\"id\":9,\"on\":true,\"type\":\"cmd\"}\n")
+        let names = [Command.jumpToCopilot, .dismissRequest].map(\.name)
+        #expect(names == ["jumpToCopilot", "dismissRequest"])
     }
 
     @Test func lineBufferSplitsAndCaps() {

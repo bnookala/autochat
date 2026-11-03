@@ -2,23 +2,15 @@ import Foundation
 import AutoChatCore
 import Observation
 
-/// Single source of UI state: the latest daemon snapshot plus local, time-driven state
-/// (the ticking countdown, the autopilot notice, the closeout timer). Shared by the status
-/// item, the descending panel and the chat window. The Agents tab's state lives in `agents`;
-/// the attention queue comes with the snapshot.
+/// Single source of UI state: the latest daemon snapshot, shared by the status item, the
+/// descending panel and the chat window. The Agents tab's state lives in `agents`; the
+/// attention queue comes with the snapshot.
 @MainActor
 @Observable
 public final class AppModel {
     public private(set) var snapshot: Snapshot?
     public private(set) var connection: DaemonClient.State = .idle
     public private(set) var daemon: DaemonSupervisor.Status = .idle
-    /// Re-published once per countdown second (and when other timed state expires).
-    public private(set) var now: Date
-    /// The live countdown, or the last one held at zero for a moment after it expired.
-    public private(set) var countdown: Countdown?
-    public private(set) var autopilotNoticeUntil: Date?
-    public private(set) var dismissedRequestKey: String?
-    public private(set) var closeoutClosesAt: Date?
     public private(set) var lastError: String?
     public var chatWindow: ChatWindowState = .closed {
         didSet {
@@ -43,19 +35,14 @@ public final class AppModel {
 
     @ObservationIgnored public let client: DaemonClient?
     @ObservationIgnored public let supervisor: DaemonSupervisor?
-    @ObservationIgnored public var onCloseoutElapsed: (() -> Void)?
-    @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var errorClear: DispatchWorkItem?
     @ObservationIgnored private let frozen: Bool
-
-    public static let closeoutSeconds: TimeInterval = 5
 
     /// Live model wired to a daemon client and supervisor.
     public init(client: DaemonClient, supervisor: DaemonSupervisor, agents: AgentsModel? = nil) {
         self.client = client
         self.supervisor = supervisor
         self.agents = agents ?? AgentsModel(socketPath: client.socketPath)
-        self.now = Date()
         self.frozen = false
         client.setHandlers(
             onSnapshot: { [weak self] s in MainActor.assumeIsolated { self?.apply(s) } },
@@ -64,9 +51,9 @@ public final class AppModel {
         supervisor.onStatus = { [weak self] s in self?.daemonChanged(s) }
     }
 
-    /// Static model for snapshot rendering and tests: nothing ticks, actions are no-ops.
+    /// Static model for snapshot rendering and tests: actions are no-ops.
     public init(
-        fixture: Snapshot?, now: Date, connection: DaemonClient.State = .connected, daemon: DaemonSupervisor.Status = .spawned(pid: 4242),
+        fixture: Snapshot?, connection: DaemonClient.State = .connected, daemon: DaemonSupervisor.Status = .spawned(pid: 4242),
         chatWindow: ChatWindowState = .closed, draft: String = "", agents: AgentsModel? = nil, tab: ChatTab = .lounge
     ) {
         self.client = nil
@@ -74,14 +61,11 @@ public final class AppModel {
         self.agents = agents ?? AgentsModel(fixture: nil)
         self.chatTab = tab
         self.frozen = true
-        self.now = now
         self.connection = connection
         self.daemon = daemon
         self.chatWindow = chatWindow
         self.draft = draft
         self.snapshot = fixture
-        self.countdown = fixture?.countdown
-        if fixture?.phase == .room { autopilotNoticeUntil = now.addingTimeInterval(PanelRules.autopilotNoticeDuration) }
     }
 
     public func start() {
@@ -102,20 +86,24 @@ public final class AppModel {
     public var isFixture: Bool { frozen }
 
     public var presentation: ChatPresentation {
-        ChatPresentation(snapshot: snapshot, connected: connected, countdown: snapshot?.countdown, now: now)
+        ChatPresentation(snapshot: snapshot, connected: connected)
     }
 
-    public var panelKind: PanelKind? {
-        PanelRules.decide(PanelInputs(
-            connected: connected, phase: snapshot?.phase ?? .lounge, countdown: countdown,
-            request: snapshot?.request, dismissedRequestKey: dismissedRequestKey,
-            autopilotNoticeUntil: autopilotNoticeUntil, chat: chatWindow, chatShowsLounge: effectiveTab == .lounge,
-            attention: snapshot?.attention, seenAttention: seenAttention, now: now
+    /// The descending panel: the attention queue, while an agent you haven't seen yet is blocked on you.
+    public var showsPanel: Bool {
+        PanelRules.showsPanel(PanelInputs(
+            connected: connected, chat: chatWindow, chatShowsLounge: effectiveTab == .lounge,
+            attention: snapshot?.attention, seenAttention: seenAttention
         ))
     }
 
     public var iconState: StatusIconState {
-        StatusIconState.from(connected: connected, snapshot: snapshot, countdown: countdown, now: now)
+        StatusIconState.from(connected: connected, snapshot: snapshot)
+    }
+
+    /// Join the Lounge, as the menu's checkmark shows it.
+    public var loungeOn: Bool {
+        connected && snapshot?.isLoungeOn == true
     }
 
     /// The attention queue, urgent first.
@@ -128,41 +116,16 @@ public final class AppModel {
         connected ? AttentionRules.urgentCount(snapshot?.attention) : 0
     }
 
-    public var countdownRemaining: Int? {
-        countdown.map { CountdownClock.remainingSeconds(until: $0.endsAt, now: now) }
-    }
-
-    public var closeoutSecondsLeft: Int? {
-        closeoutClosesAt.map { CountdownClock.remainingSeconds(until: $0, now: now) }
-    }
-
     // MARK: Inputs
 
-    func apply(_ incoming: Snapshot) {
-        let next = incoming.alignedToLocalClock(receivedAt: Date())
+    func apply(_ next: Snapshot) {
         let previous = snapshot
         if previous?.phase != next.phase { DebugLog.log("phase \(String(describing: previous?.phase)) → \(next.phase)") }
-        if (previous?.countdown == nil) != (next.countdown == nil) { DebugLog.log("countdown \(next.countdown.map { "ends in \(Int($0.endsAt.timeIntervalSinceNow.rounded()))s" } ?? "cleared")") }
         snapshot = next
-        now = Date()
-        if PanelRules.entersAutopilot(from: previous?.phase, to: next.phase) {
-            autopilotNoticeUntil = now.addingTimeInterval(PanelRules.autopilotNoticeDuration)
-        }
-        if next.phase != .room { autopilotNoticeUntil = nil }
-        if let c = next.countdown {
-            countdown = c
-        } else if let c = countdown, previous?.countdown != nil {
-            // Expired (or "Return now"): hold "0s" briefly so the panel visibly hits zero.
-            // Cancelled because autopilot resumed: drop it at once.
-            let expired = next.phase.isCloseout || c.endsAt.timeIntervalSince(now) <= 1
-            countdown = expired ? Countdown(endsAt: min(c.endsAt, now), total: c.total, reason: c.reason, summary: c.summary, cwd: c.cwd) : nil
-        }
-        if !next.phase.isCloseout { closeoutClosesAt = nil }
         if (previous?.agents == nil) != (next.agents == nil) { DebugLog.log("agent room \(next.agents == nil ? "gone" : "available")") }
         if previous?.attention != next.attention { DebugLog.log("attention: \(AttentionRules.counts(next.attention ?? []))") }
         seenAttention.formIntersection((next.attention ?? []).map(\.id))
         if (next.attention ?? []).count < 2 { attentionExpanded = false }
-        reschedule()
         updateAgentsSubscription()
         markAttentionSeenInChat()
     }
@@ -225,8 +188,9 @@ public final class AppModel {
         }
     }
 
-    public func dismissAutopilotNotice() {
-        autopilotNoticeUntil = nil
+    /// Join the Lounge (the menu), or Join Room / Leave Room (the chat window).
+    public func setLounge(_ on: Bool) {
+        perform(.lounge(on))
     }
 
     /// Jump to: focus that agent's terminal. A blocked agent stays in the queue until it carries
@@ -254,30 +218,9 @@ public final class AppModel {
         DebugLog.log("tab \(tab)")
     }
 
-    /// Open Chat: the lounge when something is happening there, otherwise the last tab.
+    /// Open Chat: the lounge when a Copilot question waits there, otherwise the last tab.
     public func selectTabForOpening() {
         selectTab(AgentsRules.tabOnOpen(current: chatTab, lounge: snapshot))
-    }
-
-    /// Hides the request panel for this question without dismissing it in the core.
-    public func dismissRequestPanel() {
-        dismissedRequestKey = snapshot?.request?.key
-    }
-
-    public func beginCloseout() {
-        guard !frozen else { return }
-        closeoutClosesAt = Date().addingTimeInterval(Self.closeoutSeconds)
-        reschedule()
-    }
-
-    /// Snapshot rendering only: show a closeout timer without running it.
-    func showCloseoutTimerForSnapshot(closesAt: Date) {
-        closeoutClosesAt = closesAt
-    }
-
-    public func cancelCloseout() {
-        closeoutClosesAt = nil
-        reschedule()
     }
 
     private func report(_ message: String) {
@@ -286,48 +229,6 @@ public final class AppModel {
         let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.lastError = nil } }
         errorClear = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: work)
-    }
-
-    // MARK: Clock
-
-    /// One-shot timer for the next instant something visible changes, so the countdown
-    /// updates exactly on its second boundaries (derived from `endsAt`, never decremented).
-    private func reschedule() {
-        timer?.invalidate()
-        timer = nil
-        guard !frozen else { return }
-        let current = Date()
-        var wakes: [Date] = []
-        if let c = countdown {
-            if let next = CountdownClock.nextTick(endsAt: c.endsAt, now: current) { wakes.append(next) }
-            wakes.append(c.endsAt.addingTimeInterval(PanelRules.zeroHold))
-        }
-        if let until = autopilotNoticeUntil { wakes.append(until) }
-        if let closes = closeoutClosesAt {
-            wakes.append(CountdownClock.nextTick(endsAt: closes, now: current) ?? closes)
-        }
-        guard let next = wakes.filter({ $0 > current }).min() else {
-            if closeoutClosesAt != nil { tick() }
-            return
-        }
-        let t = Timer(fire: next.addingTimeInterval(0.004), interval: 0, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated { self?.tick() }
-        }
-        RunLoop.main.add(t, forMode: .common)
-        timer = t
-    }
-
-    private func tick() {
-        now = Date()
-        if let c = countdown, snapshot?.countdown != c, now >= c.endsAt.addingTimeInterval(PanelRules.zeroHold) {
-            countdown = nil
-        }
-        if let until = autopilotNoticeUntil, now >= until { autopilotNoticeUntil = nil }
-        if let closes = closeoutClosesAt, now >= closes {
-            closeoutClosesAt = nil
-            onCloseoutElapsed?()
-        }
-        reschedule()
     }
 }
 

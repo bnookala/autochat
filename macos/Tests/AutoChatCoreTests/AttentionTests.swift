@@ -64,7 +64,6 @@ struct AttentionDecodingTests {
         #expect(jump?["id"] as? Int == 3, "id stays the command's")
         #expect(jump?["item"] as? String == "7")
         #expect(String(decoding: Command.dismissAttention("7").encodedLine(id: 4), as: UTF8.self) == "{\"cmd\":\"dismissAttention\",\"id\":4,\"item\":\"7\",\"type\":\"cmd\"}\n")
-        #expect(String(decoding: Command.joinNow.encodedLine(id: 5), as: UTF8.self) == "{\"cmd\":\"joinNow\",\"id\":5,\"type\":\"cmd\"}\n")
     }
 }
 
@@ -116,16 +115,6 @@ struct AttentionRulesTests {
         #expect(AttentionRules.stripItems(Fixtures.room(now: t0)).isEmpty)
     }
 
-    @Test func theCountdownListsTheQueueOnlyWithSeveralAgents() {
-        #expect(AttentionRules.countdownList(Fixtures.attentionCountdown(now: t0).attention).map(\.id) == ["11", "12", "13"])
-        #expect(AttentionRules.countdownList([items[3]]).isEmpty, "one agent: the countdown already says it all")
-        #expect(AttentionRules.countdownList(nil).isEmpty)
-    }
-
-    @Test func theIconLeavesNeedsYouToTheBadge() {
-        #expect(StatusIconState.from(connected: true, snapshot: Fixtures.attention(now: t0), countdown: nil, now: t0) == .autopilot)
-        #expect(StatusIconState.from(connected: true, snapshot: Fixtures.request(now: t0), countdown: nil, now: t0) == .needsYou, "older daemons: as before")
-    }
 }
 
 @Suite("Attention queue: the descending panel")
@@ -135,34 +124,24 @@ struct AttentionPanelRuleTests {
     let front = ChatWindowState(isVisible: true, isKey: true, appIsActive: true)
 
     private func inputs(_ attention: [AttentionItem]?, seen: Set<String> = [], chat: ChatWindowState = .closed, lounge: Bool = true) -> PanelInputs {
-        PanelInputs(connected: true, phase: .room, chat: chat, chatShowsLounge: lounge, attention: attention, seenAttention: seen, now: t0)
+        PanelInputs(connected: true, chat: chat, chatShowsLounge: lounge, attention: attention, seenAttention: seen)
     }
 
     @Test func comesDownForAgentsBlockedOnYouOnly() {
-        #expect(PanelRules.decide(inputs([blocked, finished])) == .attention)
-        #expect(PanelRules.decide(inputs([finished])) == nil, "a finished agent never brings the panel down by itself")
-        #expect(PanelRules.decide(inputs([])) == nil)
+        #expect(PanelRules.showsPanel(inputs([blocked, finished])))
+        #expect(!PanelRules.showsPanel(inputs([finished])), "a finished agent never brings the panel down by itself")
+        #expect(!PanelRules.showsPanel(inputs([])))
+        #expect(!PanelRules.showsPanel(inputs(nil)))
     }
 
     @Test func notAgainForWhatYouSaw() {
-        #expect(PanelRules.decide(inputs([blocked], seen: ["b"])) == nil)
+        #expect(!PanelRules.showsPanel(inputs([blocked], seen: ["b"])))
         let another = AttentionItem(id: "c", kind: .blocked, title: "Copilot has a question for you")
-        #expect(PanelRules.decide(inputs([blocked, another], seen: ["b"])) == .attention)
+        #expect(PanelRules.showsPanel(inputs([blocked, another], seen: ["b"])))
     }
 
-    @Test func handsOffToTheChatLikeEveryPanel() {
-        #expect(PanelRules.decide(inputs([blocked], chat: front)) == nil)
-        #expect(PanelRules.decide(inputs([blocked], chat: front, lounge: false)) == .attention, "the Agents tab doesn't show the queue")
-        var counting = inputs([blocked])
-        counting.countdown = Countdown(endsAt: t0.addingTimeInterval(20), total: 30)
-        #expect(PanelRules.decide(counting) == .countdown)
-    }
-
-    @Test func theQueueReplacesTheRequestPanel() {
-        var i = inputs([])
-        i.request = CopilotRequest(sid: "s", title: "Copilot needs you", message: "go?")
-        #expect(PanelRules.decide(i) == nil, "with a queue, a request is a blocked item")
-        i.attention = nil
-        #expect(PanelRules.decide(i) == .request, "without one (an older daemon), the request panel as before")
+    @Test func handsOffToTheChat() {
+        #expect(!PanelRules.showsPanel(inputs([blocked], chat: front)))
+        #expect(PanelRules.showsPanel(inputs([blocked], chat: front, lounge: false)), "the Agents tab doesn't show the queue")
     }
 }

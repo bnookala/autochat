@@ -30,23 +30,17 @@ final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
-@Observable
-@MainActor
-final class PanelDisplay {
-    var kind: PanelKind = .autopilot
-}
-
-/// Shows/hides the descending panel according to `PanelRules.decide` (via `model.panelKind`),
-/// so it hands off to the chat window whenever that window becomes visible-and-key.
+/// Shows/hides the descending panel (the attention queue) according to `PanelRules.showsPanel`
+/// (via `model.showsPanel`), so it hands off to the chat window whenever that window becomes
+/// visible-and-key.
 @MainActor
 final class StatusPanelController {
     private let model: AppModel
     private let anchor: () -> NSRect?
     private let openChat: () -> Void
     private let panel = DescendingPanel()
-    private let display = PanelDisplay()
-    private var hosting: FirstMouseHostingView<PanelRoot>!
-    private(set) var shownKind: PanelKind?
+    private var hosting: FirstMouseHostingView<StatusPanelView>!
+    private(set) var shown = false
     private var hideGeneration = 0
 
     init(model: AppModel, anchor: @escaping () -> NSRect?, openChat: @escaping () -> Void) {
@@ -63,7 +57,7 @@ final class StatusPanelController {
         effect.layer?.cornerCurve = .continuous
         effect.layer?.masksToBounds = true
 
-        hosting = FirstMouseHostingView(rootView: PanelRoot(model: model, display: display, onOpenChat: openChat))
+        hosting = FirstMouseHostingView(rootView: StatusPanelView(model: model, onOpenChat: openChat))
         hosting.translatesAutoresizingMaskIntoConstraints = false
         effect.addSubview(hosting)
         NSLayoutConstraint.activate([
@@ -81,44 +75,27 @@ final class StatusPanelController {
     }
 
     private func update() {
-        let kind = model.panelKind
-        // Read what the panel displays so a content change (e.g. the countdown second) resizes it.
-        _ = (model.now, model.snapshot?.request, model.countdown, model.snapshot?.attention)
-        guard kind != shownKind else {
-            if kind != nil { reposition(animated: false) }
+        let shows = model.showsPanel
+        // Read what the panel displays so a content change resizes it.
+        _ = model.snapshot?.attention
+        guard shows != shown else {
+            if shows { reposition(animated: false) }
             return
         }
-        if let kind {
-            show(kind)
+        if shows {
+            show()
         } else {
             hide()
         }
     }
 
-    private func show(_ kind: PanelKind) {
-        let wasVisible = shownKind != nil && panel.isVisible
-        DebugLog.log("panel ↓ \(kind) (chat \(model.chatWindow))")
-        shownKind = kind
+    private func show() {
+        DebugLog.log("panel ↓ (chat \(model.chatWindow))")
+        shown = true
         hideGeneration += 1
-        display.kind = kind
-        let announcement: String? = switch kind {
-        case .autopilot: "Autopilot is on"
-        case .request: "Copilot needs you"
-        case .attention: AttentionRules.headline(model.attention)
-        case .countdown: nil
-        }
-        if let announcement {
-            NSAccessibility.post(element: panel, notification: .announcementRequested, userInfo: [.announcement: announcement, .priority: NSAccessibilityPriorityLevel.medium.rawValue])
-        }
+        let announcement = AttentionRules.headline(model.attention)
+        NSAccessibility.post(element: panel, notification: .announcementRequested, userInfo: [.announcement: announcement, .priority: NSAccessibilityPriorityLevel.medium.rawValue])
         let target = targetFrame()
-        if wasVisible {
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.2
-                panel.animator().setFrame(target, display: true)
-                panel.animator().alphaValue = 1
-            }
-            return
-        }
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         panel.setFrame(reduceMotion ? target : target.offsetBy(dx: 0, dy: 14), display: false)
         panel.alphaValue = 0
@@ -133,9 +110,9 @@ final class StatusPanelController {
     }
 
     private func hide() {
-        guard shownKind != nil else { return }
+        guard shown else { return }
         DebugLog.log("panel ↑ (chat \(model.chatWindow))")
-        shownKind = nil
+        shown = false
         hideGeneration += 1
         let generation = hideGeneration
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -153,7 +130,7 @@ final class StatusPanelController {
     }
 
     private func reposition(animated: Bool) {
-        guard shownKind != nil else { return }
+        guard shown else { return }
         let target = targetFrame()
         guard target != panel.frame else { return }
         if animated {
@@ -176,15 +153,5 @@ final class StatusPanelController {
         var x = midX - size.width / 2
         x = min(max(x, visible.minX + 8), visible.maxX - size.width - 8)
         return NSRect(x: x, y: top - size.height, width: size.width, height: size.height)
-    }
-}
-
-struct PanelRoot: View {
-    let model: AppModel
-    let display: PanelDisplay
-    let onOpenChat: () -> Void
-
-    var body: some View {
-        StatusPanelView(model: model, kind: display.kind, onOpenChat: onOpenChat)
     }
 }

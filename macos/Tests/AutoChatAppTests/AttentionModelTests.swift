@@ -13,13 +13,13 @@ struct AttentionModelTests {
         let model = connectedModel()
         model.apply(Fixtures.attention(now: Date()))
         #expect(model.badgeCount == 2)
-        #expect(model.iconState == .autopilot, "the badge says who needs you")
-        #expect(model.panelKind == .attention)
+        #expect(model.iconState == .inLounge, "the badge says who needs you")
+        #expect(model.showsPanel)
         #expect(model.attention.map(\.id) == ["7", "9", "6", "4"])
         model.connectionChanged(.disconnected(nil))
         #expect(model.badgeCount == 0)
         #expect(model.attention.isEmpty)
-        #expect(model.panelKind == nil)
+        #expect(!model.showsPanel)
     }
 
     @Test func jumpingToABlockedAgentPutsThePanelAwayForIt() {
@@ -28,9 +28,9 @@ struct AttentionModelTests {
         model.apply(s)
         let items = model.attention
         model.jump(to: items[0])
-        #expect(model.panelKind == .attention, "another agent still waits")
+        #expect(model.showsPanel, "another agent still waits")
         model.jump(to: items[1])
-        #expect(model.panelKind != .attention)
+        #expect(!model.showsPanel)
         #expect(model.badgeCount == 2, "blocked agents stay in the queue until they carry on")
 
         // One carries on; later a new question comes in: down again.
@@ -39,16 +39,16 @@ struct AttentionModelTests {
         #expect(model.seenAttention == ["9"], "what's gone is forgotten")
         s.attention!.append(AttentionItem(id: "20", harness: .copilot, sid: "x", kind: .blocked, title: "Permission needed", at: Date()))
         model.apply(s)
-        #expect(model.panelKind == .attention)
+        #expect(model.showsPanel)
     }
 
     @Test func whatTheChatShowedDoesNotComeBackAsAPanel() {
         let model = connectedModel()
         model.apply(Fixtures.attention(now: Date()))
         model.chatWindow = front
-        #expect(model.panelKind == nil)
+        #expect(!model.showsPanel)
         model.chatWindow = .closed
-        #expect(model.panelKind != .attention)
+        #expect(!model.showsPanel)
         #expect(model.badgeCount == 2)
     }
 
@@ -59,11 +59,11 @@ struct AttentionModelTests {
         model.apply(s)
         model.selectTab(.agents)
         model.chatWindow = front
-        #expect(model.panelKind == .attention, "the Agents tab doesn't show the queue")
+        #expect(model.showsPanel, "the Agents tab doesn't show the queue")
         model.selectTab(.lounge)
-        #expect(model.panelKind == nil)
+        #expect(!model.showsPanel)
         model.chatWindow = .closed
-        #expect(model.panelKind != .attention)
+        #expect(!model.showsPanel)
     }
 
     @Test func finishedAgentsWaitQuietly() {
@@ -71,9 +71,7 @@ struct AttentionModelTests {
         model.apply(Fixtures.attentionLounge(now: Date()))
         #expect(model.attention.count == 3)
         #expect(model.badgeCount == 0)
-        #expect(model.panelKind == nil, "finished and failed agents never bring the panel down")
-        model.apply(Fixtures.attentionCountdown(now: Date()))
-        #expect(model.panelKind == .countdown)
+        #expect(!model.showsPanel, "finished and failed agents never bring the panel down")
     }
 
     @Test func theStripCollapsesWhenThereIsLittleLeft() {
@@ -87,13 +85,22 @@ struct AttentionModelTests {
     }
 
     @Test func theBadgeIsATemplateImage() {
-        let plain = StatusIcon.image(for: .autopilot, badge: 0, description: "AutoChat")
-        let badged = StatusIcon.image(for: .autopilot, badge: 2, description: "AutoChat")
+        let plain = StatusIcon.image(for: .inLounge, badge: 0, description: "AutoChat")
+        let badged = StatusIcon.image(for: .inLounge, badge: 2, description: "AutoChat")
         #expect(plain?.isTemplate == true)
         #expect(badged?.isTemplate == true)
         #expect((badged?.size.width ?? 0) > (plain?.size.width ?? 0), "the badge sticks out on the right")
         #expect(badged?.accessibilityDescription == "AutoChat")
         let rep = badged.flatMap { NSBitmapImageRep(data: $0.tiffRepresentation ?? Data()) }
         #expect((rep?.pixelsWide ?? 0) > 0)
+    }
+
+    @Test func theIconSaysWhetherYouAreInTheLounge() {
+        #expect(StatusIcon.symbolName(for: .inLounge) == ["bubble.left.and.bubble.right.fill"])
+        #expect(StatusIcon.symbolName(for: .outOfLounge) == ["bubble.left.and.bubble.right"])
+        #expect(StatusIcon.symbolName(for: .disconnected) == ["bubble.left.and.bubble.right"])
+        for state in [StatusIconState.inLounge, .outOfLounge, .disconnected] {
+            #expect(StatusIcon.image(for: state, badge: 1, description: "AutoChat")?.isTemplate == true)
+        }
     }
 }

@@ -31,12 +31,19 @@ struct DaemonClientTests {
         #expect(snapshots.value.last?.messages.last?.isSelf == true)
         #expect(server.commandNames == ["say"])
 
-        let refused = try await client.send(.leaveRoom)
+        // Join the Lounge off: out of the room, where there's no one to talk to.
+        let off = try await client.send(.lounge(false))
+        #expect(off.ok)
+        #expect(await eventually { snapshots.value.last?.loungeOn == false })
+        #expect(snapshots.value.last?.phase == .lounge)
+        let refused = try await client.send(.say("anyone?"))
         #expect(!refused.ok)
-        #expect(refused.error == "nope")
+        #expect(refused.error == "not in a room")
+        #expect(server.receivedCommands.last?["on"] == nil)
+        #expect(server.receivedCommands.dropLast().last?["on"] as? Bool == false)
 
         let ids = server.receivedCommands.compactMap { $0["id"] as? Int }
-        #expect(ids.count == 2 && ids[0] != ids[1])
+        #expect(ids.count == 3 && Set(ids).count == 3)
         #expect(states.value.contains(.connected))
     }
 
@@ -62,7 +69,7 @@ struct DaemonClientTests {
         defer { client.stop() }
         #expect(await eventually { client.currentState == .connected })
         await #expect(throws: CommandError.timedOut) {
-            _ = try await client.send(.returnNow, timeout: 0.3)
+            _ = try await client.send(.lounge(true), timeout: 0.3)
         }
     }
 
@@ -73,7 +80,7 @@ struct DaemonClientTests {
         client.start()
         defer { client.stop() }
         await #expect(throws: CommandError.notConnected) {
-            _ = try await client.send(.joinNow)
+            _ = try await client.send(.lounge(true))
         }
     }
 

@@ -29,80 +29,50 @@ public func chatWindowIsVisibleAndKey(_ s: ChatWindowState) -> Bool {
     s.isVisible && !s.isMiniaturized && !s.isOccluded && s.isKey && s.appIsActive
 }
 
-// MARK: - Descending panel
+// MARK: - Status item
 
-public enum PanelKind: Sendable, Equatable {
-    case autopilot
-    case countdown
-    case request
-    /// The attention queue, when an agent is blocked on you.
-    case attention
+/// The menu bar icon. The attention badge (agents blocked on you) goes on top of any of these.
+public enum StatusIconState: Sendable, Equatable {
+    case disconnected
+    /// In the lounge's room.
+    case inLounge
+    /// Connected, not in the lounge (Join the Lounge is off).
+    case outOfLounge
+
+    public static func from(connected: Bool, snapshot: Snapshot?) -> StatusIconState {
+        guard connected, let snapshot else { return .disconnected }
+        return snapshot.inRoom ? .inLounge : .outOfLounge
+    }
 }
+
+// MARK: - Descending panel
 
 public struct PanelInputs: Sendable, Equatable {
     public var connected: Bool
-    public var phase: Phase
-    public var countdown: Countdown?
-    public var request: CopilotRequest?
-    public var dismissedRequestKey: String?
-    public var autopilotNoticeUntil: Date?
     public var chat: ChatWindowState
     /// The chat window shows the Lounge tab (not Agents).
     public var chatShowsLounge: Bool
-    /// The snapshot's queue; nil from a daemon without one (then `request` decides).
+    /// The snapshot's queue; nil from a daemon without one.
     public var attention: [AttentionItem]?
     /// Blocked items the user has already seen (in the chat, or by jumping to them).
     public var seenAttention: Set<String>
-    public var now: Date
 
-    public init(
-        connected: Bool, phase: Phase, countdown: Countdown? = nil, request: CopilotRequest? = nil,
-        dismissedRequestKey: String? = nil, autopilotNoticeUntil: Date? = nil, chat: ChatWindowState,
-        chatShowsLounge: Bool = true, attention: [AttentionItem]? = nil, seenAttention: Set<String> = [], now: Date
-    ) {
+    public init(connected: Bool, chat: ChatWindowState, chatShowsLounge: Bool = true, attention: [AttentionItem]? = nil, seenAttention: Set<String> = []) {
         self.connected = connected
-        self.phase = phase
-        self.countdown = countdown
-        self.request = request
-        self.dismissedRequestKey = dismissedRequestKey
-        self.autopilotNoticeUntil = autopilotNoticeUntil
         self.chat = chat
         self.chatShowsLounge = chatShowsLounge
         self.attention = attention
         self.seenAttention = seenAttention
-        self.now = now
     }
 }
 
 public enum PanelRules {
-    /// How long "0s" stays up before the countdown panel dismisses.
-    public static let zeroHold: TimeInterval = 1.5
-    /// How long the "Autopilot is on" notice stays up.
-    public static let autopilotNoticeDuration: TimeInterval = 6
-
-    /// Which panel (if any) should hang under the status item. Countdown beats an agent that's
-    /// blocked on you (the attention queue, or a Copilot request from a daemon without one),
-    /// which beats the autopilot notice. Finished and failed agents never bring the panel down
-    /// by themselves. Nothing shows while the chat is in front on its Lounge tab (the Agents tab
-    /// doesn't show any of this). The agent room never gets a panel.
-    public static func decide(_ i: PanelInputs) -> PanelKind? {
-        guard i.connected, !(chatWindowIsVisibleAndKey(i.chat) && i.chatShowsLounge) else { return nil }
-        if let c = i.countdown, i.now < c.endsAt.addingTimeInterval(zeroHold) {
-            return .countdown
-        }
-        if let items = i.attention {
-            if items.contains(where: { $0.kind.isUrgent && !i.seenAttention.contains($0.id) }) { return .attention }
-        } else if let r = i.request, !r.resolved, r.key != i.dismissedRequestKey, i.phase.isInRoom {
-            return .request
-        }
-        if let until = i.autopilotNoticeUntil, i.now < until, i.phase == .room {
-            return .autopilot
-        }
-        return nil
-    }
-
-    /// The notice fires when we *enter* autopilot (phase → room), not on every snapshot.
-    public static func entersAutopilot(from old: Phase?, to new: Phase) -> Bool {
-        new == .room && old != .room && old != .spectating
+    /// Whether the panel hangs under the status item: it lists the attention queue while an agent
+    /// is blocked on you and you haven't seen it yet. Finished and failed agents never bring it
+    /// down by themselves. Nothing shows while the chat is in front on its Lounge tab (the Agents
+    /// tab doesn't show the queue). The agent room never gets a panel.
+    public static func showsPanel(_ i: PanelInputs) -> Bool {
+        guard i.connected, !(chatWindowIsVisibleAndKey(i.chat) && i.chatShowsLounge) else { return false }
+        return (i.attention ?? []).contains { $0.kind.isUrgent && !i.seenAttention.contains($0.id) }
     }
 }

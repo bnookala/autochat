@@ -3,66 +3,61 @@ import AutoChatCore
 import Testing
 @testable import AutoChatApp
 
-@Suite("App model: descending panel")
+@Suite("App model: the lounge")
 @MainActor
 struct PanelModelTests {
-    @Test func enteringAutopilotDescendsTheNoticeUnlessChatIsInFront() {
+    @Test func theRoomNeverBringsThePanelDown() {
         let model = connectedModel()
         model.apply(Fixtures.lounge())
-        #expect(model.panelKind == nil)
+        #expect(!model.showsPanel)
         model.apply(Fixtures.room(now: Date()))
-        #expect(model.autopilotNoticeUntil != nil)
-        #expect(model.panelKind == .autopilot)
-        model.chatWindow = ChatWindowState(isVisible: true, isKey: true, appIsActive: true)
-        #expect(model.panelKind == nil)
-        model.chatWindow = .closed
-        model.dismissAutopilotNotice()
-        #expect(model.panelKind == nil)
-    }
-
-    @Test func countdownPanelAndIconTrackEndsAt() {
-        let model = connectedModel()
-        model.apply(Fixtures.room(now: Date()))
-        model.apply(Fixtures.countdown(now: Date(), remaining: 22.5))
-        #expect(model.panelKind == .countdown)
-        #expect(model.countdownRemaining == 23)
-        #expect(model.iconState == .countdown(23))
-        #expect(model.presentation.inputEnabled)
-    }
-
-    @Test func expiredCountdownHoldsZeroThenTheBannerTakesOver() {
-        let model = connectedModel()
-        model.apply(Fixtures.countdown(now: Date(), remaining: 0.5))
-        model.apply(Fixtures.reality(now: Date()))
-        #expect(model.countdown != nil)
-        #expect(model.countdownRemaining == 0)
-        #expect(model.panelKind == .countdown)
-        #expect(model.presentation.closeout?.title == "Back to reality")
-    }
-
-    @Test func cancelledCountdownDisappearsAtOnce() {
-        let model = connectedModel()
-        model.apply(Fixtures.countdown(now: Date(), remaining: 20))
-        model.apply(Fixtures.room(now: Date()))
-        #expect(model.countdown == nil)
-        #expect(model.panelKind != .countdown)
-    }
-
-    @Test func requestPanelCanBeDismissedLocally() {
-        let model = connectedModel()
+        #expect(!model.showsPanel, "being in the room is nothing to announce")
         model.apply(Fixtures.request(now: Date()))
-        #expect(model.panelKind == .request)
-        #expect(model.iconState == .needsYou)
-        model.dismissRequestPanel()
-        #expect(model.panelKind == .autopilot)
+        #expect(!model.showsPanel, "without a queue (an older daemon), a question waits in the chat")
+    }
+
+    @Test func joinTheLoungeFollowsTheDaemon() {
+        let model = connectedModel()
+        model.apply(Fixtures.room(now: Date()))
+        #expect(model.loungeOn)
+        #expect(model.iconState == .inLounge)
+        #expect(model.presentation.inputEnabled)
+        model.apply(Fixtures.lounge())
+        #expect(!model.loungeOn)
+        #expect(model.iconState == .outOfLounge)
+        #expect(!model.presentation.inputEnabled)
+    }
+
+    /// A daemon from before always-on: its countdown and closeout phases bring nothing back.
+    @Test func anOlderDaemonsCountdownShowsNothing() throws {
+        let model = connectedModel()
+        guard case let .state(counting) = Inbound.parse(Data(Fixtures.issueExampleJSON.replacingOccurrences(of: "\n", with: "").utf8)) else {
+            Issue.record("the issue example didn't decode")
+            return
+        }
+        model.apply(counting)
+        #expect(model.iconState == .inLounge)
+        #expect(model.loungeOn)
+        #expect(!model.showsPanel)
+        #expect(model.presentation.inputEnabled)
+        guard case let .state(closeout) = Inbound.parse(Data(#"{"type":"state","v":1,"phase":"reality","banner":{"kind":"reality","summary":"done"}}"#.utf8)) else {
+            Issue.record("the closeout didn't decode")
+            return
+        }
+        model.apply(closeout)
+        #expect(model.iconState == .outOfLounge)
+        #expect(!model.loungeOn)
+        #expect(!model.showsPanel)
     }
 
     @Test func nothingDescendsWhileDisconnected() {
         let model = connectedModel()
-        model.apply(Fixtures.countdown(now: Date()))
+        model.apply(Fixtures.attention(now: Date()))
+        #expect(model.showsPanel)
         model.connectionChanged(.disconnected(nil))
-        #expect(model.panelKind == nil)
+        #expect(!model.showsPanel)
         #expect(model.iconState == .disconnected)
+        #expect(!model.loungeOn)
         #expect(!model.presentation.inputEnabled)
     }
 }

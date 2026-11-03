@@ -25,8 +25,7 @@ final class ChatWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate 
         return w
     }
     private var meItem: NSToolbarItem?
-    private var leaveItem: NSToolbarItem?
-    private var wasCloseout = false
+    private var loungeItem: NSToolbarItem?
     /// The tab the window is sized for, and each tab's last size.
     private var sizedTab: ChatTab?
     private var tabSizes: [ChatTab: NSSize] = [:]
@@ -35,7 +34,7 @@ final class ChatWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate 
     private var persistsTabSizes = true
 
     private static let meID = NSToolbarItem.Identifier("me")
-    private static let leaveID = NSToolbarItem.Identifier("leave")
+    private static let loungeID = NSToolbarItem.Identifier("lounge")
     static let loungeMinSize = NSSize(width: 420, height: 420)
     static let agentsMinSize = NSSize(width: 800, height: 500)
     static let agentsDefaultSize = NSSize(width: 960, height: 740)
@@ -43,11 +42,9 @@ final class ChatWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate 
     init(model: AppModel) {
         self.model = model
         super.init()
-        model.onCloseoutElapsed = { [weak self] in self?.hide() }
     }
 
     func show() {
-        model.dismissAutopilotNotice()
         // Size the window for the tab before it appears, rather than animating afterwards.
         let wasVisible = window.isVisible
         animateResize = wasVisible
@@ -154,7 +151,7 @@ final class ChatWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate 
         }
     }
 
-    /// Title/subtitle/toolbar follow the snapshot and the tab; start the closeout timer at zero.
+    /// Title/subtitle/toolbar follow the snapshot and the tab.
     private func syncChrome() {
         let p = model.presentation
         let tab = model.effectiveTab
@@ -166,19 +163,11 @@ final class ChatWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate 
             window.title = p.title
             window.subtitle = p.subtitle
         }
-        leaveItem?.isEnabled = p.canLeave
+        if let loungeItem { sync(loungeItem, p) }
         if let meItem, let handle = p.myHandle {
             (meItem.view as? NSHostingView<MeChip>)?.rootView = MeChip(handle: handle, color: model.snapshot?.me?.color)
         }
         meItem?.view?.isHidden = p.myHandle == nil
-        // The closeout banner (and its auto-hide) belongs to the Lounge tab.
-        let isCloseout = p.closeout != nil && tab == .lounge
-        if isCloseout, !wasCloseout, window.isVisible {
-            model.beginCloseout()
-        } else if !isCloseout, wasCloseout {
-            model.cancelCloseout()
-        }
-        wasCloseout = isCloseout
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
@@ -258,35 +247,30 @@ final class ChatWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate 
         }
     }
 
-    // MARK: Leave room
+    // MARK: Leave Room / Join Room
 
-    func confirmLeave() {
-        guard model.presentation.canLeave else { return }
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "Leave \(model.presentation.title)?"
-        alert.informativeText = "You won't be pulled back in for the rest of this autopilot run."
-        let leave = alert.addButton(withTitle: "Leave Room")
-        leave.hasDestructiveAction = true
-        alert.addButton(withTitle: "Cancel")
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertFirstButtonReturn else { return }
-            MainActor.assumeIsolated { self?.model.perform(.leaveRoom) }
-        }
+    /// Join the Lounge, off or on, from the toolbar: it says what a click does.
+    private func sync(_ item: NSToolbarItem, _ p: ChatPresentation) {
+        let title = p.loungeOn ? "Leave Room" : "Join Room"
+        item.label = title
+        item.image = NSImage(systemSymbolName: p.loungeOn ? "rectangle.portrait.and.arrow.right" : "person.2.badge.plus", accessibilityDescription: title)
+            ?? NSImage(systemSymbolName: "person.2", accessibilityDescription: title)
+        item.toolTip = p.loungeOn ? "Leave the lounge: you stay out until you join again" : "Join the lounge: chat with everyone in \(p.title)"
+        item.isEnabled = p.canToggleLounge
     }
 
-    @objc private func leaveClicked(_ sender: Any?) {
-        confirmLeave()
+    @objc private func loungeClicked(_ sender: Any?) {
+        model.setLounge(!model.presentation.loungeOn)
     }
 
     // MARK: Toolbar
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.flexibleSpace, Self.meID, Self.leaveID]
+        [.flexibleSpace, Self.meID, Self.loungeID]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.flexibleSpace, Self.meID, Self.leaveID]
+        [.flexibleSpace, Self.meID, Self.loungeID]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
@@ -301,17 +285,14 @@ final class ChatWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate 
             item.visibilityPriority = .low
             meItem = item
             return item
-        case Self.leaveID:
+        case Self.loungeID:
             let item = NSToolbarItem(itemIdentifier: id)
-            item.image = NSImage(systemSymbolName: "rectangle.portrait.and.arrow.right", accessibilityDescription: "Leave Room")
-            item.label = "Leave Room"
-            item.toolTip = "Leave the room for the rest of this autopilot run"
             item.target = self
-            item.action = #selector(leaveClicked(_:))
+            item.action = #selector(loungeClicked(_:))
             item.isBordered = true
             item.autovalidates = false
-            item.isEnabled = model.presentation.canLeave
-            leaveItem = item
+            sync(item, model.presentation)
+            loungeItem = item
             return item
         default:
             return nil

@@ -4,26 +4,19 @@ import Foundation
 // lenient: unknown fields are ignored, missing or malformed optional fields become nil, and a
 // bad element in a list is skipped instead of failing the whole snapshot.
 
+/// `room` while you're in the lounge's room, `lounge` while you aren't (the lounge is off).
+/// Older daemons also sent `spectating`, `reality`, `dead` and `left`: they count as not in a room.
 public enum Phase: Sendable, Equatable, Hashable {
-    case lounge, room, spectating, reality, dead, left
+    case lounge, room
     case unknown(String)
 
     public init(raw: String?) {
         switch raw {
         case "lounge", nil: self = .lounge
         case "room": self = .room
-        case "spectating": self = .spectating
-        case "reality": self = .reality
-        case "dead": self = .dead
-        case "left": self = .left
         case let other?: self = .unknown(other)
         }
     }
-
-    /// In a room (autopilot, or spectating as host).
-    public var isInRoom: Bool { self == .room || self == .spectating }
-    /// Showing a closeout banner.
-    public var isCloseout: Bool { self == .reality || self == .dead || self == .left }
 }
 
 /// A handle color: the core uses xterm-256 palette indices; also accept `#rrggbb` strings.
@@ -281,74 +274,6 @@ public struct SessionInfo: Sendable, Equatable, Decodable {
     }
 }
 
-public struct Countdown: Sendable, Equatable, Decodable {
-    public var endsAt: Date
-    public var total: Int?
-    public var reason: String?
-    public var summary: String?
-    public var cwd: String?
-
-    public init(endsAt: Date, total: Int? = nil, reason: String? = nil, summary: String? = nil, cwd: String? = nil) {
-        self.endsAt = endsAt
-        self.total = total
-        self.reason = reason
-        self.summary = summary
-        self.cwd = cwd
-    }
-
-    enum CodingKeys: String, CodingKey { case endsAt, total, reason, summary, cwd }
-
-    public init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        guard let ms = c.lenientDouble(.endsAt) else {
-            throw DecodingError.keyNotFound(CodingKeys.endsAt, .init(codingPath: c.codingPath, debugDescription: "countdown without endsAt"))
-        }
-        endsAt = Date(timeIntervalSince1970: ms / 1000)
-        total = c.lenientInt(.total)
-        reason = c.lenient(String.self, .reason)
-        summary = c.lenient(String.self, .summary)
-        cwd = c.lenient(String.self, .cwd)
-    }
-}
-
-public enum BannerKind: Sendable, Equatable, Hashable {
-    case reality, dead, left
-    case unknown(String)
-
-    public init(raw: String?) {
-        switch raw {
-        case "reality", nil: self = .reality
-        case "dead": self = .dead
-        case "left": self = .left
-        case let other?: self = .unknown(other)
-        }
-    }
-}
-
-public struct Banner: Sendable, Equatable, Decodable {
-    public var kind: BannerKind
-    public var reason: String?
-    public var summary: String?
-    public var cwd: String?
-
-    public init(kind: BannerKind, reason: String? = nil, summary: String? = nil, cwd: String? = nil) {
-        self.kind = kind
-        self.reason = reason
-        self.summary = summary
-        self.cwd = cwd
-    }
-
-    enum CodingKeys: String, CodingKey { case kind, reason, summary, cwd }
-
-    public init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        kind = BannerKind(raw: c.lenient(String.self, .kind))
-        reason = c.lenient(String.self, .reason)
-        summary = c.lenient(String.self, .summary)
-        cwd = c.lenient(String.self, .cwd)
-    }
-}
-
 /// One `{"type":"state"}` line from the daemon.
 public struct Snapshot: Sendable, Equatable, Decodable {
     public var version: Int?
@@ -361,8 +286,9 @@ public struct Snapshot: Sendable, Equatable, Decodable {
     public var messages: [ChatMessage]
     public var request: CopilotRequest?
     public var sessions: [SessionInfo]
-    public var countdown: Countdown?
-    public var banner: Banner?
+    /// Whether you're in the lounge while autochat runs (`autochat config lounge`); nil from a
+    /// daemon from before always-on. Its `countdown` and `banner` are ignored: there are none.
+    public var loungeOn: Bool?
     /// The local agent room's summary; nil until an agent has connected since the daemon
     /// started (and always nil from a daemon without agent rooms). P1 daemons send it whenever
     /// they host a room.
@@ -376,7 +302,7 @@ public struct Snapshot: Sendable, Equatable, Decodable {
     public init(
         version: Int? = 1, now: Date? = nil, phase: Phase = .lounge, room: RoomInfo? = nil, me: Me? = nil, members: [Member] = [],
         messages: [ChatMessage] = [], request: CopilotRequest? = nil, sessions: [SessionInfo] = [],
-        countdown: Countdown? = nil, banner: Banner? = nil, agents: LoungeAgents? = nil, attention: [AttentionItem]? = nil,
+        loungeOn: Bool? = nil, agents: LoungeAgents? = nil, attention: [AttentionItem]? = nil,
         detected: DetectedAgents? = nil
     ) {
         self.version = version
@@ -388,14 +314,13 @@ public struct Snapshot: Sendable, Equatable, Decodable {
         self.messages = messages
         self.request = request
         self.sessions = sessions
-        self.countdown = countdown
-        self.banner = banner
+        self.loungeOn = loungeOn
         self.agents = agents
         self.attention = attention
         self.detected = detected
     }
 
-    enum CodingKeys: String, CodingKey { case v, now, phase, room, me, members, messages, request, sessions, countdown, banner, agents, attention, detected }
+    enum CodingKeys: String, CodingKey { case v, now, phase, lounge, room, me, members, messages, request, sessions, agents, attention, detected }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -408,8 +333,11 @@ public struct Snapshot: Sendable, Equatable, Decodable {
         messages = c.lenient(LossyList<ChatMessage>.self, .messages)?.items ?? []
         request = c.lenient(CopilotRequest.self, .request)
         sessions = c.lenient(LossyList<SessionInfo>.self, .sessions)?.items ?? []
-        countdown = c.lenient(Countdown.self, .countdown)
-        banner = c.lenient(Banner.self, .banner)
+        switch c.lenient(String.self, .lounge) {
+        case "on": loungeOn = true
+        case "off": loungeOn = false
+        default: loungeOn = nil
+        }
         agents = c.lenient(LoungeAgents.self, .agents)
         attention = c.lenient(LossyList<AttentionItem>.self, .attention)?.items
         detected = c.lenient(DetectedAgents.self, .detected)
@@ -424,19 +352,12 @@ public struct Snapshot: Sendable, Equatable, Decodable {
         room?.isHost ?? members.first(where: { $0.isYou })?.isHost ?? false
     }
 
-    public var activeCount: Int {
-        room?.activeCount ?? members.filter { $0.status != .away }.count
-    }
+    /// In the lounge's room: you can chat.
+    public var inRoom: Bool { phase == .room }
 
-    /// The same snapshot with the countdown moved onto the local clock, using the daemon's
-    /// `now` (the protocol's advice for avoiding clock skew).
-    public func alignedToLocalClock(receivedAt local: Date) -> Snapshot {
-        guard let daemonNow = now, var c = countdown else { return self }
-        var copy = self
-        c.endsAt = c.endsAt.addingTimeInterval(local.timeIntervalSince(daemonNow))
-        copy.countdown = c
-        return copy
-    }
+    /// Join the Lounge, as the menu shows it: the daemon's `lounge`, or from an older daemon,
+    /// whether you're in a room.
+    public var isLoungeOn: Bool { loungeOn ?? inRoom }
 }
 
 // MARK: - Lenient decoding helpers

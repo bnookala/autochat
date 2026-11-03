@@ -2,8 +2,8 @@ import AppKit
 import AutoChatCore
 import SwiftUI
 
-// The attention queue's views: a row (the panel, and the countdown panel), and the compact strip
-// in the chat window. Every string from the daemon is plain text (`Text(verbatim:)`).
+// The attention queue's views: a row (the panel), and the compact strip in the chat window.
+// Every string from the daemon is plain text (`Text(verbatim:)`).
 
 enum AttentionStyle {
     static func symbol(_ kind: AttentionKind) -> String {
@@ -65,8 +65,6 @@ struct DismissButton: View {
 /// One item: what it is, which agent, where, and Jump to / dismiss.
 struct AttentionRow: View {
     let item: AttentionItem
-    /// One line of summary (the countdown panel), instead of two for a question.
-    var compact = false
     let onJump: () -> Void
     let onDismiss: () -> Void
 
@@ -83,7 +81,7 @@ struct AttentionRow: View {
                     Text(verbatim: summary)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(compact || !item.kind.isUrgent ? 1 : 2)
+                        .lineLimit(item.kind.isUrgent ? 2 : 1)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 HStack(spacing: 6) {
@@ -112,19 +110,17 @@ struct AttentionRow: View {
     }
 }
 
-/// The queue, inset in a panel: up to `limit` rows, then "and N more".
+/// The queue, inset in a panel: up to `AttentionRules.panelRows` rows, then "and N more".
 struct AttentionList: View {
     let model: AppModel
     let items: [AttentionItem]
-    var limit = AttentionRules.panelRows
-    var compact = false
 
     var body: some View {
-        let shown = Array(items.prefix(limit))
+        let shown = Array(items.prefix(AttentionRules.panelRows))
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(shown.enumerated()), id: \.element.id) { i, item in
                 if i > 0 { Divider() }
-                AttentionRow(item: item, compact: compact, onJump: { model.jump(to: item) }, onDismiss: { model.dismiss(item) })
+                AttentionRow(item: item, onJump: { model.jump(to: item) }, onDismiss: { model.dismiss(item) })
                     .padding(.vertical, 8)
             }
             if items.count > shown.count {

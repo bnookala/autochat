@@ -2,8 +2,8 @@ import AppKit
 import AutoChatCore
 import SwiftUI
 
-/// `AutoChat --render-snapshots <dir>`: renders the descending panel, the chat window and its
-/// Agents tab, the attention queue and the status item's badge from fixture snapshots to PNGs,
+/// `AutoChat --render-snapshots <dir>`: renders the status item's states, the descending panel,
+/// the chat window and its Agents tab, and the attention queue from fixture snapshots to PNGs,
 /// without screen-recording permission (NSView bitmap caching of offscreen windows). Writes
 /// light-mode files with the canonical names plus `-dark` variants.
 @MainActor
@@ -18,19 +18,17 @@ enum SnapshotRenderer {
         let now = referenceNow()
         var ok = true
         for (appearance, suffix) in [(NSAppearance.Name.aqua, ""), (.darkAqua, "-dark")] {
-            ok = renderPanel(.autopilot, snapshot: Fixtures.room(now: now), now: now, appearance: appearance, to: dir.appendingPathComponent("status-panel-autopilot\(suffix).png")) && ok
-            ok = renderPanel(.countdown, snapshot: Fixtures.countdown(now: now, remaining: 22.6), now: now, appearance: appearance, to: dir.appendingPathComponent("status-panel-countdown\(suffix).png")) && ok
-            ok = renderPanel(.request, snapshot: Fixtures.request(now: now), now: now, appearance: appearance, to: dir.appendingPathComponent("status-panel-request\(suffix).png")) && ok
-            ok = renderChat(
-                Fixtures.countdown(now: now, remaining: 22.6), now: now, draft: "brb, mine just finished. same time tomorrow?",
-                appearance: appearance, to: dir.appendingPathComponent("chat-window-countdown\(suffix).png")
-            ) && ok
-            ok = renderChat(Fixtures.request(now: now), now: now, draft: "", appearance: appearance, to: dir.appendingPathComponent("chat-window-request\(suffix).png")) && ok
-            ok = renderChat(Fixtures.reality(now: now), now: now, draft: "", appearance: appearance, to: dir.appendingPathComponent("chat-window-closeout\(suffix).png"), closeoutSeconds: 4) && ok
+            // The menu bar: in the lounge, out of it, not connected, and the attention badge.
+            ok = render(StatusItemScene(dark: appearance == .darkAqua), size: NSSize(width: 600, height: 150), appearance: appearance, to: dir.appendingPathComponent("status-item-states\(suffix).png")) && ok
+            // The Lounge tab: in the room (Leave Room in the toolbar), with Copilot's question, and
+            // with Join the Lounge off (Join Room).
+            ok = renderChat(Fixtures.room(now: now), draft: "lol same. mine renamed a file back and forth twice", appearance: appearance, to: dir.appendingPathComponent("chat-window-room\(suffix).png")) && ok
+            ok = renderChat(Fixtures.request(now: now), draft: "", appearance: appearance, to: dir.appendingPathComponent("chat-window-request\(suffix).png")) && ok
+            ok = renderChat(Fixtures.lounge(), draft: "", appearance: appearance, to: dir.appendingPathComponent("chat-window-lounge-off\(suffix).png")) && ok
             // The Lounge tab once there's an agent room (the toolbar gains Lounge | Agents).
             var tabs = Fixtures.request(now: now)
             tabs.agents = LoungeAgents(present: 2, openThreads: 1)
-            ok = renderChat(tabs, now: now, draft: "", appearance: appearance, to: dir.appendingPathComponent("chat-window-tabs\(suffix).png")) && ok
+            ok = renderChat(tabs, draft: "", appearance: appearance, to: dir.appendingPathComponent("chat-window-tabs\(suffix).png")) && ok
             // The Agents tab: the board with the main stream, a resolved thread, intervening in
             // an open thread, and the one-time acknowledgement sheet.
             ok = renderAgents(AgentsModel(fixture: Fixtures.agents(now: now)), now: now, appearance: appearance, to: dir.appendingPathComponent("agents-board\(suffix).png")) && ok
@@ -81,21 +79,15 @@ enum SnapshotRenderer {
                 AgentsModel(fixture: Fixtures.agentsEmpty(now: now), setup: done), lounge: Fixtures.connectLounge(now: now),
                 now: now, appearance: appearance, to: dir.appendingPathComponent("agents-connect-result\(suffix).png")
             ) && ok
-            // The attention queue: the badge, the panel when agents are blocked on you, the
-            // countdown with several agents, and the strip in the chat (collapsed, expanded, and
-            // back in the lounge).
-            ok = render(BadgeScene(dark: appearance == .darkAqua), size: NSSize(width: 600, height: 150), appearance: appearance, to: dir.appendingPathComponent("status-item-badge\(suffix).png")) && ok
-            ok = renderPanel(.attention, snapshot: Fixtures.attention(now: now), now: now, appearance: appearance, to: dir.appendingPathComponent("status-panel-attention\(suffix).png"), height: 520) && ok
-            ok = renderPanel(
-                .countdown, snapshot: Fixtures.attentionCountdown(now: now, remaining: 22.6), now: now, appearance: appearance,
-                to: dir.appendingPathComponent("status-panel-countdown-queue\(suffix).png"), height: 430
-            ) && ok
-            ok = renderChat(Fixtures.attention(now: now), now: now, draft: "", appearance: appearance, to: dir.appendingPathComponent("chat-window-attention\(suffix).png")) && ok
+            // The attention queue: the panel when agents are blocked on you, and the strip in the
+            // chat (collapsed, expanded, and out of the lounge).
+            ok = renderPanel(snapshot: Fixtures.attention(now: now), appearance: appearance, to: dir.appendingPathComponent("status-panel-attention\(suffix).png")) && ok
+            ok = renderChat(Fixtures.attention(now: now), draft: "", appearance: appearance, to: dir.appendingPathComponent("chat-window-attention\(suffix).png")) && ok
             ok = renderChat(
-                Fixtures.attention(now: now), now: now, draft: "", appearance: appearance,
+                Fixtures.attention(now: now), draft: "", appearance: appearance,
                 to: dir.appendingPathComponent("chat-window-attention-expanded\(suffix).png"), attentionExpanded: true
             ) && ok
-            ok = renderChat(Fixtures.attentionLounge(now: now), now: now, draft: "", appearance: appearance, to: dir.appendingPathComponent("chat-window-lounge-attention\(suffix).png")) && ok
+            ok = renderChat(Fixtures.attentionLounge(now: now), draft: "", appearance: appearance, to: dir.appendingPathComponent("chat-window-lounge-attention\(suffix).png")) && ok
         }
         return ok
     }
@@ -111,10 +103,10 @@ enum SnapshotRenderer {
 
     // MARK: Panel (shown hanging from a mock menu bar so the "descending" placement is visible)
 
-    private static func renderPanel(_ kind: PanelKind, snapshot: Snapshot, now: Date, appearance: NSAppearance.Name, to url: URL, height: CGFloat? = nil) -> Bool {
-        let model = AppModel(fixture: snapshot, now: now)
-        let scene = PanelScene(model: model, kind: kind, dark: appearance == .darkAqua)
-        return render(scene, size: NSSize(width: 600, height: height ?? (kind == .autopilot ? 200 : 250)), appearance: appearance, to: url)
+    private static func renderPanel(snapshot: Snapshot, appearance: NSAppearance.Name, to url: URL) -> Bool {
+        let model = AppModel(fixture: snapshot)
+        let scene = PanelScene(model: model, dark: appearance == .darkAqua)
+        return render(scene, size: NSSize(width: 600, height: 520), appearance: appearance, to: url)
     }
 
     private static func render<V: View>(_ view: V, size: NSSize, appearance: NSAppearance.Name, to url: URL) -> Bool {
@@ -132,10 +124,9 @@ enum SnapshotRenderer {
     // MARK: Chat window (the real window and toolbar, drawn as key)
 
     private static func renderChat(
-        _ snapshot: Snapshot, now: Date, draft: String, appearance: NSAppearance.Name, to url: URL, closeoutSeconds: TimeInterval? = nil, attentionExpanded: Bool = false
+        _ snapshot: Snapshot, draft: String, appearance: NSAppearance.Name, to url: URL, attentionExpanded: Bool = false
     ) -> Bool {
-        let model = AppModel(fixture: snapshot, now: now, chatWindow: ChatWindowState(isVisible: true, isKey: true, appIsActive: true), draft: draft)
-        if let closeoutSeconds { model.showCloseoutTimerForSnapshot(closesAt: now.addingTimeInterval(closeoutSeconds)) }
+        let model = AppModel(fixture: snapshot, chatWindow: ChatWindowState(isVisible: true, isKey: true, appIsActive: true), draft: draft)
         model.attentionExpanded = attentionExpanded
         let (controller, window) = ChatWindowController.makeForSnapshot(model: model, size: NSSize(width: 560, height: 600), appearance: appearance)
         window.orderFrontRegardless()
@@ -161,7 +152,7 @@ enum SnapshotRenderer {
         _ agents: AgentsModel, lounge: Snapshot = Fixtures.agentsLounge(), now: Date, appearance: NSAppearance.Name, to url: URL, size: NSSize = agentsSize
     ) -> Bool {
         let model = AppModel(
-            fixture: lounge, now: now, chatWindow: ChatWindowState(isVisible: true, isKey: true, appIsActive: true),
+            fixture: lounge, chatWindow: ChatWindowState(isVisible: true, isKey: true, appIsActive: true),
             agents: agents, tab: .agents
         )
         let (controller, window) = ChatWindowController.makeForSnapshot(model: model, size: size, appearance: appearance)
@@ -254,7 +245,6 @@ enum SnapshotRenderer {
 /// Desktop + menu bar backdrop with the panel hanging under the AutoChat status item.
 private struct PanelScene: View {
     let model: AppModel
-    let kind: PanelKind
     let dark: Bool
 
     private let menuBarHeight: CGFloat = 30
@@ -264,7 +254,7 @@ private struct PanelScene: View {
         ZStack(alignment: .topLeading) {
             wallpaper
             menuBar
-            StatusPanelView(model: model, kind: kind, opaqueBackground: true)
+            StatusPanelView(model: model, opaqueBackground: true)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.panelCorner, style: .continuous))
                 .shadow(color: .black.opacity(dark ? 0.5 : 0.22), radius: 18, y: 8)
                 .offset(x: iconCenterX - Theme.panelWidth / 2, y: menuBarHeight + 6)
@@ -320,7 +310,8 @@ private struct PanelScene: View {
     }
 }
 
-/// The status item as the menu bar draws it: the same template image as the real one.
+/// The status item as the menu bar draws it: the same template image as the real one, dimmed
+/// like `appearsDisabled` when not connected.
 private struct StatusItemMock: View {
     let status: StatusIconState
     let badge: Int
@@ -328,28 +319,25 @@ private struct StatusItemMock: View {
     var scale: CGFloat = 1
 
     var body: some View {
-        HStack(spacing: 3 * scale) {
-            if let image = StatusIcon.image(for: status, badge: badge, description: "AutoChat") {
-                Image(nsImage: image)
-                    .renderingMode(.template)
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: image.size.width * scale, height: image.size.height * scale)
-            }
-            if case let .countdown(n) = status {
-                Text(verbatim: "\(n)").font(.system(size: 13 * scale, weight: .semibold)).monospacedDigit()
-            }
+        if let image = StatusIcon.image(for: status, badge: badge, description: "AutoChat") {
+            Image(nsImage: image)
+                .renderingMode(.template)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: image.size.width * scale, height: image.size.height * scale)
+                .foregroundStyle(dark ? Color.white : Color.black.opacity(0.85))
+                .opacity(status == .disconnected ? 0.35 : 1)
         }
-        .foregroundStyle(dark ? Color.white : Color.black.opacity(0.85))
     }
 }
 
-/// The badge up close: the menu bar at its real size, then each state magnified.
-private struct BadgeScene: View {
+/// The status item up close: the menu bar at its real size, then each state magnified.
+private struct StatusItemScene: View {
     let dark: Bool
 
     private let cases: [(StatusIconState, Int, String)] = [
-        (.autopilot, 0, "no one waiting"), (.autopilot, 1, "1 blocked"), (.autopilot, 2, "2 blocked"), (.autopilot, 12, "12 blocked"), (.lounge, 1, "in the lounge")
+        (.inLounge, 0, "in the lounge"), (.outOfLounge, 0, "not in the lounge"), (.disconnected, 0, "not connected"),
+        (.inLounge, 2, "2 agents blocked"), (.outOfLounge, 1, "1 blocked, lounge off")
     ]
 
     var body: some View {
@@ -364,7 +352,7 @@ private struct BadgeScene: View {
             VStack(spacing: 18) {
                 HStack(spacing: 18) {
                     Spacer()
-                    StatusItemMock(status: .autopilot, badge: 2, dark: dark)
+                    StatusItemMock(status: .inLounge, badge: 2, dark: dark)
                     Image(systemName: "wifi").font(.system(size: 13, weight: .medium))
                     Image(systemName: "battery.75percent").font(.system(size: 14))
                     Text("Fri 2:32 PM").font(.system(size: 13, weight: .medium))
@@ -393,7 +381,8 @@ private struct BadgeScene: View {
 
 extension SnapshotRenderer {
     /// `AutoChat --render-live <dir> [--say <text>]`: attaches to the daemon at $AUTOCHAT_HOME
-    /// (never spawns one), opens the Agents tab offscreen and renders it from live snapshots.
+    /// (never spawns one), renders its Lounge tab, then opens the Agents tab offscreen and renders
+    /// it from live snapshots.
     /// With `--say` it then goes through Intervene… → the acknowledgement sheet → `agents.say`
     /// with the same calls the buttons make, and renders each step. For checking the app
     /// against a real daemon without screen recording or UI scripting.
@@ -419,6 +408,19 @@ extension SnapshotRenderer {
         let summary = model.snapshot?.agents
         log("connected; lounge snapshot reports \(summary?.present ?? 0) here, \(summary?.openThreads ?? 0) open threads, connected \(summary?.connected ?? []), available \(summary?.available ?? []), \(model.snapshot?.detected?.agents.count ?? 0) detected")
         if let summary { log("menu line: \(AgentsRules.menuLine(summary, detected: model.snapshot?.detected))") }
+
+        // The Lounge tab as the daemon has it: the room, or out of the lounge with Join.
+        let p = model.presentation
+        log("lounge tab: \(p.title) — \(p.subtitle); Join the Lounge \(model.loungeOn ? "on" : "off"); toolbar \(p.loungeOn ? "Leave Room" : "Join Room"); \(model.snapshot?.members.count ?? 0) members, \(model.snapshot?.messages.count ?? 0) messages")
+        for (appearance, suffix) in [(NSAppearance.Name.aqua, ""), (.darkAqua, "-dark")] {
+            let (loungeController, loungeWindow) = ChatWindowController.makeForSnapshot(model: model, size: NSSize(width: 560, height: 600), appearance: appearance)
+            loungeWindow.orderFrontRegardless()
+            settle()
+            let written = write(loungeWindow.contentView!.superview!, to: dir.appendingPathComponent("live-lounge\(suffix).png"))
+            loungeWindow.orderOut(nil)
+            withExtendedLifetime(loungeController) {}
+            guard written else { return false }
+        }
 
         model.selectTab(.agents)
         let (controller, window) = ChatWindowController.makeForSnapshot(model: model, size: agentsSize, appearance: .aqua)

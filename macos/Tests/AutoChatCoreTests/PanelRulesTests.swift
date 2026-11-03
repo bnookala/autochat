@@ -28,59 +28,28 @@ struct VisibilityTests {
 struct PanelRuleTests {
     let front = ChatWindowState(isVisible: true, isKey: true, appIsActive: true)
     let background = ChatWindowState(isVisible: true, isKey: false, appIsActive: false)
-    let countdown = Countdown(endsAt: t0.addingTimeInterval(23), total: 30, reason: "complete")
-    let request = CopilotRequest(sid: "s", title: "Copilot needs you", message: "pick")
+    let blocked = AttentionItem(id: "b", harness: .claude, kind: .blocked, title: "Permission needed")
 
-    @Test func countdownShowsWhenChatIsNotInFront() {
+    @Test func showsWhenTheChatIsNotInFront() {
         for chat in [ChatWindowState.closed, background, ChatWindowState(isVisible: true, isMiniaturized: true, isKey: false, appIsActive: true)] {
-            #expect(PanelRules.decide(PanelInputs(connected: true, phase: .room, countdown: countdown, chat: chat, now: t0)) == .countdown)
+            #expect(PanelRules.showsPanel(PanelInputs(connected: true, chat: chat, attention: [blocked])))
         }
     }
 
     @Test func handsOffToTheWindowWhenItIsKey() {
-        #expect(PanelRules.decide(PanelInputs(connected: true, phase: .room, countdown: countdown, chat: front, now: t0)) == nil)
+        #expect(!PanelRules.showsPanel(PanelInputs(connected: true, chat: front, attention: [blocked])))
         // …and comes back when the window loses key again.
-        #expect(PanelRules.decide(PanelInputs(connected: true, phase: .room, countdown: countdown, chat: background, now: t0)) == .countdown)
-    }
-
-    @Test func countdownHoldsZeroBrieflyThenDismisses() {
-        let ends = countdown.endsAt
-        #expect(PanelRules.decide(PanelInputs(connected: true, phase: .room, countdown: countdown, chat: .closed, now: ends)) == .countdown)
-        #expect(PanelRules.decide(PanelInputs(connected: true, phase: .room, countdown: countdown, chat: .closed, now: ends.addingTimeInterval(PanelRules.zeroHold))) == nil)
-    }
-
-    @Test func countdownBeatsRequestBeatsNotice() {
-        let all = PanelInputs(connected: true, phase: .room, countdown: countdown, request: request, autopilotNoticeUntil: t0.addingTimeInterval(5), chat: .closed, now: t0)
-        #expect(PanelRules.decide(all) == .countdown)
-        var noCountdown = all
-        noCountdown.countdown = nil
-        #expect(PanelRules.decide(noCountdown) == .request)
-        noCountdown.dismissedRequestKey = request.key
-        #expect(PanelRules.decide(noCountdown) == .autopilot)
-        noCountdown.request?.resolved = true
-        noCountdown.dismissedRequestKey = nil
-        #expect(PanelRules.decide(noCountdown) == .autopilot)
-    }
-
-    @Test func autopilotNoticeExpires() {
-        let i = PanelInputs(connected: true, phase: .room, autopilotNoticeUntil: t0.addingTimeInterval(6), chat: .closed, now: t0.addingTimeInterval(6))
-        #expect(PanelRules.decide(i) == nil)
-        var lounge = i
-        lounge.now = t0
-        lounge.phase = .lounge
-        #expect(PanelRules.decide(lounge) == nil)
+        #expect(PanelRules.showsPanel(PanelInputs(connected: true, chat: background, attention: [blocked])))
     }
 
     @Test func nothingWhileDisconnected() {
-        #expect(PanelRules.decide(PanelInputs(connected: false, phase: .room, countdown: countdown, chat: .closed, now: t0)) == nil)
+        #expect(!PanelRules.showsPanel(PanelInputs(connected: false, chat: .closed, attention: [blocked])))
     }
 
-    @Test func noticeFiresOnEnteringAutopilotOnly() {
-        #expect(PanelRules.entersAutopilot(from: nil, to: .room))
-        #expect(PanelRules.entersAutopilot(from: .lounge, to: .room))
-        #expect(PanelRules.entersAutopilot(from: .reality, to: .room))
-        #expect(!PanelRules.entersAutopilot(from: .room, to: .room))
-        #expect(!PanelRules.entersAutopilot(from: .spectating, to: .room))
-        #expect(!PanelRules.entersAutopilot(from: .lounge, to: .lounge))
+    /// The lounge itself never brings the panel down: being in the room, or a daemon from before
+    /// always-on with a request and no queue.
+    @Test func onlyTheAttentionQueue() {
+        #expect(!PanelRules.showsPanel(PanelInputs(connected: true, chat: .closed)))
+        #expect(!PanelRules.showsPanel(PanelInputs(connected: true, chat: .closed, attention: [])))
     }
 }

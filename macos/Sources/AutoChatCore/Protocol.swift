@@ -4,11 +4,10 @@ import Foundation
 /// an agents-stream connection (`DaemonClient(stream: .agents)`).
 public enum Command: Sendable, Equatable {
     case say(String)
-    case returnNow
-    case leaveRoom
+    /// Join the Lounge, on or off: saved in the daemon's config (`autochat config lounge`).
+    case lounge(Bool)
     case jumpToCopilot
     case dismissRequest
-    case joinNow
     /// The human read the intervention warning (persisted by the daemon).
     case agentsAck
     /// A human intervention in the agent room: `thread` nil is the main stream.
@@ -25,11 +24,9 @@ public enum Command: Sendable, Equatable {
     public var name: String {
         switch self {
         case .say: "say"
-        case .returnNow: "returnNow"
-        case .leaveRoom: "leaveRoom"
+        case .lounge: "lounge"
         case .jumpToCopilot: "jumpToCopilot"
         case .dismissRequest: "dismissRequest"
-        case .joinNow: "joinNow"
         case .agentsAck: "agents.ack"
         case .agentsSay: "agents.say"
         case .jumpTo: "jumpTo"
@@ -49,6 +46,7 @@ public enum Command: Sendable, Equatable {
             let id: Int
             let cmd: String
             let text: String?
+            var on: Bool?
             var item: String?
             var harnesses: [String]?
         }
@@ -80,6 +78,8 @@ public enum Command: Sendable, Equatable {
             data = (try? encoder.encode(SayEnvelope(id: id, cmd: name, text: text, thread: thread, to: to))) ?? Data()
         case let .say(text):
             data = (try? encoder.encode(Envelope(id: id, cmd: name, text: text))) ?? Data()
+        case let .lounge(on):
+            data = (try? encoder.encode(Envelope(id: id, cmd: name, text: nil, on: on))) ?? Data()
         case let .jumpTo(item), let .dismissAttention(item):
             data = (try? encoder.encode(Envelope(id: id, cmd: name, text: nil, item: item))) ?? Data()
         case let .agentsSetup(harnesses):

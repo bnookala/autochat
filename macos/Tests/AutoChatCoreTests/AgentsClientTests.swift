@@ -47,7 +47,7 @@ struct AgentsClientTests {
         #expect(server.commandNames == ["agents.say", "agents.ack", "agents.say"])
 
         // Lounge commands mean nothing on this connection.
-        let lounge = try await client.send(.joinNow)
+        let lounge = try await client.send(.lounge(true))
         #expect(!lounge.ok)
     }
 

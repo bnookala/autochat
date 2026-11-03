@@ -54,7 +54,7 @@ struct AgentsTabTests {
         #expect(model.effectiveTab == .lounge)
     }
 
-    @Test func openChatGoesToTheLoungeWhenAutopilotNeedsIt() {
+    @Test func openChatGoesToTheLoungeWhenCopilotAsks() {
         let model = connectedModel()
         model.apply(Fixtures.agentsLounge())
         model.selectTab(.agents)
@@ -65,17 +65,6 @@ struct AgentsTabTests {
         model.apply(request)
         model.selectTabForOpening()
         #expect(model.chatTab == .lounge)
-    }
-
-    @Test func theAgentsTabInFrontStillLetsLoungePanelsDescend() {
-        let model = connectedModel()
-        var countdown = Fixtures.countdown(now: Date(), remaining: 20)
-        countdown.agents = LoungeAgents(present: 2, openThreads: 1)
-        model.apply(countdown)
-        model.chatWindow = ChatWindowState(isVisible: true, isKey: true, appIsActive: true)
-        #expect(model.panelKind == nil, "the lounge is in front")
-        model.selectTab(.agents)
-        #expect(model.panelKind == .countdown)
     }
 }
 

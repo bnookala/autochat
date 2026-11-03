@@ -1,8 +1,8 @@
 import Foundation
 
 // The attention queue (issue #37, docs/protocol.md "Attention queue"): what your agents need
-// from you. Presence (being in the room) is separate: an item stays until it's handled or
-// dismissed, in a room or not. Decoded as leniently as the rest of the snapshot.
+// from you. The lounge is separate: an item stays until it's handled or dismissed, in a room or
+// not. Decoded as leniently as the rest of the snapshot.
 
 public enum AttentionKind: Sendable, Equatable, Hashable {
     /// Waiting for an approval or an answer: urgent.
@@ -82,8 +82,6 @@ public struct AttentionItem: Sendable, Equatable, Identifiable, Decodable {
 public enum AttentionRules {
     /// Rows a panel shows before "and N more".
     public static let panelRows = 4
-    /// Rows the countdown panel shows under the countdown.
-    public static let countdownRows = 3
 
     /// Urgent first, oldest first within a kind (the daemon's order; sorted again to be safe).
     public static func sorted(_ items: [AttentionItem]) -> [AttentionItem] {
@@ -168,13 +166,6 @@ public enum AttentionRules {
         let items = sorted(snapshot?.attention ?? [])
         guard let request = snapshot?.request, !request.resolved, let sid = request.sid else { return items }
         return items.filter { !($0.kind.isUrgent && $0.sid == sid) }
-    }
-
-    /// The countdown panel lists the queue when it holds more than the run that just ended:
-    /// with several agents, that's where you pick which one to go to.
-    public static func countdownList(_ items: [AttentionItem]?) -> [AttentionItem] {
-        let all = sorted(items ?? [])
-        return all.count >= 2 ? all : []
     }
 
     /// VoiceOver and tooltips.

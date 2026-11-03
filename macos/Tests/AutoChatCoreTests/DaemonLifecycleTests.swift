@@ -69,9 +69,16 @@ struct DaemonLifecycleTests {
         let ids = snapshots.value.last?.messages.compactMap(\.mid) ?? []
         #expect(!ids.isEmpty && Set(ids).count == ids.count)
 
-        let unknown = try await client.send(.returnNow)
-        #expect(!unknown.ok)
-        #expect(unknown.error == "no countdown running")
+        // Join the Lounge off and on again: out of the room and back, right away.
+        let off = try await client.send(.lounge(false))
+        #expect(off.ok)
+        #expect(await eventually { snapshots.value.last.map { $0.phase == .lounge && $0.loungeOn == false && $0.members.isEmpty } == true })
+        let refused = try await client.send(.say("anyone?"))
+        #expect(!refused.ok)
+        #expect(refused.error == "not in a room")
+        let on = try await client.send(.lounge(true))
+        #expect(on.ok)
+        #expect(await eventually { snapshots.value.last.map { $0.phase == .room && $0.loungeOn == true && $0.members.count == 4 } == true })
 
         let exited = await supervisor.shutdown(timeout: 3)
         #expect(exited)

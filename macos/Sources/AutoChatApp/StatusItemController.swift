@@ -8,19 +8,16 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         var openChat: () -> Void
         var openAgents: () -> Void
         var locateCLI: () -> Void
-        var togglePause: () -> Void
         var toggleLoginItem: () -> Void
         var quit: () -> Void
     }
 
     let item: NSStatusItem
     private let model: AppModel
-    private let paths: AutochatPaths
     private let actions: Actions
 
-    init(model: AppModel, paths: AutochatPaths, actions: Actions) {
+    init(model: AppModel, actions: Actions) {
         self.model = model
-        self.paths = paths
         self.actions = actions
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
@@ -45,25 +42,18 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         guard let button = item.button else { return }
         let state = model.iconState
         let badge = model.badgeCount
-        var title = ""
         var description = "AutoChat"
         var tooltip = "AutoChat"
         switch state {
         case .disconnected:
             description = "AutoChat (not connected)"
             tooltip = "AutoChat: not connected to autochat"
-        case .lounge:
-            tooltip = "AutoChat: waiting for autopilot"
-        case .autopilot:
-            description = "AutoChat: autopilot is on"
-            tooltip = "Autopilot is on. Click to chat"
-        case .needsYou:
-            description = "AutoChat: Copilot needs you"
-            tooltip = "Copilot needs you"
-        case let .countdown(seconds):
-            description = "AutoChat: back to reality soon"
-            title = " \(seconds)"
-            tooltip = CountdownClock.title(remaining: seconds)
+        case .inLounge:
+            description = "AutoChat: in the lounge"
+            tooltip = "In the lounge. Click to chat"
+        case .outOfLounge:
+            description = "AutoChat: not in the lounge"
+            tooltip = "AutoChat: not in the lounge"
         }
         // The badge: agents blocked on you (the attention queue's urgent items).
         if badge > 0 {
@@ -73,13 +63,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         button.image = StatusIcon.image(for: state, badge: badge, description: description)
         button.appearsDisabled = state == .disconnected
         button.toolTip = tooltip
-        if title.isEmpty {
-            button.attributedTitle = NSAttributedString(string: "")
-        } else {
-            button.attributedTitle = NSAttributedString(string: title, attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
-            ])
-        }
     }
 
     @objc private func clicked(_ sender: NSStatusBarButton) {
@@ -106,18 +89,15 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
-        let phase = model.snapshot?.phase
 
         menu.addItem(entry("Open Chat", symbol: "bubble.left.and.bubble.right") { [actions] in actions.openChat() })
         menu.addItem(.separator())
 
         let roomName = model.snapshot?.room?.display ?? "#lobby"
-        let roomLine: String
-        switch phase {
-        case .room?, .spectating?: roomLine = "\(roomName) · \(model.snapshot?.activeCount ?? 0) on autopilot"
-        case .lounge?: roomLine = "Room \(roomName) · waiting for autopilot"
-        case nil: roomLine = "Room \(roomName)"
-        default: roomLine = "\(roomName) · autopilot is over"
+        let roomLine: String = switch model.snapshot {
+        case let s? where s.inRoom: "\(roomName) · \(s.members.count) here"
+        case .some: "Room \(roomName) · not in the lounge"
+        case nil: "Room \(roomName)"
         }
         menu.addItem(info(roomLine, symbol: "number"))
         // The local agent room: a summary that opens the Agents tab. No panel, no badge.
@@ -142,14 +122,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             }
         }
 
-        if model.connected, model.snapshot?.countdown != nil {
-            menu.addItem(entry("Return to Reality Now", symbol: "sunrise") { [model] in model.perform(.returnNow) })
-        }
-        let join = entry("Join Now", symbol: "figure.wave") { [model] in model.perform(.joinNow) }
-        join.isEnabled = model.connected && phase == .lounge
-        join.toolTip = "Join the room without autopilot (like `autochat ui --now`)"
-        menu.addItem(join)
-
         if model.daemon == .cliMissing {
             menu.addItem(.separator())
             menu.addItem(info("autochat CLI not found", symbol: "exclamationmark.triangle"))
@@ -161,11 +133,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         }
 
         menu.addItem(.separator())
-        let pause = entry("Pause autochat", symbol: "pause.circle") { [actions] in actions.togglePause() }
-        pause.state = AutochatConfig.isPaused(paths: paths) ? .on : .off
-        pause.isEnabled = model.supervisor?.binary != nil
-        pause.toolTip = "autochat config launch off: autopilot runs won't wake autochat"
-        menu.addItem(pause)
+        menu.addItem(loungeItem())
         let login = entry("Launch at Login", symbol: "power") { [actions] in actions.toggleLoginItem() }
         login.state = LoginItem.isEnabled ? .on : .off
         login.isEnabled = LoginItem.isAvailable
@@ -176,6 +144,16 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         quit.keyEquivalent = "q"
         menu.addItem(quit)
         return menu
+    }
+
+    /// Join the Lounge: in the room while it's checked (`autochat config lounge on|off`).
+    private func loungeItem() -> NSMenuItem {
+        let on = model.loungeOn
+        let item = entry("Join the Lounge", symbol: "person.2") { [model] in model.setLounge(!on) }
+        item.state = on ? .on : .off
+        item.isEnabled = model.connected
+        item.toolTip = "The lounge is a public chat room: you're in it while this is checked"
+        return item
     }
 
     private var daemonLine: String {

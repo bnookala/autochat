@@ -7,11 +7,11 @@ import AutoChatCore
 enum StatusIcon {
     static let pointSize: CGFloat = 14
 
+    /// Filled in the lounge, an outline out of it. Disconnected is the outline, drawn disabled.
     static func symbolName(for state: StatusIconState) -> [String] {
         switch state {
-        case .disconnected, .lounge: ["bubble.left.and.bubble.right"]
-        case .autopilot, .countdown: ["bubble.left.and.bubble.right.fill"]
-        case .needsYou: ["bubble.left.and.exclamationmark.bubble.right.fill", "exclamationmark.bubble.fill"]
+        case .inLounge: ["bubble.left.and.bubble.right.fill"]
+        case .outOfLounge, .disconnected: ["bubble.left.and.bubble.right"]
         }
     }
 

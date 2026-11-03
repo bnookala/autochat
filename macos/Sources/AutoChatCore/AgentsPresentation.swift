@@ -182,11 +182,10 @@ public enum AgentsRules {
         showsAgents ? selected : .lounge
     }
 
-    /// Where Open Chat lands: the lounge whenever something is happening there (autopilot, a
-    /// Copilot question, the countdown or its closeout), otherwise wherever the user was.
+    /// Where Open Chat lands: the lounge when a Copilot question waits there, otherwise wherever
+    /// the user was.
     public static func tabOnOpen(current: ChatTab, lounge: Snapshot?) -> ChatTab {
         guard let s = lounge else { return current }
-        if s.phase.isInRoom || s.phase.isCloseout || s.countdown != nil { return .lounge }
         if let r = s.request, !r.resolved { return .lounge }
         return current
     }

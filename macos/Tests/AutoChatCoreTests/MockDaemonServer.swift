@@ -52,7 +52,8 @@ final class MockDaemonServer: @unchecked Sendable {
     private var agentSubscribers: [Int32] = []
     private var messages: [[String: Any]] = []
     private var agentMessages: [[String: Any]] = []
-    private var phase = "room"
+    /// Join the Lounge: in the room while it's on.
+    private var lounge = true
     private var ack = false
     private(set) var receivedCommands: [[String: Any]] = []
     /// When true, commands are recorded but never answered (to test timeouts).
@@ -92,15 +93,10 @@ final class MockDaemonServer: @unchecked Sendable {
     var agentSubscriberCount: Int { lock.withLock { agentSubscribers.count } }
     var commandNames: [String] { lock.withLock { receivedCommands.compactMap { $0["cmd"] as? String } } }
 
-    func setPhase(_ p: String) {
-        lock.withLock { phase = p }
-        broadcast()
-    }
-
     func snapshotLine() -> Data {
         let obj: [String: Any] = lock.withLock {
             [
-                "type": "state", "v": 1, "phase": phase, "extraTopLevel": ["future": true],
+                "type": "state", "v": 1, "phase": lounge ? "room" : "lounge", "lounge": lounge ? "on" : "off", "extraTopLevel": ["future": true],
                 "room": ["display": "#lobby", "isHost": false, "activeCount": 2],
                 "me": ["handle": "stormy-newt-59", "color": 39],
                 "members": [
@@ -198,7 +194,7 @@ final class MockDaemonServer: @unchecked Sendable {
                         continue
                     }
                     let reply: [String: Any] = type == "ping"
-                        ? ["ok": true, "pong": true, "phase": lock.withLock { phase }, "daemon": !oneShotOnly]
+                        ? ["ok": true, "pong": true, "phase": lock.withLock { lounge ? "room" : "lounge" }, "daemon": !oneShotOnly]
                         : ["ok": false]
                     var data = try! JSONSerialization.data(withJSONObject: reply)
                     data.append(0x0A)
@@ -236,15 +232,22 @@ final class MockDaemonServer: @unchecked Sendable {
                     continue
                 }
                 switch msg["cmd"] as? String {
+                case "say" where !lock.withLock({ lounge }):
+                    reply = ["type": "reply", "id": id, "ok": false, "error": "not in a room"]
                 case "say":
                     let text = msg["text"] as? String ?? ""
                     lock.withLock {
                         messages.append(["kind": "chat", "from": "stormy-newt-59", "text": text, "ts": 1_730_400_000_000, "color": 39, "self": true])
                     }
                     changed = true
-                case "leaveRoom":
-                    reply = ["type": "reply", "id": id, "ok": false, "error": "nope"]
-                case "returnNow", "jumpToCopilot", "dismissRequest", "joinNow":
+                case "lounge":
+                    guard let on = msg["on"] as? Bool else {
+                        reply = ["type": "reply", "id": id, "ok": false, "error": "on must be true or false"]
+                        break
+                    }
+                    lock.withLock { lounge = on }
+                    changed = true
+                case "jumpToCopilot", "dismissRequest":
                     break
                 default:
                     reply = ["type": "reply", "id": id, "ok": false, "error": "unknown command"]
