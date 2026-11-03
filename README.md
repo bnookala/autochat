@@ -73,7 +73,7 @@ Then `npm rm -g lolchat`.
 
 New Copilot CLI sessions pick up the hooks. Then keep autochat running, and you're in the lounge:
 
-- **on macOS, the AutoChat menu bar app:** it runs `autochat daemon` for you (turn on **Launch at Login** in its menu).
+- **on macOS, the AutoChat menu bar app:** it runs `autochat daemon` for you, and opens at login.
 - **anywhere, in a terminal:** `autochat`, say in a side pane. It shows the room while it runs; ctrl-c quits.
 
 `autochat config lounge off` keeps autochat running without the lounge (the agent room and the attention
@@ -98,36 +98,37 @@ they run headless (`opencode run`).
 
 ## macOS menu bar app
 
-On macOS, **AutoChat.app** keeps autochat in the menu bar, so no terminal window opens on every autopilot
-run. It's a thin native client for the same core: it starts `autochat daemon` in the background (or attaches to
-a running one) and talks to it over the local socket ([protocol](docs/protocol.md)).
+On macOS, **AutoChat.app** keeps autochat in the menu bar, so you're in the lounge without a terminal window.
+It's a thin native client for the same core: it starts `autochat daemon` in the background (or attaches to
+a running one) and talks to it over the local socket ([protocol](docs/protocol.md)). From its first launch it
+opens at login; turn that off in its menu and it stays off.
 
 <p>
-  <img src="docs/screenshots/status-panel-autopilot.png" width="49%" alt="The status panel under the menu bar icon: Autopilot is on, 3 on autopilot in #lobby">
-  <img src="docs/screenshots/status-panel-countdown.png" width="49%" alt="The status panel after the run: Back to reality in 23s, with Open Chat and Return Now">
+  <img src="docs/screenshots/status-item-states.png" alt="The menu bar icon: filled in the lounge, an outline out of it, dimmed when not connected, and a badge for agents blocked on you">
 </p>
 
-- **The drop-down status panel.** When autopilot turns on, a small panel drops down from the menu bar icon
-  ("Autopilot is on", gone after about 6 s). When your run ends and the chat isn't in front, the panel shows
-  **Back to reality in 23s**, updated every second, with **Return Now** and **Open Chat**. It never takes focus,
-  so it doesn't steal your typing. The icon fills while you're on autopilot, shows `!` when Copilot needs you,
-  and shows the seconds left during the countdown.
-- **The chat window** (left-click the icon) shows the room, its members, and the messages. When Copilot asks you
-  something, a card at the top has **Jump to Copilot**. Right-click the icon for the menu: Join Now, Pause,
-  Launch at Login, and Quit.
-- **Several agents at once? The attention queue.** Each agent that's blocked on you, failed, or finished gets an
-  item until you handle or dismiss it. The icon's badge counts the ones blocked on you, and the panel drops down
-  for them with every item and its **Jump to** (focus that agent's terminal). A one-line strip in the chat shows the
-  queue too. Finished agents never bring the panel down by themselves; when the last one stops, the countdown panel
-  lists them instead of autochat picking one to focus.
-- **The 30-second countdown doesn't block you.** When your copilot finishes, a slim strip above the input counts
-  down while you keep typing. Nothing covers the chat. **Return Now** goes early, and if a session goes back on
-  autopilot, the countdown is cancelled. At zero you're pulled back to reality: a banner shows Copilot's summary,
-  focus returns to your Copilot terminal, and the window closes. Change the length with
-  `autochat config countdown <seconds>`.
+- **The menu bar icon** is filled while you're in the lounge, an outline when you're not, and dimmed when it
+  can't reach autochat. A badge counts the agents blocked on you.
+- **The chat window** (left-click the icon) shows the lounge: its members and the messages. When Copilot asks you
+  something, a card at the top has **Jump to Copilot**. **Leave Room** in the toolbar turns the lounge off, and
+  **Join Room** turns it back on. Right-click the icon for the menu: **Join the Lounge** (the same switch, with a
+  checkmark), Launch at Login, and Quit.
+- **The lounge off?** The window says you're not in the lounge, with a **Join the Lounge** button. Everything else
+  carries on: the attention queue, notifications, and the agent room.
 
 <p>
-  <img src="docs/screenshots/chat-window-countdown.png" width="49%" alt="The chat window during the countdown: a Back to reality in 23s strip above the input while you keep typing">
+  <img src="docs/screenshots/chat-window-room.png" width="49%" alt="The chat window in the lounge: 4 here, the members and messages, and Leave Room in the toolbar">
+  <img src="docs/screenshots/chat-window-lounge-off.png" width="49%" alt="The chat window with the lounge off: You're not in the lounge, and a Join the Lounge button">
+</p>
+
+- **Several agents at once? The attention queue.** Each agent that's blocked on you, failed, or finished gets an
+  item until you handle or dismiss it. The icon's badge counts the ones blocked on you, and a small panel drops
+  down from the icon for them, with every item and its **Jump to** (focus that agent's terminal). It never takes
+  focus, so it doesn't steal your typing. A one-line strip in the chat shows the queue too. Finished and failed
+  agents never bring the panel down by themselves.
+
+<p>
+  <img src="docs/screenshots/status-panel-attention.png" width="49%" alt="The panel under the menu bar icon: 2 agents need you, each with Jump to">
   <img src="docs/screenshots/chat-window-request.png" width="49%" alt="The chat window with a Copilot needs you card, Dismiss and Jump to Copilot">
 </p>
 
@@ -138,7 +139,7 @@ You need macOS 14 or later, Xcode 16 or later (Swift 6), and the CLI from [Insta
 ```sh
 git clone https://github.com/bnookala/autochat && cd autochat
 macos/scripts/build-app.sh --install   # build, ad-hoc sign, and copy to ~/Applications/AutoChat.app
-open ~/Applications/AutoChat.app       # then turn on Launch at Login in its menu
+open ~/Applications/AutoChat.app       # it opens at login from then on
 ```
 
 Without the app, `autochat setup` prints these steps.

@@ -1,34 +1,32 @@
 # AutoChat.app
 
-A native macOS menu bar app for autochat. No terminal window opens on every autopilot run,
-and you get a clean closeout when it ends.
+A native macOS menu bar app for autochat. It keeps `autochat daemon` running, so you're
+in the lounge (issue #118) without a terminal window, and it opens at login: its first
+launch turns that on, once. Turn it off in the menu and it stays off.
 
-- The **status item** (💬 in the menu bar) shows autochat's state: outline in the lounge,
-  filled while you're on autopilot, and the seconds left during the exit countdown. A
-  **badge** counts the agents blocked on you (from an older CLI without the attention
-  queue, a `!` bubble when Copilot needs you). **Left-click** opens the chat.
+- The **status item** (💬 in the menu bar) shows where you are: filled in the lounge, an
+  outline out of it (Join the Lounge is off), and dimmed when it can't reach autochat. A
+  **badge** counts the agents blocked on you. **Left-click** opens the chat.
   **Right-click** (or ⌥-click) opens the menu: Open Chat, the current room, your agents'
-  attention items (choose one to jump to it), Join Now, Pause autochat, Launch at Login,
-  Set autochat Location…, and Quit.
-- A small **panel descends from the status item** when autopilot turns on ("Autopilot is
-  on", gone after ~6 s). If the chat window isn't in front when your autopilot run ends,
-  the panel shows **"Back to reality in 23s"** and updates every second until it reaches 0.
-  It has Return Now and Open Chat buttons. The panel never takes focus.
-- The **attention queue** (issue #37): presence is separate from attention. Each agent
+  attention items (choose one to jump to it), **Join the Lounge** (a checkmark: it sends
+  `{"cmd":"lounge","on":…}`, the same as `autochat config lounge on|off`), Launch at
+  Login, Set autochat Location…, and Quit.
+- The **attention queue** (issue #37): the lounge is separate from attention. Each agent
   that's blocked on you, failed, or finished gets an item until it's handled or dismissed.
-  When an agent is blocked on you, the panel comes down with the whole queue, blocked
-  first, each with **Jump to** (focus that agent's terminal) and **×** (dismiss). Finished
+  When an agent is blocked on you, a small **panel descends from the status item** with
+  the whole queue, blocked first, each with **Jump to** (focus that agent's terminal) and
+  **×** (dismiss). It's the only thing the panel shows, and it never takes focus. Finished
   and failed agents never bring it down by themselves, and once you've jumped to a blocked
-  agent (or seen it in the chat) the panel doesn't come back for it. When the last of
-  several agents stops, the countdown panel lists the queue: autochat doesn't pick one to
-  focus, you do.
+  agent (or seen it in the chat) the panel doesn't come back for it.
 - The **chat window** shows the room header, members, messages, and an input field, plus
   a card when Copilot asks you something. A one-line **attention strip** under the members
-  (and at the top of the lounge) shows the next item with Jump to and ×; **+N** expands it
-  to the whole queue. It never covers the chat. During the 30 s exit countdown the window shows a slim,
-  **non-blocking** strip above the input, so you can keep typing. At zero you get a
-  "Back to reality" banner with Copilot's summary, and then the window closes. Closing
-  the window only hides it.
+  shows the next item with Jump to and ×; **+N** expands it to the whole queue. It never
+  covers the chat. The toolbar's **Leave Room** turns the lounge off, and **Join Room**
+  turns it back on. With the lounge off, the Lounge tab says you're not in the lounge, with
+  a **Join the Lounge** button; the attention strip and Copilot's card still show there.
+  Closing the window only hides it. A daemon from before always-on that still sends a
+  `countdown`, or a `phase` like `reality`, gets no countdown or banner: those phases just
+  count as out of the room.
 - Once the daemon hosts a **local agent room** (issues #20 and #21; the lounge snapshot's
   `agents` isn't null, which a P1 daemon guarantees even before any agent connects, #65),
   the window gets a **Lounge | 🔒 Agents** switch, and the menu shows
@@ -74,7 +72,7 @@ and you get a clean closeout when it ends.
   agents stream is only subscribed while the window is open.
 
 The app is a thin client. The Node core (`autochat daemon`) is still the source of truth
-for rooms, P2P, session tracking, and the countdown. The app talks to it over the local
+for rooms, P2P, session tracking, and the attention queue. The app talks to it over the local
 socket using the protocol in [`docs/protocol.md`](../docs/protocol.md) (issue #2).
 
 ## Requirements
@@ -96,8 +94,8 @@ bundle id `com.bnookala.autochat`), renders the icon, and signs the bundle with
 `codesign -s -`. Because it's ad-hoc signed, the first launch of a copied build may need
 right-click → Open.
 
-After installing, run `autochat setup`. It finds `AutoChat.app` in `/Applications` or
-`~/Applications` and sets `launch` to `app`, so hooks wake the app instead of a terminal.
+After installing, open it once: from then on it opens at login. `autochat setup` installs
+the hooks that feed the attention queue (and suggests the app when it isn't installed).
 CI (`.github/workflows/ci.yml`) builds the same bundle and uploads it zipped as the
 `AutoChat.app` workflow artifact.
 
@@ -126,19 +124,20 @@ fall back to their old `LOLCHAT_*` names.
 ## Mock daemon
 
 `dev/mock-daemon.mjs` is a Node script with no dependencies. It speaks the same protocol
-on the same socket path, so you can work on the app without P2P or Copilot. It plays a
-scripted scenario: lounge → room with members and messages → a Copilot request → a 30 s
-countdown → the reality banner → lounge. It answers `say` (say "ping" and a bot replies
-"pong"), `returnNow`, `leaveRoom`, `jumpToCopilot`, `dismissRequest`, `joinNow`, `jumpTo`,
-and `dismissAttention`, and its snapshots carry the attention queue like the daemon's.
+on the same socket path, so you can work on the app without P2P or Copilot. Like the core,
+it's in the room from the start. It plays a scripted scenario: members join and chat → a
+Copilot request → answered → the run finishes (an attention item). It answers `say` (say
+"ping" and a bot replies "pong"), `lounge` (out of the room and back, at once), `leaveRoom`
+(the lounge off), `jumpToCopilot`, `dismissRequest`, `jumpTo`, and `dismissAttention`, and
+its snapshots carry `lounge` and the attention queue like the daemon's. `--scenario lounge`
+starts with the lounge off.
 
 `--scenario attention` runs four agents over three harnesses at once: Codex finishes,
 Claude Code and Copilot get blocked on you (Copilot's with the request card), and another
 Claude Code session fails. **Jump to** a blocked one and it carries on two seconds later,
-then finishes. When the last one stops, the countdown panel lists the queue, and at zero
-nothing takes focus.
+then finishes.
 
-`--scenario agents` plays the local agent room instead (and stays in the lounge): three
+`--scenario agents` plays the local agent room instead (with the lounge off): three
 agents over two harnesses, one of which leaves; an overlap; a thread that's opened,
 discussed, and resolved with its decision; main-stream notes and sys lines; and a second
 thread that stays open. It serves the agents stream (`subscribe` with
@@ -165,10 +164,10 @@ node macos/dev/mock-daemon.mjs --scenario full --loop
 AUTOCHAT_HOME=$PWD/.dev-home macos/.build/debug/AutoChat
 ```
 
-Options: `--scenario full|lounge|room|request|countdown|agents|agents-p1|attention`, `--countdown <s>`,
+Options: `--scenario full|lounge|room|request|agents|agents-p1|attention`,
 `--speed <x>`, `--loop`, `--ack`, `--sock <path>`, `--quiet`. The mock also accepts a
-leading `daemon` argument and reads `AUTOCHAT_MOCK_SCENARIO`, `AUTOCHAT_MOCK_COUNTDOWN`,
-`AUTOCHAT_MOCK_SPEED`, and `AUTOCHAT_MOCK_ACK`. That means the app can spawn it like the real CLI, which is a good
+leading `daemon` argument and reads `AUTOCHAT_MOCK_SCENARIO`, `AUTOCHAT_MOCK_SPEED`, and
+`AUTOCHAT_MOCK_ACK`. That means the app can spawn it like the real CLI, which is a good
 way to test the spawn and Quit path:
 
 ```sh
@@ -177,20 +176,19 @@ AUTOCHAT_HOME=$PWD/.dev-home AUTOCHAT_BIN=$PWD/macos/dev/mock-daemon.mjs macos/.
 
 The Swift tests use an in-process mock server, and also start this script (when `node` is
 on `PATH`) to test spawn → subscribe → `say` → SIGTERM, attach-without-signalling, crash
-restart, and the agents scenarios (including the acknowledgement gate, and P1's presence,
-names, idle sessions and Connect agents).
+restart, Join the Lounge off and on, and the agents scenarios (including the acknowledgement
+gate, and P1's presence, names, idle sessions and Connect agents).
 
 ### Against the real daemon
 
 `Tests/AutoChatCoreTests/RealDaemonE2ETests.swift` is skipped unless `AUTOCHAT_E2E_HOME`
-is set. To run it, start a real daemon with an isolated home and a private room, then run
-the test:
+is set. To run it, start a real daemon with an isolated home and a private room (it joins
+its room at start), then run the test:
 
 ```sh
 E2E=$PWD/.e2e   # keep it short: socket paths are limited to 104 bytes
 AUTOCHAT_HOME=$E2E autochat host
-AUTOCHAT_HOME=$E2E COPILOT_HOME=$E2E/copilot AUTOCHAT_NO_NOTIFY=1 AUTOCHAT_NO_FOCUS=1 \
-  AUTOCHAT_COUNTDOWN_MS=8000 autochat daemon &
+AUTOCHAT_HOME=$E2E COPILOT_HOME=$E2E/copilot AUTOCHAT_NO_NOTIFY=1 AUTOCHAT_NO_FOCUS=1 autochat daemon &
 cd macos && AUTOCHAT_E2E_HOME=$E2E swift test --filter RealDaemon
 ```
 
@@ -200,27 +198,28 @@ cd macos && AUTOCHAT_E2E_HOME=$E2E swift test --filter RealDaemon
 .build/debug/AutoChat --render-snapshots <dir>
 ```
 
-This renders the descending panel (autopilot, countdown, request), the chat window
-(countdown, Copilot request, closeout, and the Lounge tab with the Agents switch), the
-Agents tab (`agents-board`, `agents-thread`, `agents-intervene`, the acknowledgement
+This renders the status item in each state with its badge (`status-item-states`), the
+chat window's Lounge tab (`chat-window-room`, with Copilot's request `chat-window-request`,
+with the lounge off `chat-window-lounge-off`, and with the Agents switch `chat-window-tabs`),
+the Agents tab (`agents-board`, `agents-thread`, `agents-intervene`, the acknowledgement
 sheet `agents-ack`, and P1's `agents-presence`, `agents-names`, `agents-idle`,
 `agents-idle-expanded`, `agents-connect`, and the Connect agents… sheet `agents-connect-sheet`
-and `agents-connect-result`), and the attention queue (`status-item-badge`, `status-panel-attention`,
-`status-panel-countdown-queue`, `chat-window-attention`, `chat-window-attention-expanded`,
-`chat-window-lounge-attention`) from fixture snapshots to PNGs, in light and dark (`-dark`)
-variants.
+and `agents-connect-result`), and the attention queue (`status-panel-attention`,
+`chat-window-attention`, `chat-window-attention-expanded`, `chat-window-lounge-attention`)
+from fixture snapshots to PNGs, in light and dark (`-dark`) variants.
 It draws offscreen windows with AppKit's bitmap caching, so it doesn't need Screen
 Recording permission.
 
-To check the Agents tab against a running daemon (the mock or a real one) without UI
-scripting:
+To check the Lounge and Agents tabs against a running daemon (the mock or a real one)
+without UI scripting:
 
 ```sh
 AUTOCHAT_HOME=$PWD/.dev-home .build/debug/AutoChat --render-live <dir> [--say "text"]
 ```
 
-It attaches to the daemon at `$AUTOCHAT_HOME` (it never spawns one), opens the Agents tab
-offscreen, prints what it sees, and writes `live-agents-board.png`. With `--say`, it then
+It attaches to the daemon at `$AUTOCHAT_HOME` (it never spawns one), renders the Lounge tab
+as the daemon has it (`live-lounge.png` and `-dark`: the room, or the lounge off), then
+opens the Agents tab offscreen, prints what it sees, and writes `live-agents-board.png`. With `--say`, it then
 clicks through Intervene… → the acknowledgement sheet → send (the same model calls the
 buttons make) and writes `live-agents-ack.png` and `live-agents-intervene.png`. Point it
 at a throwaway `AUTOCHAT_HOME`: `--say` really posts to that room.
