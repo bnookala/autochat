@@ -60,6 +60,11 @@ and you get a clean closeout when it ends.
     "3 idle sessions" row under the active agents, which opens on click; a coordinator whose
     child is active stays up with it. The header counts active agents. From a daemon without
     `active`, every card is active, as before.
+  - **Open Session** (issue #123), in a card's context menu (right-click; cards have no ⋯
+    button): sends `agents.open` with the card's id, and the daemon shows that agent's session:
+    its Rex or tmux pane or its terminal app, the GitHub Copilot app at the session, or a new
+    tab resuming it ([docs/agents.md](../docs/agents.md#open-a-session)). If it can't, the card
+    says why, in one line, for 6 s. VoiceOver has it as the card's action.
   - the **streams**: the main stream and the advertised threads (title, participants,
     status, message count, outcome). Selecting one shows its messages, with kind badges and
     emphasized decisions; authors show their title (`from.title`, the handle on hover). The
@@ -205,7 +210,8 @@ This renders the descending panel (autopilot, countdown, request), the chat wind
 Agents tab (`agents-board`, `agents-thread`, `agents-intervene`, the acknowledgement
 sheet `agents-ack`, and P1's `agents-presence`, `agents-names`, `agents-idle`,
 `agents-idle-expanded`, `agents-connect`, and the Connect agents… sheet `agents-connect-sheet`
-and `agents-connect-result`), and the attention queue (`status-item-badge`, `status-panel-attention`,
+and `agents-connect-result`, and Open Session's `agents-open-menu`, a card with its context menu
+drawn beside it since a real menu can't be captured, and `agents-open-error`), and the attention queue (`status-item-badge`, `status-panel-attention`,
 `status-panel-countdown-queue`, `chat-window-attention`, `chat-window-attention-expanded`,
 `chat-window-lounge-attention`) from fixture snapshots to PNGs, in light and dark (`-dark`)
 variants.

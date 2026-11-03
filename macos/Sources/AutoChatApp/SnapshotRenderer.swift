@@ -81,6 +81,15 @@ enum SnapshotRenderer {
                 AgentsModel(fixture: Fixtures.agentsEmpty(now: now), setup: done), lounge: Fixtures.connectLounge(now: now),
                 now: now, appearance: appearance, to: dir.appendingPathComponent("agents-connect-result\(suffix).png")
             ) && ok
+            // Open Session (issue #123): a card's context menu, and the card saying why it couldn't.
+            ok = render(
+                OpenSessionMenuScene(snapshot: Fixtures.agentsNames(now: now), cardID: Fixtures.leadAgent, now: now),
+                size: NSSize(width: 560, height: 146), appearance: appearance, to: dir.appendingPathComponent("agents-open-menu\(suffix).png")
+            ) && ok
+            ok = renderAgents(
+                AgentsModel(fixture: Fixtures.agentsNames(now: now), openErrors: ["e5f6a7b8": "api-server-fix-session-expiry runs in a terminal autochat can't find (ttys011)"]),
+                now: now, appearance: appearance, to: dir.appendingPathComponent("agents-open-error\(suffix).png")
+            ) && ok
             // The attention queue: the badge, the panel when agents are blocked on you, the
             // countdown with several agents, and the strip in the chat (collapsed, expanded, and
             // back in the lounge).
@@ -248,6 +257,53 @@ enum SnapshotRenderer {
             FileHandle.standardError.write(Data("render-snapshots: \(error)\n".utf8))
             return false
         }
+    }
+}
+
+/// Open Session on an agent card (issue #123): the real card, with its context menu drawn
+/// beside the pointer. A real menu is a window of its own, which bitmap caching can't capture.
+private struct OpenSessionMenuScene: View {
+    let snapshot: AgentsSnapshot
+    let cardID: String
+    let now: Date
+
+    static let menuFill = Palette.dynamic(light: (0.96, 0.96, 0.96), dark: (0.17, 0.17, 0.18))
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Theme.sidebarFill
+            if let card = snapshot.agents.first(where: { $0.id == cardID }) {
+                AgentCardView(card: card, now: now, tier: snapshot.tier) {}
+                    .frame(width: AgentsView.sidebarWidth - 24)
+                    .padding(12)
+            }
+            // The pointer: black with a white edge, in light and dark mode alike.
+            ZStack {
+                Image(systemName: "cursorarrow").font(.system(size: 17, weight: .black)).foregroundStyle(.white)
+                Image(systemName: "cursorarrow").font(.system(size: 17, weight: .regular)).foregroundStyle(.black)
+            }
+            .offset(x: 214, y: 50)
+            menu.offset(x: 222, y: 62)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var menu: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "terminal")
+                .frame(width: 16)
+            Text(verbatim: AgentCardView.openTitle)
+            Spacer(minLength: 0)
+        }
+        .font(.system(size: 13))
+        .foregroundStyle(.white)
+        .padding(.horizontal, 8)
+        .frame(width: 200, height: 24)
+        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.accentColor))
+        .padding(5)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Self.menuFill))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.primary.opacity(0.14), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.22), radius: 10, y: 5)
     }
 }
 
