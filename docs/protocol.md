@@ -19,11 +19,10 @@ autochat daemon            # or: node <install>/bin/autochat.js daemon
 ```
 
 - Headless: no TTY needed, nothing on stdout. One status line per lifecycle event on stderr.
-- Never exits on its own. When autopilot ends it shows the banner, then returns to `lounge`.
-- Reads `room` from `config.json` again whenever it's about to enter a room (and when it gets back
-  to `lounge`), never while a room is open. So `autochat join`, `host` and `leave` apply to the next
-  autopilot run without a restart, and they send [`reload`](#one-shot-requests) so the lounge
-  shows the new room at once.
+- Never exits on its own. It joins the configured room as soon as it starts, unless `lounge` is `off`
+  in `config.json`, and stays there until it exits. Your agents never move you in or out.
+- Reads `room` and `lounge` from `config.json` again on [`reload`](#one-shot-requests), which
+  `autochat config`, `join`, `host` and `leave` send, and switches at once.
 - `SIGTERM`, `SIGINT` (and `SIGHUP`) leave the room cleanly, stop tailing session logs,
   close all subscriber connections, remove the socket, and exit `0` (forced after 5 s).
 - Single instance. If the socket is already owned by a live autochat process, the daemon
@@ -31,16 +30,11 @@ autochat daemon            # or: node <install>/bin/autochat.js daemon
   find out whether it's another daemon (`daemon: true`) or a terminal UI.
 - While a daemon runs, `autochat` / `autochat ui` print `autochat is running in the menu bar app
   (autochat daemon, pid N).` and exit `0` instead of fighting for the socket.
-- It drains hook events spooled while it was starting and releases the hook launch lock,
-  so the hook that woke the app is never lost.
 
-How the app gets woken: when a hook fires and nothing is listening on the socket, the hook
-(with `launch` = `app`, the default on macOS when `AutoChat.app` with bundle id
-`com.bnookala.autochat` is in `/Applications` or `~/Applications`) runs
-`open -g -b com.bnookala.autochat` and spools the event. Further hook events are spooled too
-for up to 15 s (then the next one runs `open` again). The app should start
-`autochat daemon` right away; the daemon replays spooled events that are under 60 s old.
-No terminal window is ever opened.
+Hooks never start anything. When nothing is listening on the socket, `autochat hook` does nothing
+and exits. AutoChat.app (bundle id `com.bnookala.autochat`) starts the daemon;
+on macOS, an agent's `autochat mcp` also wakes the app (`open -g -b com.bnookala.autochat`) to get
+to the agent room.
 
 Environment (all optional):
 
@@ -50,7 +44,6 @@ Environment (all optional):
 | `COPILOT_HOME` | Copilot CLI dir, default `~/.copilot` |
 | `AUTOCHAT_BOOTSTRAP` | `host:port,…` custom DHT bootstrap (tests) |
 | `AUTOCHAT_NO_NOTIFY`, `AUTOCHAT_NO_FOCUS` | disable desktop notifications / focusing the Copilot terminal |
-| `AUTOCHAT_COUNTDOWN_MS` | exit countdown length in ms, overriding `countdownSeconds` (tests) |
 | `AUTOCHAT_AGENT_RESUME_MS` | how long a disconnected agent can resume before it has left (default 10000; tests) |
 | `AUTOCHAT_AGENT_PATHS_MS` | how often `autochat mcp` checks an agent's live git paths while connected (default 15000; `0` turns them off; see [overlap.md](agent-room/overlap.md#live-paths-paths)) |
 | `AUTOCHAT_PROCESS_SCAN_MS` | how often the daemon scans for running agents (default 15000; see [`detected`](#detected)) |
@@ -89,8 +82,8 @@ These are what hooks, `autochat status`, and `autochat join`/`host`/`leave` use.
 
 | Request | Reply |
 | --- | --- |
-| `{"type":"ping"}` | `{"ok":true,"pong":true,"phase":"lounge","daemon":true,"pid":123,"agentRoom":true}` |
-| `{"type":"status"}` | `{"ok":true,"phase":"room","room":"#lobby","sessions":[{"sid","state","cwd","harness"}],"detected":{…}}` |
+| `{"type":"ping"}` | `{"ok":true,"pong":true,"phase":"room","daemon":true,"pid":123,"agentRoom":true}` |
+| `{"type":"status"}` | `{"ok":true,"phase":"room","lounge":"on","room":"#lobby","sessions":[{"sid","state","cwd","harness"}],"detected":{…}}` |
 | `{"type":"hook",…}` | `{"ok":true,"tracked":true}` (a session event sent by `autochat hook`, see [harnesses.md](harnesses.md#the-hook-message)) |
 | `{"type":"reload"}` | `{"ok":true,"reloaded":true,"room":"#rustaceans"}` |
 
@@ -98,10 +91,11 @@ These are what hooks, `autochat status`, and `autochat join`/`host`/`leave` use.
 whether this process hosts the agent room (only the daemon does). `detected` is the same as in
 [`state`](#detected). Unparseable lines get `{"ok":false}`.
 
-`autochat join`, `host` and `leave` send `reload` after saving `config.json`. Outside a room the
-core reads `room` again right away (`reloaded: true`), so `room.display` in the next snapshot is
-the new room. While a room is open (`room` or `spectating`) nothing changes (`reloaded: false`):
-the new room applies the next time the core enters one. `room` is what `room.display` shows now.
+`autochat config` (when it sets a key), `join`, `host` and `leave` send `reload` after saving
+`config.json`. The core reads `room` and `lounge` again and acts at once: in another room, it
+leaves the old one (`bye`, as when it quits) and then joins the new one; with `lounge` off, it
+leaves; with `lounge` on and no room, it joins. `reloaded` is always `true` (older daemons said
+`false` while a room was open), and `room` is what `room.display` shows now.
 
 ## Subscriptions
 
@@ -137,6 +131,7 @@ shuts down, every subscriber connection is closed (EOF).
 ```json
 {"type":"state","v":1,"now":1730400005000,
  "phase":"room",
+ "lounge":"on",
  "room":{"display":"#lobby","isHost":false,"activeCount":3,"hostHandle":"jade-lynx-0c","peers":2},
  "me":{"handle":"stormy-newt-59","color":"#00afff"},
  "members":[{"handle":"jade-lynx-0c","color":"#5fd787","status":"active","isHost":true,"you":false,"needed":false}],
@@ -154,17 +149,18 @@ shuts down, every subscriber connection is closed (EOF).
 | --- | --- | --- |
 | `type`, `v` | `"state"`, `1` | |
 | `now` | ms epoch | daemon clock when the snapshot was built |
-| `phase` | string | `lounge` (waiting for autopilot), `room` (in the room, can chat), `spectating` (host pulled back, read-only), `reality` / `dead` / `left` (banner showing; returns to `lounge` after ~6 s) |
+| `phase` | string | `room` (in the lounge's room: you can chat) or `lounge` (in no room: `lounge` is off). Older daemons also sent `spectating`, `reality`, `dead` and `left`; treat any other value like `lounge`. |
+| `lounge` | `on` \| `off` | whether you're in the lounge while autochat runs: `autochat config lounge`, or the [`lounge`](#commands) command. Missing from older daemons. |
 | `room.display` | string | room name to show (`#lobby`, `private:…`); set in every phase |
 | `room.isHost` | bool | you're the room's host: you started this room instance, or it was [handed on](#lounge-room-host-p2p) to you |
-| `room.activeCount` | int | people in the room on autopilot (including you); `0` outside a room |
+| `room.activeCount` | int | people in the room (including you), but for spectators on older versions; `0` outside a room |
 | `room.hostHandle` | string \| null | the current host's handle once known; it changes when the host leaves |
 | `room.peers` | int | connected peers; `0` in a room means "searching for peers…" |
 | `me.handle`, `me.color` | string | your anonymous handle and its color |
 | `members[]` | array | everyone in the room, you first; `[]` outside a room |
-| `members[].status` | `active` \| `away` | `away` = spectating (pulled back, still watching) |
+| `members[].status` | `active` \| `away` | `away`: a peer on an older version, spectating (pulled back, still watching). You're always `active`. |
 | `members[].isHost`, `.you` | bool | |
-| `members[].needed` | bool | their copilot is asking them something (shown as `!` in the TUI); `status` stays `active` |
+| `members[].needed` | bool | a peer on an older version whose copilot is asking them something (shown as `!` in the TUI); `status` stays `active`. Never you. |
 | `messages[]` | array | the room's scrollback, oldest first (≤ 400, cleared on entering a new room). If a snapshot would exceed 256 KiB, the oldest messages are left out. |
 | `messages[].id` | int | increasing per daemon process; stable across snapshots, use it as the list identity |
 | `messages[].kind` | `chat` \| `sys` | `sys` = room events ("x joined") |
@@ -174,17 +170,12 @@ shuts down, every subscriber connection is closed (EOF).
 | `messages[].you` | bool | you sent it |
 | `request` | object \| null | what your copilot is asking you. `resolved: true` means autopilot answered on its own; it lingers ~20 s so it can be read. |
 | `sessions[]` | array | tracked agent sessions: `state` is `running`, `needed`, or `idle` (finished sessions are dropped) |
-| `sessions[].harness` | string | which harness runs it: `copilot`, `claude`, … (see [harnesses.md](harnesses.md)). Missing for the `joinNow` pseudo-session, and for sessions reported only by hooks from before harness adapters (Copilot CLI's). A session is identified by `harness` and `sid` together. |
+| `sessions[].harness` | string | which harness runs it: `copilot`, `claude`, … (see [harnesses.md](harnesses.md)). Missing for sessions reported only by hooks from before harness adapters (Copilot CLI's). A session is identified by `harness` and `sid` together. |
 | `attention[]` | array | the [attention queue](#attention-queue): what your agents need from you, urgent first. `[]` when there's nothing; missing from daemons that predate it |
-| `countdown` | object \| null | the exit countdown, see [below](#exit-countdown) |
-| `banner` | object \| null | `{"kind","reason","summary","cwd"}` while `phase` is `reality`, `dead`, or `left` |
+| `countdown` | null | always `null`: there's no exit countdown any more. Older daemons sent one while counting down; clients may ignore the field. |
+| `banner` | null | always `null`: there's no "back to reality" banner any more (older daemons sent one in their `reality`, `dead` and `left` phases). |
 | `agents` | object \| null | the [agent room](#agent-room-local) at a glance: `{"present","openThreads","connected","available","active"}`: agents connected now, open threads, the harnesses connected to the room and the installed ones Connect agents can connect (harness ids), and how many of the agents here are active. See [the lounge summary](agent-room/human.md#the-lounge-summary). Never `null` while the daemon hosts the room; always `null` in the terminal UI. Older daemons sent only `present` and `openThreads`, and `null` until an agent connected. |
 | `detected` | object \| null | coding agents running on this machine, from the process table: see [below](#detected). `null` before the daemon's first scan, where it can't list processes (Windows), and always in the terminal UI. |
-
-`banner.kind` is `reality`, `dead` (the room died), or `left` (you left with `leaveRoom`).
-For `reality`, `reason` is `complete`, `abort`, `mode` (autopilot switched off), `idle`
-(stopped and waiting for you), `failed` (stopped on an error), or `end` (session ended), and `summary` is the copilot's
-task summary (or `null`). Otherwise `reason`, `summary`, and `cwd` are `null`.
 
 Colors are `#rrggbb` strings converted from the TUI's xterm-256 palette.
 
@@ -197,9 +188,8 @@ but clients must still render everything as plain text: never as markdown, HTML,
 What `autochat daemon` sees in the process table, every 15 s: the coding agents of your OS user
 on this machine, whether or not they ever call autochat. It's a hint, for showing "3 agents
 running (claude, copilot, gemini)" and explaining agents that can't reach autochat. **It never
-affects `phase` or `sessions`:** a process can't say whether its agent works on its own or with
-you, so being detected never puts you in the lounge. A new snapshot is published when the list
-changes.
+affects `sessions`:** a process can't say whether its agent works on its own or with you, so
+autochat never follows a session from it. A new snapshot is published when the list changes.
 
 ```json
 "detected":{"scannedAt":1730400001000,
@@ -226,23 +216,21 @@ Client → daemon, any time after `subscribe`:
 
 ```json
 {"type":"cmd","id":7,"cmd":"say","text":"lol same"}
-{"type":"cmd","id":8,"cmd":"returnNow"}
+{"type":"cmd","id":8,"cmd":"lounge","on":false}
 {"type":"cmd","id":9,"cmd":"leaveRoom"}
 {"type":"cmd","id":10,"cmd":"jumpToCopilot"}
 {"type":"cmd","id":11,"cmd":"dismissRequest"}
-{"type":"cmd","id":12,"cmd":"joinNow"}
-{"type":"cmd","id":13,"cmd":"jumpTo","item":"3"}
-{"type":"cmd","id":14,"cmd":"dismissAttention","item":"3"}
+{"type":"cmd","id":12,"cmd":"jumpTo","item":"3"}
+{"type":"cmd","id":13,"cmd":"dismissAttention","item":"3"}
 ```
 
 | `cmd` | Does | Fails with |
 | --- | --- | --- |
 | `say` | send `text` (≤ 500 chars after sanitizing) to the room | `empty message`, `not in a room`, `message not sent` |
-| `returnNow` | skip the rest of the exit countdown | `no countdown running` |
-| `leaveRoom` | leave for the rest of this autopilot run (ctrl-c in the TUI) | `not in a room` |
+| `lounge` | join (`on: true`) or leave (`on: false`) the lounge, at once, and save it as `lounge` in `config.json` (the same as `autochat config lounge on\|off`) | `on must be true or false` |
+| `leaveRoom` | the same as `lounge` with `on: false`: older clients' Leave Room | |
 | `jumpToCopilot` | focus the terminal running the copilot that needs you | |
 | `dismissRequest` | hide the current `request` | |
-| `joinNow` | manual "I'm here": enter the room without autopilot (`autochat ui --now`); stays until `leaveRoom`. Meanwhile `sessions[]` lists a `manual-<pid>` pseudo-session, which `leaveRoom` drops | |
 | `jumpTo` | focus the terminal of the agent behind attention item `item` (its `id`). A `finished` or `failed` item is handled by that and leaves the queue; a `blocked` one stays until the agent carries on | `unknown item` |
 | `dismissAttention` | remove attention item `item` from the queue (already gone is fine). The agent itself is left alone | |
 
@@ -250,58 +238,21 @@ Daemon → client, one per command (`id` echoed; `null` if the command had none)
 
 ```json
 {"type":"reply","id":7,"ok":true}
-{"type":"reply","id":8,"ok":false,"error":"no countdown running"}
+{"type":"reply","id":8,"ok":false,"error":"not in a room"}
 ```
 
-Unknown commands reply `unknown command`; other message types on a subscribed connection
-reply `unknown message type`; unparseable lines reply `invalid json` with `id: null`.
+Unknown commands reply `unknown command`, and so do `returnNow` (skip the exit countdown) and
+`joinNow` (Join Now), which went with the countdown and the autopilot gate. Other message types on
+a subscribed connection reply `unknown message type`; unparseable lines reply `invalid json` with
+`id: null`.
 State changes caused by a command arrive as normal `state` snapshots (replies and
 snapshots may interleave in either order).
 
-## Exit countdown
-
-When your **last** running autopilot session finishes, you aren't pulled out right away.
-An exit countdown starts and you stay in the room, still counted as on autopilot (so the
-room doesn't die under the others), and can keep chatting. `phase` stays `room`.
-
-```json
-"countdown":{"endsAt":1730400030000,"total":30,"reason":"complete","summary":"Shipped it.","cwd":"/Users/me/code/x","remaining":23}
-```
-
-| Field | Meaning |
-| --- | --- |
-| `endsAt` | ms epoch when it hits zero. Compute the seconds left from this (`ceil((endsAt - now) / 1000)`), using `now` from the snapshot to avoid clock skew. |
-| `total` | length in seconds (`30` by default; fractional only when overridden by `AUTOCHAT_COUNTDOWN_MS`) |
-| `reason` | why autopilot ended: `complete`, `abort`, `mode`, `end`, `failed` (stopped on an error), or `idle` (stopped and waiting for you) |
-| `summary` | the copilot's task summary, or `null` |
-| `cwd` | the finished session's working directory, or `null` |
-| `remaining` | whole seconds left when the snapshot was built |
-
-While it runs the daemon publishes a snapshot **once per second**, so a client that just
-re-renders on every `state` stays current.
-
-- At zero the daemon does the pull-back: it focuses your agent's terminal (see below),
-  notifies, and leaves the room (or stays `spectating` if you host a room others are still
-  in), then shows the `reality` banner. `countdown` goes back to `null`.
-- Focus: `autochat config focus auto|never|always` (`focus` in `config.json`, read at the
-  pull-back). With `auto`, the default, focus goes back to the agent only if a single agent
-  was at work at a time since you entered the room, as it always did. With more than one,
-  autochat never steals focus: the [attention queue](#attention-queue) takes over. `always`
-  focuses the last agent to finish; `never` leaves focus alone.
-- `returnNow` skips straight to zero (in the TUI: ↵ on an empty line, or `/back`).
-- If any autopilot session starts again, the countdown is cancelled (`countdown: null`)
-  and you stay in the room.
-- `leaveRoom` during the countdown leaves immediately, as always.
-- Length: `autochat config countdown <seconds>` (`countdownSeconds` in
-  `~/.autochat/config.json`, default 30). `0` turns it off: you're pulled back the moment
-  autopilot ends. `AUTOCHAT_COUNTDOWN_MS` overrides it in milliseconds (for tests).
-
 ## Attention queue
 
-Presence and attention are separate. You're in the room while at least one of your agents
-works on its own (that's presence, above). On top of that, each agent that needs something
-from you gets an **attention item**, and keeps it until you handle it or dismiss it,
-whether or not you're in a room:
+The attention queue is about your agents, not the lounge. Each agent that works on its own and
+needs something from you gets an **attention item**, and keeps it until you handle it or dismiss
+it, whether or not you're in a room:
 
 ```json
 "attention":[
@@ -330,18 +281,21 @@ whether or not you're in a room:
   agent carries on); see [harnesses.md](harnesses.md#sessionevent). Switching an agent out
   of autopilot means you took over: its item goes.
 - **Handled:** a `blocked` item goes when the agent carries on; a `finished` or `failed` one
-  when the agent works again or you chat with it, when you `jumpTo` it, or when the pull-back
-  focuses it. A failure the agent works past (a refused tool call) stays until you dismiss it
-  or its run ends. `dismissAttention` removes any item. At most 50 are kept: the oldest that
+  when the agent works again or you chat with it, or when you `jumpTo` it. autochat never moves
+  focus by itself. A failure the agent works past (a refused tool call) stays until you dismiss
+  it or its run ends. `dismissAttention` removes any item. At most 50 are kept: the oldest that
   aren't `blocked` go first.
+- **Notifications:** when the last of your agents at work stops, the core shows one desktop
+  notification: `Your copilot finished.` (or `needs you.`), or, when more than one was at work at
+  once, `2 of your agents need you.` (`AUTOCHAT_NO_NOTIFY` turns them off).
 
 ## Lounge room host (P2P)
 
 How the peers in a lounge room agree on its host. Clients need none of this: `room.isHost`,
 `room.hostHandle` and `members[].isHost` always name the current host, and a host change adds a
 `sys` message: "jade-lynx-0c is now host (handed off by stormy-newt-59)", or "… (stormy-newt-59
-timed out)" ("you're now host …" when it's you). Being host only gets you the label and the right
-to stay as a spectator when you're pulled back.
+timed out)" ("you're now host …" when it's you). Being host only gets you the label (and peers on
+older versions the right to stay as a spectator when they're pulled back).
 
 Peers sign every message with their identity key and send their `state` every 5 s. The host lives
 in two fields of `state`:
@@ -362,10 +316,11 @@ A chain is checked from `inst.hostId`: epochs are 1, 2, 3, …, each entry's `by
 it, `hostId` is someone else, and every signature holds. Anything else rejects the whole chain. A
 chain has at most 32 entries; after that the host doesn't change any more.
 
-- **Leaving.** Before its `bye`, a leaving host (quitting, ctrl-c, pulled back with nobody else on
-  autopilot, or a spectating host that leaves before the room dies) sends one more `state` with a
-  `handoff` to the member that joined earliest and is on autopilot, or else to the earliest
-  spectator. Only members that send `since` qualify, so a room of older peers gets no handoff.
+- **Leaving.** Before its `bye`, a leaving host (quitting, leaving the lounge, switching rooms; on
+  older versions also pulled back with nobody else on autopilot, or a spectating host that leaves
+  before the room dies) sends one more `state` with a `handoff` to the member that joined earliest
+  and is active, or else to the earliest spectator. Only members that send `since` qualify, so a
+  room of older peers gets no handoff.
 - **Timing out.** When the host vanishes without a handoff (a crash, a lost network, an older
   version leaving), the active member with the smallest `since` (ties: the lower key) claims the
   room with a `timeout` entry as soon as the host has left in its view. The host has left in a

@@ -2,12 +2,14 @@
 
 [![CI](https://github.com/bnookala/autochat/actions/workflows/ci.yml/badge.svg)](https://github.com/bnookala/autochat/actions/workflows/ci.yml)
 
-Ephemeral, serverless chat rooms for people whose **GitHub Copilot CLI is on autopilot**: in a native
-[menu bar app](#macos-menu-bar-app) on macOS, or right in your terminal.
+Ephemeral, serverless chat rooms for people whose **coding agents are at work** (GitHub Copilot CLI on
+autopilot, Claude Code, Codex, …): in a native [menu bar app](#macos-menu-bar-app) on macOS, or right in
+your terminal.
 
-While your copilot grinds through an autopilot run, you drop into a chat room with everyone else whose
-copilot is also on autopilot. When your run finishes, you get **pulled back to reality**. Nothing is
-stored anywhere. When the last person on autopilot leaves, the room dies.
+While autochat runs, you're in **the lounge**: a chat room with everyone else in it. Nothing is stored
+anywhere, and when the last person leaves, the room is gone. Next to it, autochat keeps an eye on your
+agents: when one that works on its own needs you, finishes, or fails, it lands in your **attention
+queue**. Don't want the lounge? `autochat config lounge off`.
 
 ```
 ┌─ Information requested ──────────────────────────────────────┐   ← your copilot's requests
@@ -15,19 +17,20 @@ stored anywhere. When the last person on autopilot leaves, the room dies.
 │ Which database should I use? (Database: postgres / sqlite)   │
 │ autopilot carried on without you · esc dismiss               │
 └──────────────────────────────────────────────────────────────┘
- autochat  #lobby · 3 on autopilot · host jade-lynx-0c          stormy-newt-59
- ● stormy-newt-59 (you)  ● jade-lynx-0c★  ○ rusty-crab-91
+ autochat  #lobby · 3 here · host jade-lynx-0c                  stormy-newt-59
+ ● stormy-newt-59 (you)  ● jade-lynx-0c★  ● rusty-crab-91
 ──────────────────────────────────────────────────────────────────────────────
 09:12 · joined a live room hosted by jade-lynx-0c
 09:12 jade-lynx-0c: mine is rewriting the test suite for the 4th time
-09:13 · rusty-crab-91 got pulled back to reality (host, still watching)
+09:13 · rusty-crab-91 joined
 ──────────────────────────────────────────────────────────────────────────────
+ ✓ 1 finished · claude: Claude Code finished (web)
 > lol same
 ```
 
-## Are there hooks that fire on autopilot?
+## How does autochat hear from Copilot CLI?
 
-**Not directly.** Copilot CLI has no `autopilot` hook event. But the regular hooks
+**Through its hooks.** Copilot CLI has no `autopilot` hook event. But the regular hooks
 (`userPromptSubmitted`, `preToolUse`, `postToolUse`, `notification`, `agentStop`, `sessionEnd`) all
 fire during autopilot, and every payload carries a `sessionId`. The session's event log at
 `~/.copilot/session-state/<sessionId>/events.jsonl` records `session.mode_changed → autopilot`,
@@ -35,9 +38,11 @@ fire during autopilot, and every payload carries a `sessionId`. The session's ev
 
 | Signal | Source | autochat does |
 | --- | --- | --- |
-| session is in autopilot | `preToolUse` / `userPromptSubmitted` + `session.mode_changed` in the log | opens the chat and joins your room |
-| copilot asks you something | `notification` (`elicitation_dialog`, `permission_prompt`), `preToolUse` for `ask_user` | shows a modal above the chat |
-| autopilot finished | `postToolUse` for `task_complete`, `session.task_complete`, `abort`, mode change, `sessionEnd`, or `agentStop` followed by idling | pulls you back to reality |
+| session is in autopilot | `preToolUse` / `userPromptSubmitted` + `session.mode_changed` in the log | follows it: it works on its own |
+| copilot asks you something | `notification` (`elicitation_dialog`, `permission_prompt`), `preToolUse` for `ask_user` | shows a modal above the chat, and a `blocked` item in the attention queue |
+| autopilot finished | `postToolUse` for `task_complete`, `session.task_complete`, `abort`, mode change, `sessionEnd`, or `agentStop` followed by idling | a `finished` (or `failed`) item in the attention queue, and a notification once no agent is at work |
+
+The hooks only ever talk to a running autochat. When none is running, they do nothing.
 
 Things we learned against Copilot CLI 1.0.97, which differ from or aren't in the docs:
 - `preToolUse` payloads batch calls as `toolCalls: [{id, name, args}]`.
@@ -66,29 +71,22 @@ handle, and room. Setup also removes the old `~/.copilot/hooks/lolchat.json`. `L
 variables still work as fallbacks, and you still share rooms with peers who haven't upgraded.
 Then `npm rm -g lolchat`.
 
-New Copilot CLI sessions pick up the hooks. The next time you run `/autopilot` (or `copilot --autopilot`),
-a chat opens:
+New Copilot CLI sessions pick up the hooks. Then keep autochat running, and you're in the lounge:
 
-- **with the AutoChat menu bar app installed (macOS):** no terminal at all. The hook wakes `AutoChat.app` in the background (`open -g -b com.bnookala.autochat`), even inside tmux.
-- **in tmux:** a split pane under your copilot
-- **in Ghostty (macOS):** one new window in your running Ghostty, opened via Ghostty's AppleScript support (1.3+). It closes by itself when you're pulled back.
-- **in iTerm2 or Terminal.app (macOS):** a new window
-- **on Linux with a desktop:** `x-terminal-emulator` or `gnome-terminal`
-- **otherwise:** a desktop notification asks you to run `autochat`
+- **on macOS, the AutoChat menu bar app:** it runs `autochat daemon` for you (turn on **Launch at Login** in its menu).
+- **anywhere, in a terminal:** `autochat`, say in a side pane. It shows the room while it runs; ctrl-c quits.
 
-You can also keep `autochat` open in a side pane (the *lounge*). It waits there and drops into the room
-whenever any of your sessions goes autopilot. Override the launcher with `autochat config launch app|tmux|ghostty|iterm|terminal|notify|off`.
-`off` pauses autochat entirely. On macOS, `autochat setup` sets `launch` to `app` when AutoChat.app is installed
-(unless you paused it with `off`).
+`autochat config lounge off` keeps autochat running without the lounge (the agent room and the attention
+queue stay); `autochat config lounge on` joins again, at once.
 
 **Claude Code too.** `autochat setup` offers to add its hooks to `~/.claude/settings.json`, next to
 your own (or run `autochat setup --harness claude`). Claude Code sessions count in `auto` permission
 mode, and headless (`claude -p`, `claude --bg`).
 
-**What counts.** You're in the room only while an agent works without you taking turns: for Copilot CLI,
+**What counts.** autochat follows the agents that work without you taking turns: for Copilot CLI,
 autopilot. Chatting with your agent never counts, however long a turn runs. `autochat config trigger copilot autopilot,plan`
-changes which modes count (`never` turns it off, `default` resets it). Every harness plugs in through an
-adapter, see [docs/harnesses.md](docs/harnesses.md).
+changes which modes count as working on its own (`never` turns it off, `default` resets it). Every harness
+plugs in through an adapter, see [docs/harnesses.md](docs/harnesses.md).
 
 **pi too.** pi has no hooks, so `autochat setup --harness pi` installs a small pi extension,
 `~/.pi/agent/extensions/autochat.ts`, a file of autochat's own. pi counts in print and json mode
@@ -140,11 +138,10 @@ You need macOS 14 or later, Xcode 16 or later (Swift 6), and the CLI from [Insta
 ```sh
 git clone https://github.com/bnookala/autochat && cd autochat
 macos/scripts/build-app.sh --install   # build, ad-hoc sign, and copy to ~/Applications/AutoChat.app
-autochat setup                         # finds the app and sets launch=app
+open ~/Applications/AutoChat.app       # then turn on Launch at Login in its menu
 ```
 
-Open AutoChat once (or turn on **Launch at Login** in its menu). After that, hooks wake it in the background with
-`open -g -b com.bnookala.autochat`, even inside tmux. Without the app, `autochat setup` prints these steps.
+Without the app, `autochat setup` prints these steps.
 
 The app is **ad-hoc signed**, not notarized. The first time you open a downloaded or copied build, macOS blocks
 it: **right-click → Open**, then confirm (on macOS 15 or later, if there's no Open button, use System Settings →
@@ -153,10 +150,9 @@ the daemon lifecycle, the mock daemon, and how to render these screenshots, see 
 
 ### Terminal flow (tmux, Linux, no app)
 
-Everything still works in a terminal. Without the app, or with `autochat config launch tmux` (or `ghostty`,
-`iterm`, `terminal`), the hook opens the chat shown at the top of this page in a tmux split or a new terminal
-window, as described under [Install](#install). The countdown is a line above the input, and ↵ on an empty line
-goes back early. On Linux this is the only flow.
+Everything still works in a terminal: run `autochat` (in a tmux pane, say), and you're in the room shown at
+the top of this page until you quit with ctrl-c. A line above the input shows the attention queue, and ctrl-g
+jumps to the agent at its top. On Linux this is the only flow.
 
 ## Rooms & discovery
 
@@ -165,7 +161,7 @@ By default everyone lands in the public **#lobby**, which is zero-config discove
 ```sh
 autochat host            # new private room: prints an invite with an unguessable lc1-… code
 autochat host rustaceans # public room #rustaceans (listed in `autochat rooms`)
-autochat join <code>     # make <code> your room (takes effect on your next autopilot run)
+autochat join <code>     # make <code> your room (a running autochat moves there at once)
 autochat rooms           # list live public rooms (asks peers for ~8s)
 autochat invite          # print the invite for your current room
 autochat leave           # back to #lobby
@@ -176,14 +172,21 @@ Share the invite however you like (Teams, Slack, a sticky note). There's no serv
 
 ## Room lifecycle
 
-- While autopilot is running you're **in the room** (●). If your copilot asks for something, others see **!**.
-- When autopilot **finishes**, a **30-second countdown** starts (`back to reality in 23s` above the input). You stay in the room and can finish your sentence. Press ↵ on an empty line (or type `/back`) to go now. If any of your sessions goes back on autopilot, the countdown is cancelled.
-- At zero you're **pulled back to reality**: the chat closes, focus returns to your copilot, and you get its summary. Change the length with `autochat config countdown <seconds>`; `0` pulls you back immediately.
-- **Several agents at once:** you're in the room while any of them works, and the countdown only starts when the *last* one stops. Each one that's blocked on you, finished, or failed lands in the **attention queue** (the menu bar badge and panel, a strip in the chat, a line in the terminal UI where ctrl-g jumps to the top item). autochat never steals focus then: you jump to each agent from the queue. `autochat config focus auto|never|always` changes this (`auto`, the default, focuses back only when a single agent was at work).
-- The **host** is whoever was in the room first. A host who gets pulled back stays as a **spectator** (○) and can read along until the room dies.
-- The room **survives the host leaving** as long as anyone is still on autopilot, and hosting passes on by itself to whoever has been in the room longest and is still on autopilot, whether the host quits or crashes: `jade-lynx-0c is now host (handed off by stormy-newt-59)`. Nobody can make themselves host while the host is still around ([how](docs/protocol.md#lounge-room-host-p2p)).
-- When the **last person on autopilot** leaves, the room **dies** for everyone, spectators included. Nothing is kept, and the next person to show up starts a fresh room.
-- `ctrl-c` leaves the room early. You won't be pulled back in for the rest of that autopilot run.
+- While autochat runs you're **in the room** (●), unless the lounge is off (`autochat config lounge off`).
+  Your agents never move you in or out.
+- **Your agents:** each one that works on its own and is blocked on you, finished, or failed lands in the
+  **attention queue** (the menu bar badge and panel, a strip in the chat, a line in the terminal UI where
+  ctrl-g jumps to the top item). It stays until you handle or dismiss it. autochat never steals focus: you
+  jump to each agent from the queue. When the last agent at work stops, a notification says so.
+- The **host** is whoever was in the room first.
+- The room **survives the host leaving** as long as anyone is still in it, and hosting passes on by itself to
+  whoever has been in the room longest, whether the host quits or crashes:
+  `jade-lynx-0c is now host (handed off by stormy-newt-59)`. Nobody can make themselves host while the host
+  is still around ([how](docs/protocol.md#lounge-room-host-p2p)).
+- When the **last person** leaves, the room is gone. Nothing is kept, and the next person to show up starts
+  a fresh room.
+- Peers on older versions of autochat come and go with their autopilot runs, and may show as **!** (their
+  copilot asks them something) or **○** (spectating).
 
 ## How it works
 
@@ -191,10 +194,9 @@ With the macOS app:
 
 ```
 copilot CLI ──hooks──▶ autochat hook ──unix socket──▶ autochat daemon ◀──unix socket──▶ AutoChat.app
-     │                     │                                 │                                ▲
-     │                     │                                 ▼                                │
-     │                     │                          Hyperswarm P2P ◀──▶ other users         │
-     │                     └─── wakes the app (open -g); it starts or attaches to the daemon ─┘
+     │                                                       │                    (starts the daemon)
+     │                                                       ▼
+     │                                                Hyperswarm P2P ◀──▶ other users
      └─ session-state/<id>/events.jsonl ◀── tailed by the daemon for mode / task_complete / abort
 ```
 
@@ -202,11 +204,11 @@ In a terminal (tmux, Linux, or no app), the terminal UI plays the daemon's part:
 
 ```
 copilot CLI ──hooks──▶ autochat hook ──unix socket──▶ autochat UI (one per user) ◀──▶ Hyperswarm P2P ◀──▶ other users
-     │                     └─ spawns the UI in tmux/Ghostty/… if needed
      └─ session-state/<id>/events.jsonl ◀── tailed by the UI for mode / task_complete / abort
 ```
 
-There is only ever one core per user, the daemon or the terminal UI, and it owns the socket.
+There is only ever one core per user, the daemon or the terminal UI, and it owns the socket. With no core
+running, hooks do nothing.
 
 - **No central server.** Peers find each other on the public [HyperDHT](https://github.com/holepunchto/hyperdht)
   using `sha256(room code)` as the topic, then connect directly with UDP hole-punching. Connections use Noise encryption.
@@ -234,7 +236,8 @@ which tool reads it (`autochat config doorbell off` turns it off; see
 
 The room is local only: agents of your OS user on this machine, over the daemon's unix socket, never
 the network. Agents treat what they read there as information, not instructions. It's separate from
-the lounge, so an agent doesn't need to be on autopilot to join. See the guide:
+the lounge, so an agent doesn't need to be on autopilot to join, and it's there with the lounge off too.
+See the guide:
 [docs/agents.md](docs/agents.md).
 
 ## Development
@@ -255,7 +258,7 @@ socket's path is at most 104 bytes, so under a long `TMPDIR` those dirs go in a 
 `XDG_RUNTIME_DIR`, macOS's per-user temp dir, or `/tmp`.
 
 Env overrides: `AUTOCHAT_HOME` (default `~/.autochat`), `COPILOT_HOME` (default `~/.copilot`),
-`AUTOCHAT_BOOTSTRAP=host:port,...` (custom DHT bootstrap), `AUTOCHAT_COUNTDOWN_MS` (exit countdown length),
+`AUTOCHAT_BOOTSTRAP=host:port,...` (custom DHT bootstrap),
 `AUTOCHAT_APP_DIRS` (where to look for `AutoChat.app`, default `/Applications:~/Applications`),
 `AUTOCHAT_AGENT_NAME` (an agent's name in the agent room), `AUTOCHAT_HARNESS_PATH` (where
 `setup --agents` looks for harness binaries, default `PATH`), `AUTOCHAT_AGENT_RESUME_MS` (how long a
@@ -264,7 +267,7 @@ paths are checked, default 15000; 0 turns them off), `AUTOCHAT_PROCESS_SCAN_MS` 
 looks for running agents, default 15000).
 Each one falls back to its old `LOLCHAT_*` name.
 
-## Troubleshooting: "autochat didn't open"
+## Troubleshooting: "an agent isn't in the attention queue"
 
 Copilot CLI loads hooks **once, when its process starts**. Any session whose process was already
 running when you ran `autochat setup` (including ones resumed inside that process) never calls autochat.
@@ -272,21 +275,21 @@ running when you ran `autochat setup` (including ones resumed inside that proces
 
 ```
 ✘ 9d0957f3 autopilot, running · ~/code/my-project
-    its Copilot process started before autochat's hooks were installed, so it can't open autochat.
-    fix: run /restart in that session (or exit and `copilot --resume=…`). meanwhile, run `autochat` to join manually.
+    its Copilot process started before autochat's hooks were installed, so it misses the attention queue and the doorbell.
+    fix: run /restart in that session (or exit and `copilot --resume=…`).
 ```
 
 `autochat doctor` also lists the coding agents running right now, of every harness, and flags the
 ones autochat can't hear from (no hooks installed, or none for that harness yet). AutoChat.app gets
-the same list from the daemon. That list is only a hint: a running agent never puts you in the room.
+the same list from the daemon. That list is only a hint: autochat never follows a session from it.
 
-Once it's open, the autochat UI also scans `~/.copilot/session-state` every 3s. It follows any live autopilot
-session, with or without hooks, so running `autochat` yourself always works. Without hooks, the request
-modal isn't available for that session. Sessions from the Copilot desktop app don't record autopilot mode
+The running autochat also scans `~/.copilot/session-state` every 3s. It follows any live autopilot
+session, with or without hooks, for what its log says (finished, interrupted). Without hooks, its
+questions to you don't reach the queue. Sessions from the Copilot desktop app don't record autopilot mode
 in their log, so autochat can't detect them.
 
 ## Limitations
 
 - Networks that block outbound UDP can't hole-punch. `autochat doctor` will tell you.
-- Windows launch and focus are best effort and untested.
+- Windows focus and notifications are best effort and untested.
 - Hooks load when the Copilot process starts. See *Troubleshooting* above.

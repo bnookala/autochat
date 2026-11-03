@@ -11,14 +11,17 @@ registering `autochat mcp` for the [agent room](agents.md). The rest of autochat
 harness ──hook──▶ autochat hook --harness <id> <event> ──▶ adapter.normalize() + autonomy()
                                                               │ SessionEvent, sent as a hook message
                                                               ▼
-                     unix socket (or the spool while the core starts) ──▶ Controller
+                     unix socket (to a running core, else nowhere) ──▶ Controller
 adapter.observe() ── fallback: sessions without hooks ─────────────────▶ controller.adopt(live, id)
 adapter.follow(sid) ── the harness's own session log, for what no hook reports ─▲
 process scan (ps) ── which agents run at all: a hint, never a session ──▶ snapshots (detected), doctor
 ```
 
-The Controller keys sessions by `${harness}:${sid}` and puts you in the lounge while at least one of
-them works **autonomously**: without you taking turns. See [the autonomy rule](#autonomy-and-autochat-config-trigger).
+The Controller keys sessions by `${harness}:${sid}` and follows the ones that work **autonomously**,
+without you taking turns: what they ask you, and how they end, goes to the
+[attention queue](protocol.md#attention-queue). See [the autonomy rule](#autonomy-and-autochat-config-trigger).
+That's what hooks are for, along with the agent room's [doorbell](#the-doorbell). They never open
+anything: with no autochat running, a hook does nothing.
 
 ## The adapter
 
@@ -37,7 +40,7 @@ exports one object:
 | `hooksNote` | no | What setup says after installing: when the harness starts running the new hooks. |
 | `observe(ctx, emit)` | no | Fallback watcher for sessions that never call the hooks (started before setup, or no hooks at all). Calls `emit(live)` with **every** live session it sees, each time (`[{sid, running, mode, cwd, lastStart, scannedAt}]`), so the Controller can release the ones that are gone. Returns a stop function. `ctx` is `{idleMs, trigger(id), intervalMs}`. |
 | `follow(sid)` | no | The harness's own session log, for what no hook reports. An EventEmitter like Copilot's `SessionLog`: `start({since})`, `poll()`, `stop()`, and events `mode`, `task-complete`, `abort`, `shutdown`, `activity`. |
-| `continues(session)` | no | After `idle`, true keeps the session in the room a while longer (Copilot: an active autopilot objective). |
+| `continues(session)` | no | After `idle`, true keeps the session going a while longer (Copilot: an active autopilot objective). |
 | `focus(origin)` | no | Put focus back on the agent's terminal. Default: `focusOrigin` (tmux pane, else the terminal app). |
 | `mcp` | yes | `where`, `status`, `plan`, `unplan`: registering `autochat mcp` (`autochat setup --agents`). `jsonServer()` in `mcp-config.js` covers harnesses with a JSON config file. `status` may add `etiquette: {shown, note}` for doctor, where the room's etiquette doesn't simply reach the model as the server's instructions (Copilot CLI, opencode). |
 | `doorbell` | no | `{event, skip(payload), pid(env), output(text)}`: the hook event that rings the agent room's [doorbell](#the-doorbell), the tool calls it doesn't ring after, the harness's pid when the hook's environment has it, and the line in the harness's output format. |
@@ -74,9 +77,9 @@ args)`. Tests pass their own.
 | --- | --- | --- |
 | `start` | the session started; nothing to do yet | nothing (it doesn't start tracking) |
 | `activity` | it's working: a prompt went in, a tool runs | tracks it while autonomous; `running`. Its attention item is handled |
-| `request` | it's blocked on you: an approval or an answer | `needed`: the request card, `!` in the room, a `blocked` attention item |
+| `request` | it's blocked on you: an approval or an answer | `needed`: the request card and a `blocked` attention item |
 | `waiting` | it finished its turn and waits at its prompt | done now (`idle`); a `finished` item |
-| `idle` | its turn ended; it may carry on by itself | done after `idleMs` without activity, unless `continues()`; then a `finished` item |
+| `idle` | its turn ended; it may carry on by itself | done after 45 s without activity, unless `continues()`; then a `finished` item |
 | `complete` | it says it's done | done, with `summary`; a `finished` item |
 | `failed` | it hit an error: `stopped` when it ended its turn (Claude's `StopFailure`), otherwise it carries on (a refused tool call, `PermissionDenied`) | a `failed` item. `stopped`: done (reason `failed`). Otherwise still `running`, and its activity doesn't clear the item |
 | `end` | the session or its process ended | done, with `summary` if it has one; a `finished` item |
@@ -90,10 +93,11 @@ abort (from its session log) is a `failed` one too.
 
 ## Autonomy and `autochat config trigger`
 
-You're in the lounge only while an agent works **without you taking turns**. Chatting with an agent
-never counts, however long a turn runs. Approval-bypass modes (`yolo`, `bypassPermissions`,
-`acceptEdits`) are about permissions, not about you being away, so they don't count by default.
-**Join now** (the menu bar, or `autochat ui --now`) is the manual switch.
+autochat follows an agent only while it works **without you taking turns**: then it's worth telling
+you when it needs you or is done. Chatting with an agent never counts, however long a turn runs.
+Approval-bypass modes (`yolo`, `bypassPermissions`, `acceptEdits`) are about permissions, not about
+you being away, so they don't count by default. None of this decides whether you're in the lounge:
+`autochat config lounge on|off` does.
 
 The rule (`byTrigger` in `src/harness/event.js`): a session counts as autonomous when one of its
 modes, `mode` plus `headless` for non-interactive runs, is in its harness's trigger list. It's
@@ -109,7 +113,7 @@ interactive when its mode is known and isn't, and unknown when nothing says.
 autochat config trigger                         # every harness's list
 autochat config trigger copilot                 # ["autopilot"]
 autochat config trigger copilot autopilot,plan  # plan mode counts too
-autochat config trigger claude never            # Claude Code never puts you in the lounge
+autochat config trigger claude never            # Claude Code never counts
 autochat config trigger claude default          # back to the default
 ```
 
@@ -162,7 +166,7 @@ a prompt). Rules:
 
 ## The hook message
 
-On the socket (and in the spool while a core starts) a SessionEvent travels as a one-shot `hook`
+On the socket a SessionEvent travels as a one-shot `hook`
 message (`hookMessage()`), in the shape every daemon has read, plus the new fields:
 
 ```json
@@ -204,10 +208,10 @@ the agent's context, wherever that harness lets a hook add context to a tool cal
   (`ok: false`), no text, an empty one, garbage, or no answer within 150 ms: the hook prints
   nothing and exits 0, as it always has.
 - **Cheap.** It rides on hooks that already run for every tool call: one more round trip on the
-  daemon's socket, at the same time as the lounge's hook message. See [the cost](#what-it-costs).
+  daemon's socket, at the same time as the hook's own message. See [the cost](#what-it-costs).
 - **Not while the agent reads the room.** A call to one of autochat's own tools (`read`, `wait`,
-  …) never rings. Pausing the lounge (`autochat config launch off`) doesn't stop the doorbell: it's
-  the agent room's.
+  …) never rings. Leaving the lounge (`autochat config lounge off`) doesn't stop the doorbell:
+  it's the agent room's.
 
 | Harness | How the line gets to the model | Rings on | Checked |
 | --- | --- | --- | --- |
@@ -249,7 +253,7 @@ payload on stdin), against a stand-in daemon that answers at once:
 | with the doorbell, a daemon that never answers it | 242.6 ms | 252.0 ms |
 | one more hook process (what a `postToolUse` hook for every tool would add for Copilot) | 76.8 ms | 80.9 ms |
 
-The doorbell's round trip overlaps the lounge's hook message, so it doesn't move the median;
+The doorbell's round trip overlaps the hook's own message, so it doesn't move the median;
 almost all of a hook's time is starting node. A daemon that never answers costs the 150 ms
 timeout, once per tool call. In-process, as opencode's plugin and pi's extension ring, the round
 trip takes 0.11 ms (median of 300; p90 0.18 ms). A real daemon answers in about 0.05 ms
@@ -367,7 +371,7 @@ hooks' environment: `0` for `claude -p` and `claude --bg` sessions, `1` in a ter
 session you attach to still says `0`. `CLAUDE_CODE_ENTRYPOINT` (`sdk-cli` for `-p`, `cli`
 otherwise, `--bg` included) is the fallback for versions without it. When neither is there, a
 mode that doesn't count by itself leaves the session `unknown`. By default `auto` and `headless`
-count: `claude -p`, or auto mode in a terminal, puts you in the lounge, and manual mode in a
+count: `claude -p`, or auto mode in a terminal, counts as working on its own, and manual mode in a
 terminal doesn't.
 
 ### Doorbell
@@ -635,14 +639,14 @@ in the lounge snapshot and the `status` reply ([protocol.md](protocol.md#detecte
 
 ```
 … 3 coding agents running: claude, copilot, gemini
-✘ claude (pid 4200) in ~/code/y has no autochat hooks, so it can't open autochat (autochat setup --harness claude)
+✘ claude (pid 4200) in ~/code/y has no autochat hooks, so it misses the attention queue and the doorbell (autochat setup --harness claude)
 … gemini (pid 5100) in ~/code/z: autochat can't follow gemini yet
 ```
 
 **It's detection only.** It can't use an adapter's `observe()`: whatever `observe()` reports goes
 to `controller.adopt()`, and adopted sessions count as running. A process says nothing about
-whether its agent works on its own or with you, so the scan never tracks a session and never puts
-you in the lounge, and it never signals a process (not even signal 0 to check it's alive).
+whether its agent works on its own or with you, so the scan never tracks a session, and it never
+signals a process (not even signal 0 to check it's alive).
 
 **What counts as an agent:**
 
@@ -717,7 +721,7 @@ Controller ends the session once that process is gone (within 5 s).
 there, the session's own rules decide. `opencode run` creates its session denying the `question`,
 `plan_enter` and `plan_exit` permissions (`opencode github` denies `question`), and
 `session.created` and `session.updated` carry those rules, so `run --attach` counts too (no
-`server.instance.disposed` follows on a server: it's done after `idleMs`). A session keeps those
+`server.instance.disposed` follows on a server: it's done after 45 s idle). A session keeps those
 rules for good, which is why the TUI going on with a session `run` started still counts as
 attended; a server can't tell, so a run session continued in the web UI or `opencode attach` would
 count. The mode is the agent (`build`, `plan`, or one of your own), from `chat.message`. By default

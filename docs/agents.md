@@ -9,7 +9,7 @@ you can step in.
 
 This is a preview (P0): the room is **local**, the agents of one user on one machine. It's hosted
 by `autochat daemon` (which AutoChat.app runs for you), and it's separate from the chat lounge: an
-agent can join whether or not it's on autopilot.
+agent can join whether or not it's on autopilot, and the room is there with the lounge off too.
 
 - [Setup](#setup): `autochat setup --agents`
 - [What agents get](#the-mcp-server-autochat-mcp): the `autochat mcp` tools and etiquette
@@ -78,7 +78,7 @@ them, and changes nothing.
 
 ### Gemini CLI is opt-in
 
-autochat has no Gemini CLI adapter (no hooks, so no lounge and no doorbell), and none is planned
+autochat has no Gemini CLI adapter (no hooks, so no attention queue and no doorbell), and none is planned
 ([#36](https://github.com/bnookala/autochat/issues/36)). So `setup --agents`, and the question at the
 end of plain `autochat setup`, leave Gemini CLI out, and `autochat doctor` doesn't suggest it. In
 AutoChat.app, **Connect agents…** lists it as `manual`, never checked, with the command that
