@@ -5,7 +5,6 @@ import path from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { fileURLToPath } from 'node:url'
-import createTestnet from 'hyperdht/testnet.js'
 import { tmpDir } from './helpers/tmp.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -332,6 +331,9 @@ test('extension: the agent-room tools against a real daemon: presence, status, p
   env.AUTOCHAT_AGENT_PATHS_MS = '100'
   process.env.AUTOCHAT_HOME = home
   t.after(() => { process.env.AUTOCHAT_HOME = path.join(tmp, 'ac') })
+  // These tests need the agent room, not the lounge: off, so the daemon never joins a room.
+  fs.mkdirSync(home, { recursive: true })
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ lounge: 'off' }))
   const daemon = spawn(process.execPath, [BIN, 'daemon'], { env, stdio: ['ignore', 'ignore', 'pipe'] })
   let daemonErr = ''
   daemon.stderr.on('data', (d) => { daemonErr += d })
@@ -414,14 +416,11 @@ test('extension: the agent-room tools against a real daemon: presence, status, p
   assert.doesNotMatch(daemonErr, /pi-room-repo-2/, 'never a second pi agent')
 })
 
-test('Controller: a pi print run from its recorded events puts you in the lounge until it ends', { timeout: 60000 }, async (t) => {
-  const testnet = await createTestnet(3)
-  t.after(() => testnet.destroy())
+test('Controller: a pi print run from its recorded events counts until it ends', { timeout: 60000 }, async (t) => {
   const c = new Controller({
     identity: ephemeralIdentity(),
-    config: { room: 'lc1-pi-' + Math.random().toString(36).slice(2, 12), idleMs: 300, announce: false, countdownSeconds: 30 },
-    bootstrap: testnet.bootstrap,
-    roomOpts: { graceMs: 1200, heartbeatMs: 300, expireMs: 3000, refreshMs: [300, 800, 1500, 2500], refreshEveryMs: 2000 },
+    config: { room: 'lc1-pi-' + Math.random().toString(36).slice(2, 12), announce: false },
+    idleMs: 300,
     focus: () => {},
     notify: () => {},
     watchLogs: false
@@ -431,14 +430,13 @@ test('Controller: a pi print run from its recorded events puts you in the lounge
   const run = fixture('print')
   assert.equal(deliver(run[0]).tracked, false, 'session_start alone tracks nothing')
   deliver(run[1])
-  assert.equal(c.phase, 'room')
   assert.deepEqual(c.snapshot().sessions, [{ sid: run[0].payload.session_id, state: 'running', cwd: '/Users/me/code/demo', harness: 'pi' }])
   deliver(run[4])
   deliver(run[5])
   assert.equal(c.sessions.size, 0)
-  assert.deepEqual([c.countdown?.reason, c.countdown?.summary], ['end', 'Done with room.'])
+  assert.deepEqual(c.snapshot().attention.map(a => [a.kind, a.title, a.summary]), [['finished', 'pi session ended', 'Done with room.']])
 
-  // The TUI never puts you there.
+  // The TUI never counts.
   for (const e of fixture('interactive')) deliver(e)
   assert.equal(c.sessions.size, 0)
 })

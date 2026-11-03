@@ -259,6 +259,9 @@ test('two autochat mcp processes coordinate through the daemon: overlap → ques
     GIT_CONFIG_NOSYSTEM: '1'
   }
   process.env.AUTOCHAT_HOME = home
+  // These tests need the agent room, not the lounge: off, so the daemon never joins a room.
+  fs.mkdirSync(home, { recursive: true })
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ lounge: 'off' }))
   const daemon = track(spawn(process.execPath, [BIN, 'daemon'], { env, stdio: ['ignore', 'ignore', 'pipe'] }))
   let daemonErr = ''
   daemon.stderr.on('data', (d) => { daemonErr += d })
@@ -450,6 +453,9 @@ test('autochat mcp says bye when its harness closes it (stdin EOF, SIGTERM, SIGI
   const env = { ...process.env, AUTOCHAT_HOME: home, COPILOT_HOME: path.join(tmp, 'copilot'), AUTOCHAT_APP_DIRS: path.join(tmp, 'no-apps'), AUTOCHAT_NO_NOTIFY: '1', AUTOCHAT_NO_FOCUS: '1' }
   delete env.AUTOCHAT_AGENT_RESUME_MS
   process.env.AUTOCHAT_HOME = home
+  // These tests need the agent room, not the lounge: off, so the daemon never joins a room.
+  fs.mkdirSync(home, { recursive: true })
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ lounge: 'off' }))
   const daemon = track(spawn(process.execPath, [BIN, 'daemon'], { env, stdio: ['ignore', 'ignore', 'pipe'] }))
   let daemonErr = ''
   daemon.stderr.on('data', (d) => { daemonErr += d })
@@ -525,6 +531,9 @@ test('live paths: two autochat mcp processes overlap from git alone, without a s
     GIT_CONFIG_NOSYSTEM: '1'
   }
   process.env.AUTOCHAT_HOME = home
+  // These tests need the agent room, not the lounge: off, so the daemon never joins a room.
+  fs.mkdirSync(home, { recursive: true })
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ lounge: 'off' }))
   const daemon = track(spawn(process.execPath, [BIN, 'daemon'], { env, stdio: ['ignore', 'ignore', 'ignore'] }))
   t.after(() => stop(daemon))
   let pong = null

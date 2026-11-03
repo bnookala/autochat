@@ -358,43 +358,39 @@ describe('on a local testnet', { concurrency: true, skip: p2pJoinOnCI }, () => {
     assert.equal(n2.hosts.at(-1).text, `${n1.identity.handle} is now host (${oldHost.identity.handle} timed out)`)
   })
 
-  it('the lounge follows the current host: sys line, snapshot, and spectating after the pull-back', { timeout: 90000 }, async (t) => {
+  it('the lounge follows the current host: sys line and snapshot, when the host leaves the lounge', { timeout: 90000 }, async (t) => {
     const testnet = await createTestnet(3)
-    t.after(() => testnet.destroy())
     const room = privateRoom()
     const core = () => new Controller({
       identity: ephemeralIdentity(),
-      config: { room: room.code, idleMs: 400, announce: false, countdownSeconds: 0 },
+      config: { room: room.code, announce: false },
       bootstrap: testnet.bootstrap,
       roomOpts: FAST,
       focus: () => {},
       notify: () => {},
-      bannerMs: 300,
       watchLogs: false
     })
-    const hook = (sessionId, kind, extra = {}) => ({ type: 'hook', sessionId, kind, mode: 'autopilot', cwd: '/w/' + sessionId, ts: Date.now(), ...extra })
     const [host, guest] = [core(), core()]
     const other = mk(testnet, room)
-    t.after(() => Promise.all([host.shutdown(), guest.shutdown(), other.leave()]))
+    t.after(async () => {
+      await Promise.all([host.shutdown(), guest.shutdown(), other.leave()])
+      await testnet.destroy()
+    })
 
-    host.handle(hook('h1', 'activity'))
+    host.start()
     await waitFor(() => host.room.isHost, 10000, 'host owns the room')
-    guest.handle(hook('g1', 'activity'))
+    guest.start()
     await waitFor(() => settled([host.room, guest.room]), 20000, 'guest joins')
     await other.join()
     await waitFor(() => settled([host.room, guest.room, other]), 20000, 'a third peer joins')
     assert.equal(guest.snapshot().room.hostHandle, host.identity.handle)
 
-    await host.leaveRoom()
+    await host.command({ cmd: 'lounge', on: false })
     await waitFor(() => guest.snapshot().room.isHost, 10000, 'guest is host')
     const snap = guest.snapshot()
     assert.equal(snap.room.hostHandle, guest.identity.handle)
     assert.equal(snap.members.find(m => m.you).isHost, true)
     assert.ok(guest.messages.some(m => m.kind === 'sys' && m.text === `you're now host (handed off by ${host.identity.handle})`))
     await waitFor(() => other.hostId === guest.identity.publicKey, 5000, 'the third peer agrees')
-
-    // As host, the guest now stays to watch when its autopilot ends while others are still on it.
-    guest.handle(hook('g1', 'complete', { summary: 'done' }))
-    assert.equal(guest.phase, 'spectating')
   })
 })

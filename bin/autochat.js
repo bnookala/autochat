@@ -47,12 +47,11 @@ if (cmd === 'mcp') {
 }
 
 const { loadIdentity, ephemeralIdentity } = await import('../src/identity.js')
-const { loadConfig, saveConfig, FOCUS_MODES, DOORBELL_MODES } = await import('../src/config.js')
+const { loadConfig, saveConfig, LOUNGE_MODES, DOORBELL_MODES } = await import('../src/config.js')
 const { parseRoom, generatePrivateCode, DEFAULT_ROOM } = await import('../src/protocol.js')
 const { envVar } = await import('../src/env.js')
 
 const REPO = 'github:bnookala/autochat'
-const CONFIG_ALIASES = { countdown: 'countdownSeconds' }
 const bold = (s) => process.stdout.isTTY ? `\x1b[1m${s}\x1b[0m` : s
 const dim = (s) => process.stdout.isTTY ? `\x1b[2m${s}\x1b[0m` : s
 
@@ -64,18 +63,25 @@ function bootstrap () {
 
 function inviteText (room) {
   return [
-    'Join me on autochat while our copilots are on autopilot:',
+    'Join me on autochat:',
     `  npm i -g ${REPO} && autochat setup && autochat join ${room.code}`
   ].join('\n')
 }
 
-// The running daemon or terminal UI picks up a new room right away (docs/protocol.md: reload).
+// The running daemon or terminal UI switches rooms, or joins or leaves the lounge, right away
+// (docs/protocol.md: reload).
 async function notifyReload () {
   const { send } = await import('../src/ipc.js')
   await send({ type: 'reload' }, 500)
 }
 
-const HELP = `autochat: ephemeral, serverless chat rooms for people whose Copilot CLI is on autopilot
+// What `autochat join` and `host` mean for a running autochat.
+const switchText = () => loadConfig().lounge === 'off'
+  ? `you're not in the lounge, though (${bold('autochat config lounge on')})`
+  : "autochat moves you there now if it's running"
+
+const HELP = `autochat: ephemeral, serverless chat rooms (the lounge) for people whose coding agents are at work,
+and a local agent room where those agents meet
 
   autochat setup              install Copilot CLI hooks (~/.copilot/hooks/autochat.json);
                               on macOS, hooks wake AutoChat.app if it's installed (launch=app)
@@ -88,7 +94,7 @@ const HELP = `autochat: ephemeral, serverless chat rooms for people whose Copilo
   autochat uninstall          remove the hooks and the agents' autochat MCP server
   autochat uninstall --agents [--harness H[,H…]]
                               remove only the agents' autochat MCP server (of these harnesses)
-  autochat                    open the lounge; drops into the room when autopilot runs
+  autochat                    the lounge in your terminal: in your room while it runs
   autochat whoami             your anonymous, stable handle
   autochat host [name]        make a new room: private invite code, or public #name
   autochat join <code>        make <code> your room (public names or lc1-… invite codes)
@@ -102,13 +108,11 @@ const HELP = `autochat: ephemeral, serverless chat rooms for people whose Copilo
   autochat agents say "<text>" [--thread ID] [--to NAME] [--yes]
                               step in: post to the agents as a human (asks once to confirm)
   autochat config [k] [v]     show/set config (launch: auto|app|tmux|ghostty|iterm|terminal|notify|off,
-                              countdown: seconds in the room after autopilot ends, 0 = none,
-                              focus: auto|never|always, focus your agent's terminal after the
-                              countdown; auto does only when a single agent was at work;
+                              lounge: on|off, in the lounge while autochat runs;
                               doorbell: on|off, tell agents in the agent room what's waiting
                               for them, after their tool calls)
   autochat config trigger [harness] [mode,…|never|default]
-                              which of a harness's modes put you in the lounge (copilot: autopilot)
+                              which of a harness's modes count as working on its own (copilot: autopilot)
   autochat doctor             check hooks + P2P connectivity
   autochat sim [--room C] [--seconds N] [--say T]   a throwaway bot peer, for testing
 `
@@ -202,7 +206,7 @@ ${dim('More: ' + APP_INSTALL_URL)}`)
       await notifyReload()
       const id = loadIdentity()
       console.log(`${bold('room ready:')} ${room.display}  ${room.isPublic ? dim('(public, listed in `autochat rooms`)') : dim('(private, invite only)')}
-You'll host it the next time you're on autopilot (as ${id.handle}). It lives while anyone in it is on autopilot.
+You'll host it (as ${id.handle}): ${switchText()}. It lives while anyone is in it.
 
 ${inviteText(room)}`)
       return
@@ -212,7 +216,7 @@ ${inviteText(room)}`)
       const room = parseRoom(rest[0])
       saveConfig({ room: room.code })
       await notifyReload()
-      console.log(`your room is now ${bold(room.display)}. you'll land there next time you're on autopilot.`)
+      console.log(`your room is now ${bold(room.display)}: ${switchText()}.`)
       return
     }
     case 'leave': {
@@ -232,8 +236,8 @@ ${inviteText(room)}`)
       const { values } = parseArgs({ args: rest, options: { wait: { type: 'string', default: '8' } } })
       process.stderr.write(dim('asking peers on the public directory…\n'))
       const rooms = await listRooms({ waitMs: Number(values.wait) * 1000, bootstrap: bootstrap() })
-      if (!rooms.length) console.log(`no live public rooms right now. be the first: ${bold('autochat join lobby')} and go autopilot.`)
-      for (const r of rooms) console.log(`${r.name.padEnd(24)} ${String(r.active).padStart(3)} on autopilot  ${dim(`(${r.members} here)`)}  ${dim('autochat join ' + r.code)}`)
+      if (!rooms.length) console.log(`no live public rooms right now. start one: ${bold('autochat host <name>')}`)
+      for (const r of rooms) console.log(`${r.name.padEnd(24)} ${String(r.members).padStart(3)} here  ${dim('autochat join ' + r.code)}`)
       return
     }
     case 'status': {
@@ -244,7 +248,7 @@ ${inviteText(room)}`)
     }
     case 'config': {
       if (rest[0] === 'trigger') return configTrigger(rest.slice(1))
-      const k = CONFIG_ALIASES[rest[0]] || rest[0]
+      const k = rest[0]
       if (rest.length >= 2) {
         const v = rest[1]
         const val = /^\d+$/.test(v) ? Number(v) : v === 'true' ? true : v === 'false' ? false : v
@@ -253,10 +257,10 @@ ${inviteText(room)}`)
           const { LAUNCH_METHODS } = await import('../src/launcher.js')
           if (!LAUNCH_METHODS.includes(v)) throw new Error('usage: autochat config launch ' + LAUNCH_METHODS.join('|'))
         }
-        if (k === 'countdownSeconds' && !(Number.isInteger(val) && val <= 3600)) throw new Error('usage: autochat config countdown <seconds> (0-3600, 0 = no countdown)')
-        if (k === 'focus' && !FOCUS_MODES.includes(val)) throw new Error('usage: autochat config focus auto|never|always')
+        if (k === 'lounge' && !LOUNGE_MODES.includes(val)) throw new Error('usage: autochat config lounge on|off')
         if (k === 'doorbell' && !DOORBELL_MODES.includes(val)) throw new Error('usage: autochat config doorbell on|off')
         console.log(JSON.stringify(saveConfig({ [k]: val }), null, 2))
+        await notifyReload()
       } else {
         const cfg = loadConfig()
         console.log(k ? JSON.stringify(cfg[k]) : JSON.stringify(cfg, null, 2))
@@ -279,7 +283,8 @@ ${inviteText(room)}`)
   }
 }
 
-// `autochat config trigger [harness] [mode,…|never|default]`: which modes put you in the lounge.
+// `autochat config trigger [harness] [mode,…|never|default]`: which modes count as working on its
+// own, for the attention queue.
 async function configTrigger ([id, value]) {
   const { ADAPTERS, adapter, parseTrigger, triggerFor, triggers, withTrigger } = await import('../src/harness/index.js')
   const cfg = loadConfig()
@@ -349,14 +354,15 @@ async function offerAgents () {
 
 const runningIn = (info) => info?.daemon ? `the menu bar app (autochat daemon, pid ${info.pid})` : 'another terminal'
 
-// The Controller + hook socket shared by the terminal UI and the headless daemon.
+// The Controller + hook socket shared by the terminal UI and the headless daemon. Once it owns the
+// socket, it joins the lounge (unless that's off).
 async function startCore ({ auto = false, daemon = false }) {
   const { Controller } = await import('../src/controller.js')
   const { serve } = await import('../src/ipc.js')
   const { readSpool, releaseLaunchLock } = await import('../src/hook.js')
   const identity = loadIdentity()
   const config = loadConfig()
-  const controller = new Controller({ identity, config, loadConfig, auto, daemon, bootstrap: bootstrap() })
+  const controller = new Controller({ identity, config, loadConfig, saveConfig, daemon, bootstrap: bootstrap() })
   // Only the daemon hosts the local agent room; the terminal UI refuses agent connections.
   let agentRoom = null
   if (daemon) {
@@ -374,7 +380,7 @@ async function startCore ({ auto = false, daemon = false }) {
   }
   const agents = agentRoom && { connect: (hello, peer) => agentRoom.connect(hello, peer), state: () => agentRoom.snapshot(), command: (msg) => agentRoom.command(msg) }
   // The daemon also looks for running agents in the process table (#38). Detection only: it
-  // never tracks a session, so it never puts you in the lounge.
+  // never tracks a session.
   let scanner = null
   const detected = () => scanner ? scanner.snapshot() : null
   // The agent room's doorbell (#52), unless `autochat config doorbell off` (read at most once a
@@ -405,6 +411,7 @@ async function startCore ({ auto = false, daemon = false }) {
     if (auto || daemon) releaseLaunchLock()
   }
   controller.on('change', () => server.publish())
+  controller.start()
   if (agentRoom) {
     // The lounge snapshot carries agents ({present, openThreads, connected, available, active});
     // republish it when that changes.
@@ -429,7 +436,7 @@ async function startCore ({ auto = false, daemon = false }) {
   // Also follow sessions that never call the hooks (say, their process predates them): each
   // adapter's fallback observer (Copilot: the session-state scan).
   const { observeAll, triggerFor } = await import('../src/harness/index.js')
-  const stopObserving = observeAll({ idleMs: controller.config.idleMs, trigger: (id) => triggerFor(loadConfig(), id) }, (live, harness) => {
+  const stopObserving = observeAll({ idleMs: controller.idleMs, trigger: (id) => triggerFor(loadConfig(), id) }, (live, harness) => {
     try { controller.adopt(live, harness) } catch {}
   })
 
@@ -445,7 +452,7 @@ async function startCore ({ auto = false, daemon = false }) {
 }
 
 async function ui () {
-  const { values } = parseArgs({ args: rest, options: { auto: { type: 'boolean' }, now: { type: 'boolean' } } })
+  const { values } = parseArgs({ args: rest, options: { auto: { type: 'boolean' } } })
   const { TUI } = await import('../src/tui.js')
   const { send } = await import('../src/ipc.js')
   const { hooksInstalled } = await import('../src/setup.js')
@@ -484,13 +491,12 @@ async function ui () {
   controller.on('exit', exit)
   for (const sig of ['SIGTERM', 'SIGHUP', 'SIGINT']) process.on(sig, exit)
   tui.start()
-  if (values.now) controller.joinNow()
   // Launched by a hook but nothing to track (e.g. lost race): don't linger.
   if (values.auto) setTimeout(() => { if (controller.phase === 'lounge') exit() }, 20000).unref()
 }
 
-// Headless core for GUI clients (the macOS menu bar app). Never exits on pull-back:
-// after the banner it returns to the lounge. SIGTERM/SIGINT leave the room cleanly.
+// Headless core for GUI clients (the macOS menu bar app). It runs until a signal: SIGTERM/SIGINT
+// leave the room cleanly.
 async function daemon () {
   const { sockPath } = await import('../src/paths.js')
   let core
@@ -642,7 +648,7 @@ async function doctorProcesses (ok) {
   }
 }
 
-// Each harness's hooks, and which of its modes put you in the lounge.
+// Each harness's hooks, and which of its modes count as working on its own.
 async function doctorHooks (ok, cfg) {
   const { harnessContext, hooksStatus, triggerFor, tilde } = await import('../src/harness/index.js')
   const ctx = harnessContext()
@@ -667,7 +673,7 @@ async function doctorHooks (ok, cfg) {
     }
     triggers.push(`${h.id} ${t === 'never' || !t.length ? 'never' : t.join('/')}`)
   }
-  if (triggers.length) console.log(`… the lounge opens for: ${triggers.join(', ')} (autochat config trigger)`)
+  if (triggers.length) console.log(`… working on its own: ${triggers.join(', ')} (autochat config trigger)`)
 }
 
 async function doctor () {
@@ -690,14 +696,15 @@ async function doctor () {
     else console.log(`… AutoChat.app not installed: hooks open a terminal instead (get the app: ${APP_INSTALL_URL})`)
   }
   const ping = await send({ type: 'ping' }, 500)
-  if (ping?.daemon) ok(true, `autochat daemon running (pid ${ping.pid}, ${ping.phase})`)
-  else if (ping) ok(true, `autochat UI running in a terminal (${ping.phase})`)
+  const where = ping?.phase === 'room' ? 'in the lounge' : 'not in the lounge'
+  if (ping?.daemon) ok(true, `autochat daemon running (pid ${ping.pid}, ${where})`)
+  else if (ping) ok(true, `autochat UI running in a terminal (${where})`)
   else console.log(`… autochat not running${method === 'app' ? ': AutoChat.app starts its daemon on the next autopilot run' : ''}`)
   await doctorAgents(ping, ok)
   const { liveSessions, processStartMs } = await import('../src/scan.js')
   const { hooksInstalledAt } = await import('../src/setup.js')
   const installedAt = hooksInstalledAt()
-  const live = liveSessions({ idleMs: cfg.idleMs })
+  const live = liveSessions()
   console.log(`… ${live.length} Copilot session${live.length === 1 ? '' : 's'} active in the last 30 min`)
   for (const l of live) {
     const started = processStartMs(l.pid)

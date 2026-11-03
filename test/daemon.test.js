@@ -143,7 +143,6 @@ test('autochat daemon: headless, driven by hooks and subscribers, clean SIGTERM'
     AUTOCHAT_BOOTSTRAP: testnet.bootstrap.map(b => `${b.host}:${b.port}`).join(','),
     AUTOCHAT_NO_NOTIFY: '1',
     AUTOCHAT_NO_FOCUS: '1',
-    AUTOCHAT_COUNTDOWN_MS: '1500',
     ...noHarnesses(path.join(tmp, 'd-home'))
   }
   const daemon = spawn(process.execPath, [BIN, 'daemon'], { env, stdio: ['ignore', 'ignore', 'pipe'] })
@@ -158,7 +157,7 @@ test('autochat daemon: headless, driven by hooks and subscribers, clean SIGTERM'
     if (!pong) await new Promise(resolve => setTimeout(resolve, 100))
   }
   assert.equal(pong?.daemon, true, 'ping tells a daemon from a TUI')
-  assert.equal(pong.phase, 'lounge')
+  assert.equal(pong.phase, 'room', 'in the lounge from the start')
   assert.equal(pong.pid, daemon.pid)
 
   const ui = spawnSync(process.execPath, [BIN, 'ui'], { env, encoding: 'utf8' })
@@ -170,10 +169,11 @@ test('autochat daemon: headless, driven by hooks and subscribers, clean SIGTERM'
   const a = client()
   a.send({ type: 'subscribe', v: 1, client: 'test' })
   const first = await a.next(isState(), 10000, 'first snapshot')
-  assert.equal(first.phase, 'lounge')
+  assert.deepEqual([first.phase, first.lounge], ['room', 'on'])
   assert.match(first.me.handle, /^[a-z]+-[a-z]+-[0-9a-f]{2}$/)
   assert.match(first.me.color, /^#[0-9a-f]{6}$/)
-  assert.equal(first.room.activeCount, 0)
+  assert.equal(first.room.activeCount, 1, 'you')
+  assert.deepEqual(first.members.map(m => [m.handle, m.you]), [[first.me.handle, true]])
   assert.deepEqual([first.request, first.countdown, first.banner], [null, null, null])
   assert.deepEqual(first.sessions, [])
 
@@ -197,9 +197,9 @@ test('autochat daemon: headless, driven by hooks and subscribers, clean SIGTERM'
   // Hooks keep talking to the socket exactly as they do to the TUI.
   const delivered = await send({ type: 'hook', event: 'postToolUse', sessionId: 'dm1', kind: 'activity', mode: 'autopilot', cwd: '/w/dm1', ts: Date.now() })
   assert.equal(delivered.tracked, true)
-  const inRoom = await a.next(isState(s => s.phase === 'room'), 10000, 'room snapshot')
-  assert.deepEqual(inRoom.sessions, [{ sid: 'dm1', state: 'running', cwd: '/w/dm1' }])
-  assert.equal(inRoom.members.find(m => m.you).handle, first.me.handle)
+  const working = await a.next(isState(s => s.sessions.length === 1), 10000, 'a session')
+  assert.deepEqual(working.sessions, [{ sid: 'dm1', state: 'running', cwd: '/w/dm1' }])
+  assert.equal(working.phase, 'room')
 
   a.send({ type: 'cmd', id: 7, cmd: 'say', text: 'lol same' })
   assert.deepEqual(await a.next(isReply(7)), { type: 'reply', id: 7, ok: true })
@@ -213,19 +213,30 @@ test('autochat daemon: headless, driven by hooks and subscribers, clean SIGTERM'
   a.send({ type: 'cmd', id: 8, cmd: 'bogus' })
   assert.equal((await a.next(isReply(8))).error, 'unknown command')
 
-  // Autopilot ends: a countdown (still chatting), then the pull-back, which never exits the daemon.
+  // The session ends: an attention item, and you stay in the room.
   await send({ type: 'hook', event: 'sessionEnd', sessionId: 'dm1', kind: 'end', mode: 'autopilot', ts: Date.now() })
-  const counting = await a.next(isState(s => s.countdown), 10000, 'countdown')
-  assert.equal(counting.phase, 'room')
-  assert.deepEqual({ ...counting.countdown, endsAt: 0 }, { endsAt: 0, total: 1.5, reason: 'end', summary: null, cwd: '/w/dm1', remaining: 2 })
+  const ended = await a.next(isState(s => s.attention.length === 1), 10000, 'an attention item')
+  assert.deepEqual(ended.attention.map(i => [i.kind, i.sid, i.title]), [['finished', 'dm1', 'Copilot CLI session ended']])
+  assert.deepEqual([ended.phase, ended.sessions, ended.countdown, ended.banner], ['room', [], null, null])
   a.send({ type: 'cmd', id: 9, cmd: 'say', text: 'brb' })
-  assert.equal((await a.next(isReply(9))).ok, true, 'chat works during the countdown')
-  const banner = await a.next(isState(s => s.banner), 10000, 'banner')
-  assert.equal(banner.banner.kind, 'reality')
-  assert.equal(banner.banner.reason, 'end')
-  assert.equal(banner.countdown, null)
-  await a.next(isState(s => s.phase === 'lounge'), 10000, 'back to the lounge')
-  assert.equal((await send({ type: 'ping' })).phase, 'lounge', 'still running')
+  assert.equal((await a.next(isReply(9))).ok, true, 'chat works as before')
+
+  // Join the Lounge, off and on: saved to config.json. The old commands are gone.
+  a.send({ type: 'cmd', id: 10, cmd: 'lounge', on: false })
+  assert.deepEqual(await a.next(isReply(10)), { type: 'reply', id: 10, ok: true })
+  const off = await a.next(isState(s => s.phase === 'lounge'), 10000, 'out of the lounge')
+  assert.deepEqual([off.lounge, off.members, off.room.activeCount], ['off', [], 0])
+  assert.equal(JSON.parse(fs.readFileSync(path.join(home, 'config.json'), 'utf8')).lounge, 'off')
+  a.send({ type: 'cmd', id: 11, cmd: 'say', text: 'anyone?' })
+  assert.equal((await a.next(isReply(11))).error, 'not in a room')
+  for (const [id, cmd] of [[12, 'returnNow'], [13, 'joinNow']]) {
+    a.send({ type: 'cmd', id, cmd })
+    assert.deepEqual(await a.next(isReply(id)), { type: 'reply', id, ok: false, error: 'unknown command' })
+  }
+  a.send({ type: 'cmd', id: 14, cmd: 'lounge', on: true })
+  assert.equal((await a.next(isReply(14))).ok, true)
+  assert.equal((await a.next(isState(s => s.phase === 'room'), 10000, 'back in the lounge')).lounge, 'on')
+  assert.equal((await send({ type: 'ping' })).phase, 'room', 'still running')
 
   daemon.kill('SIGTERM')
   const { code, signal } = await exited
@@ -235,7 +246,7 @@ test('autochat daemon: headless, driven by hooks and subscribers, clean SIGTERM'
   assert.match(stderr, /SIGTERM, leaving the room/)
 })
 
-test('autochat join/host/leave reach a running daemon: the lounge shows the new room at once', { timeout: 60000 }, async (t) => {
+test('autochat join/host/leave and config lounge reach a running daemon: it switches rooms at once', { timeout: 60000 }, async (t) => {
   const testnet = await createTestnet(3)
   t.after(() => testnet.destroy())
   const home = path.join(tmp, 'r')
@@ -273,6 +284,11 @@ test('autochat join/host/leave reach a running daemon: the lounge shows the new 
   cli('leave')
   await a.next(isState(s => s.room.display === '#lobby'), 10000, 'back to #lobby')
   assert.deepEqual(await send({ type: 'reload' }), { ok: true, reloaded: true, room: '#lobby' })
+  // `autochat config lounge off|on` (Join the Lounge in the app) leaves and joins at once.
+  cli('config', 'lounge', 'off')
+  await a.next(isState(s => s.phase === 'lounge' && s.lounge === 'off'), 10000, 'lounge off')
+  cli('config', 'lounge', 'on')
+  await a.next(isState(s => s.phase === 'room' && s.lounge === 'on' && s.room.display === '#lobby'), 10000, 'lounge on')
 
   daemon.kill('SIGTERM')
   assert.equal(await exited, 0)

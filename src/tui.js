@@ -67,10 +67,11 @@ export function wrap (text, width) {
 
 const hhmm = (ts) => { const d = new Date(ts); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') }
 
+// Peers on older versions still say needed (their agent asks them something) and away (spectating).
 const STATUS = {
-  active: { sym: '●', style: GREEN, label: 'on autopilot' },
-  needed: { sym: '!', style: YELLOW + BOLD, label: 'needed by copilot' },
-  away: { sym: '○', style: GREY, label: 'spectating' }
+  active: { sym: '●', style: GREEN },
+  needed: { sym: '!', style: YELLOW + BOLD },
+  away: { sym: '○', style: GREY }
 }
 
 const ATTENTION = {
@@ -118,9 +119,7 @@ function modal (view, cols) {
 function header (view, cols) {
   const l = new Line(cols)
   l.add(' autochat ', INV + BOLD).add(' ' + view.roomDisplay + ' ', INV)
-  const bits = []
-  if (view.phase === 'spectating') bits.push('spectating')
-  bits.push(`${view.activeCount} on autopilot`)
+  const bits = [`${view.members.length} here`]
   if (view.hostHandle) bits.push('host ' + (view.isHost ? 'you' : view.hostHandle))
   if (!view.mates) bits.push('searching for peers…')
   l.add('· ' + bits.join(' · ') + ' ', INV)
@@ -168,37 +167,20 @@ function messageLines (view, cols) {
   return out
 }
 
-function bannerScreen (view, cols, rows) {
-  const b = view.banner || {}
-  let title
-  let lines
-  if (view.phase === 'lounge') {
-    title = 'autochat: waiting for autopilot'
-    lines = [
-      `you are ${view.handle}`,
-      `your room: ${view.roomDisplay}`,
-      '',
-      'When a Copilot CLI session goes into autopilot, you drop into the room here.',
-      'Change rooms: autochat join <code> · autochat host · autochat rooms'
-    ]
-    if (view.hooksInstalled === false) lines.push('', '! hooks not installed: run `autochat setup`')
-    const queue = attentionLine(view.attention)
-    if (queue) lines.push('', `${queue.sym} ${queue.text}`, 'ctrl-g jumps to it')
-    lines.push('', 'ctrl-c to quit')
-  } else if (b.kind === 'dead') {
-    title = 'the room died'
-    lines = ['Everyone got pulled back to reality.', 'Nothing was saved. It never happened.']
-  } else if (b.kind === 'left') {
-    title = 'you left the room'
-    lines = ["You won't be pulled back in for the rest of this autopilot run."]
-  } else {
-    title = 'back to reality'
-    const why = { complete: 'Your copilot finished its autopilot run.', abort: 'You interrupted your copilot.', mode: 'Autopilot was switched off.', idle: 'Your copilot stopped and is waiting for you.', end: 'Your copilot session ended.', failed: 'Your agent stopped on an error.' }
-    lines = [why[b.reason] || 'Your autopilot run is over.']
-    if (b.cwd) lines.push('in ' + b.cwd)
-    if (b.summary) { lines.push(''); lines.push(...wrap(b.summary, Math.min(cols - 8, 70)).slice(0, 8)) }
-    lines.push('', 'Go examine your situation.')
-  }
+// Not in a room: the lounge is off.
+function loungeScreen (view, cols, rows) {
+  const title = "autochat: you're not in the lounge"
+  const lines = [
+    `you are ${view.handle}`,
+    `your room: ${view.roomDisplay}`,
+    '',
+    'Join it: autochat config lounge on',
+    'Change rooms: autochat join <code> · autochat host · autochat rooms'
+  ]
+  if (view.hooksInstalled === false) lines.push('', '! hooks not installed: run `autochat setup`')
+  const queue = attentionLine(view.attention)
+  if (queue) lines.push('', `${queue.sym} ${queue.text}`, 'ctrl-g jumps to it')
+  lines.push('', 'ctrl-c to quit')
   const w = Math.min(cols, Math.max(strWidth(title) + 8, ...lines.map(strWidth)) + 6)
   const box = []
   const titleLine = new Line(w).add('╭─ ', YELLOW).add(title, BOLD + YELLOW).add(' ', YELLOW)
@@ -222,14 +204,13 @@ function bannerScreen (view, cols, rows) {
 export function renderScreen (view, cols, rows) {
   cols = Math.max(20, cols)
   rows = Math.max(8, rows)
-  if (!['room', 'spectating'].includes(view.phase)) return bannerScreen(view, cols, rows)
+  if (view.phase !== 'room') return loungeScreen(view, cols, rows)
 
   // Fit the layout into small terminals: shrink the modal, then drop the member list.
   let box = modal(view, cols)
   let members = memberLines(view, cols)
   const queue = attentionLine(view.attention, view.request)
-  const strip = view.phase === 'room' && view.countdown ? 1 : 0
-  const fixed = () => box.length + 1 + members.length + 1 + 3 + strip + (queue ? 1 : 0) + 1
+  const fixed = () => box.length + 1 + members.length + 1 + 3 + (queue ? 1 : 0) + 1
   if (fixed() > rows && box.length > 3) box = [box[0], box[box.length - 3], box[box.length - 1]]
   if (fixed() > rows) members = []
   if (fixed() > rows) box = []
@@ -238,29 +219,21 @@ export function renderScreen (view, cols, rows) {
   bottom.push(GREY + '─'.repeat(cols) + RESET)
   // The attention queue: one line, never in the way of the input.
   if (queue) bottom.push(new Line(cols).add(` ${queue.sym} `, queue.style).add(queue.text).toString())
-  let cursor = null
-  if (view.phase === 'spectating') {
-    bottom.push(new Line(cols).add(' you got pulled back to reality. watching until everyone else does too', GREY).toString())
-    bottom.push(new Line(cols).add(' ctrl-c leave', DIM).toString())
-  } else {
-    // Exit countdown: a non-modal strip; the input below stays live.
-    if (strip) bottom.push(new Line(cols).add(` back to reality in ${view.countdown.remaining}s · ↵ on empty line to go now`, YELLOW).toString())
-    const prompt = '> '
-    const room = cols - strWidth(prompt) - 1
-    let shown = view.input
-    while (strWidth(shown) > room) shown = Array.from(shown).slice(1).join('')
-    cursor = { row: bottom.length + 1, col: strWidth(prompt) + strWidth(shown) + 1 }
-    bottom.push(new Line(cols).add(prompt, BOLD).add(shown).toString())
-    bottom.push(new Line(cols).add(' ⏎ send · ctrl-g go to copilot · pgup/pgdn scroll · ctrl-c leave room', DIM).toString())
-  }
+  const prompt = '> '
+  const room = cols - strWidth(prompt) - 1
+  let shown = view.input
+  while (strWidth(shown) > room) shown = Array.from(shown).slice(1).join('')
+  let cursor = { row: bottom.length + 1, col: strWidth(prompt) + strWidth(shown) + 1 }
+  bottom.push(new Line(cols).add(prompt, BOLD).add(shown).toString())
+  bottom.push(new Line(cols).add(' ⏎ send · ctrl-g go to copilot · pgup/pgdn scroll · ctrl-c quit', DIM).toString())
   const avail = Math.max(1, rows - top.length - bottom.length)
   const all = messageLines(view, cols)
   const end = Math.max(0, all.length - (view.scroll || 0))
   const visible = all.slice(Math.max(0, end - avail), end)
   while (visible.length < avail) visible.unshift('')
   const lines = [...top, ...visible, ...bottom].slice(0, rows)
-  if (cursor) cursor.row += top.length + avail
-  if (cursor && cursor.row > rows) cursor = null
+  cursor.row += top.length + avail
+  if (cursor.row > rows) cursor = null
   return { lines, cursor }
 }
 
@@ -274,7 +247,6 @@ export class TUI {
     this.input = ''
     this.scroll = 0
     this.pending = false
-    this.lastCtrlC = 0
     this.onData = (d) => this._key(d)
     this.onResize = () => this.render()
     this.onChange = () => this.schedule()
@@ -292,14 +264,11 @@ export class TUI {
       hostHandle: r?.hostHandle,
       members: r ? r.memberList() : [],
       mates: r ? r.mateCount() : 0,
-      activeCount: r ? r.activeCount() : 0,
       messages: c.messages,
       request: c.currentRequest(),
       attention: c.attentionItems ? c.attentionItems() : [],
-      countdown: c.countdown ? { ...c.countdown, remaining: c.countdownRemaining() } : null,
       input: this.input,
       scroll: this.scroll,
-      banner: c.banner,
       hooksInstalled: this.hooksInstalled
     }
   }
@@ -377,23 +346,16 @@ export class TUI {
 
   _enter () {
     const text = this.input.trim()
-    if (!text || text === '/back') {
+    if (!text) {
       this.input = ''
-      if (this.c.countdown) this.c.returnNow()
-      else if (!text && this.c.currentRequest()) this.c.jumpToCopilot()
+      if (this.c.currentRequest()) this.c.jumpToCopilot()
       return
     }
     if (this.c.say(text)) { this.input = ''; this.scroll = 0 }
   }
 
+  // ctrl-c quits, leaving the room.
   _ctrlC () {
-    const now = Date.now()
-    const double = now - this.lastCtrlC < 1500
-    this.lastCtrlC = now
-    if (this.c.phase === 'room' || this.c.phase === 'spectating') {
-      this.c.leaveRoom()
-    } else if (this.c.phase === 'lounge' || double || this.c.auto) {
-      this.c.emit('exit')
-    }
+    this.c.emit('exit')
   }
 }

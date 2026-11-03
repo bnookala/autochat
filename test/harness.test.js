@@ -4,7 +4,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import createTestnet from 'hyperdht/testnet.js'
 import { tmpDir } from './helpers/tmp.js'
 
 const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'autochat.js')
@@ -224,18 +223,16 @@ test('observers: each adapter fallback watcher feeds adopt(live, harness)', asyn
   assert.deepEqual(copilot.liveSessions({ trigger: 'never' }).filter(l => l.running), [])
 })
 
-const FAST = { graceMs: 1200, heartbeatMs: 300, expireMs: 3000, refreshMs: [300, 800, 1500, 2500], refreshEveryMs: 2000 }
-function mk (testnet, config = {}) {
+// A core that's never started: sessions don't need the lounge.
+function mk () {
   const focused = []
   const c = new Controller({
     identity: ephemeralIdentity(),
-    config: { room: 'lc1-harness-' + Math.random().toString(36).slice(2, 12), idleMs: 300, announce: false, countdownSeconds: 30, ...config },
-    bootstrap: testnet.bootstrap,
-    roomOpts: FAST,
+    config: { room: 'lc1-harness-' + Math.random().toString(36).slice(2, 12), announce: false },
     focus: (o, harness) => focused.push([o, harness]),
     notify: () => {},
-    bannerMs: 300,
     requestLingerMs: 500,
+    idleMs: 300,
     watchLogs: false
   })
   c.focused = focused
@@ -243,10 +240,8 @@ function mk (testnet, config = {}) {
 }
 const hook = (harness, sid, kind, extra = {}) => ({ type: 'hook', harness, sessionId: sid, kind, autonomy: 'autonomous', cwd: '/w/' + sid, ts: Date.now(), origin: { tmuxPane: '%' + sid }, ...extra })
 
-test('Controller: sessions keyed by harness:sid, harness in the snapshot, autonomy decides presence', { timeout: 60000 }, async (t) => {
-  const testnet = await createTestnet(3)
-  t.after(() => testnet.destroy())
-  const c = mk(testnet)
+test('Controller: sessions keyed by harness:sid, harness in the snapshot, autonomy decides which count', { timeout: 60000 }, async (t) => {
+  const c = mk()
   t.after(() => c.shutdown())
 
   assert.equal(c.handle(hook('claude', 'same', 'activity', { autonomy: 'interactive' })).tracked, false, 'interactive sessions never count')
@@ -254,7 +249,6 @@ test('Controller: sessions keyed by harness:sid, harness in the snapshot, autono
   assert.equal(c.handle(hook('claude', 'same', 'start')).tracked, false, 'starting is not working')
   c.handle(hook('claude', 'same', 'activity'))
   c.handle(hook('copilot', 'same', 'activity'))
-  assert.equal(c.phase, 'room')
   assert.deepEqual([...c.sessions.keys()], ['claude:same', 'copilot:same'])
   assert.deepEqual(c.snapshot().sessions, [
     { sid: 'same', state: 'running', cwd: '/w/same', harness: 'claude' },
@@ -281,14 +275,14 @@ test('Controller: sessions keyed by harness:sid, harness in the snapshot, autono
   assert.equal(c.sessions.has('gemini:g1'), false)
   c.handle(hook('copilot', 'same', 'idle', { summary: 'all tests pass' }))
   await new Promise(resolve => setTimeout(resolve, 600))
-  assert.equal(c.countdown.reason, 'idle')
-  assert.equal(c.countdown.summary, 'all tests pass')
+  assert.deepEqual(c.snapshot().attention.map(a => [a.harness, a.title, a.summary]), [
+    ['gemini', 'Gemini CLI is waiting for you', null],
+    ['copilot', 'Copilot CLI is waiting for you', 'all tests pass']
+  ])
 })
 
 test('Controller: hook messages from before adapters still work, and their snapshot entries look as before', { timeout: 60000 }, async (t) => {
-  const testnet = await createTestnet(3)
-  t.after(() => testnet.destroy())
-  const c = mk(testnet)
+  const c = mk()
   t.after(() => c.shutdown())
   assert.equal(c.handle({ type: 'hook', sessionId: 'old', kind: 'activity', mode: 'plan', ts: Date.now() }).tracked, false)
   assert.equal(c.handle({ type: 'hook', sessionId: 'old', kind: 'activity', mode: 'autopilot', cwd: '/w/old', ts: Date.now() }).tracked, true)

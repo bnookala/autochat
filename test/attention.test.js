@@ -5,7 +5,6 @@ import net from 'node:net'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import createTestnet from 'hyperdht/testnet.js'
 import { tmpDir } from './helpers/tmp.js'
 
 const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'autochat.js')
@@ -14,29 +13,25 @@ process.env.AUTOCHAT_HOME = path.join(tmp, 'ac')
 process.env.COPILOT_HOME = path.join(tmp, 'copilot')
 const { Controller } = await import('../src/controller.js')
 const { ephemeralIdentity } = await import('../src/identity.js')
-const { saveConfig } = await import('../src/config.js')
 const { serve } = await import('../src/ipc.js')
 const { sockPath } = await import('../src/paths.js')
 const H = await import('../src/harness/index.js')
 const { hookMessage } = await import('../src/harness/event.js')
 
-const FAST = { graceMs: 1200, heartbeatMs: 300, expireMs: 3000, refreshMs: [300, 800, 1500, 2500], refreshEveryMs: 2000 }
-
 // A SessionEvent from an adapter, as the hook message it travels as.
 const hook = (harness, sid, kind, extra = {}) => ({ type: 'hook', event: kind, harness, sessionId: sid, kind, autonomy: 'autonomous', mode: 'autopilot', cwd: '/w/' + sid, origin: { tmuxPane: '%' + sid }, ts: Date.now(), ...extra })
 
-function mk (testnet, config = {}, opts = {}) {
+// A core that's never started: the attention queue doesn't need the lounge.
+function mk (opts = {}) {
   const focused = []
   const notes = []
   const c = new Controller({
     identity: ephemeralIdentity(),
-    config: { room: 'lc1-attn-' + Math.random().toString(36).slice(2, 12), idleMs: 400, announce: false, countdownSeconds: 30, ...config },
-    bootstrap: testnet.bootstrap,
-    roomOpts: FAST,
+    config: { room: 'lc1-attn-' + Math.random().toString(36).slice(2, 12), announce: false },
     focus: (origin, harness) => focused.push([origin, harness]),
     notify: (title, text) => notes.push(text),
-    bannerMs: 300,
     requestLingerMs: 500,
+    idleMs: 400,
     watchLogs: false,
     ...opts
   })
@@ -48,9 +43,7 @@ function mk (testnet, config = {}, opts = {}) {
 const queue = (c) => c.snapshot().attention
 
 test('attention items: blocked until the agent carries on, finished until handled or dismissed', { timeout: 60000 }, async (t) => {
-  const testnet = await createTestnet(3)
-  t.after(() => testnet.destroy())
-  const c = mk(testnet)
+  const c = mk()
   t.after(() => c.shutdown())
   assert.deepEqual(queue(c), [], 'an empty queue')
 
@@ -75,9 +68,8 @@ test('attention items: blocked until the agent carries on, finished until handle
     ['finished', 'claude', 'b1', 'Claude Code finished', 'Shipped the retry helper.']
   ], 'urgent first')
   assert.notEqual(items[0].id, blocked.id, 'a new question is a new item')
-  assert.equal(c.phase, 'room', 'presence: in the room while a1 works')
-  assert.equal(c.countdown, null, 'no countdown while an agent is still at work')
-  assert.deepEqual(c.focused, [], "an agent finishing while another works doesn't take focus")
+  assert.deepEqual(c.notes, [], 'a1 is still at work: no notification')
+  assert.deepEqual(c.focused, [], "an agent finishing doesn't take focus")
 
   await c.command({ cmd: 'jumpTo', item: items[0].id })
   assert.deepEqual(c.focused.at(-1), [{ tmuxPane: '%a1' }, 'copilot'])
@@ -106,9 +98,7 @@ test('attention items: blocked until the agent carries on, finished until handle
 })
 
 test('failed items: an error that ends the turn, one the agent works past, and Copilot\'s abort', { timeout: 60000 }, async (t) => {
-  const testnet = await createTestnet(3)
-  t.after(() => testnet.destroy())
-  const c = mk(testnet)
+  const c = mk()
   t.after(() => c.shutdown())
 
   // Claude's PermissionDenied: auto mode refused a call, and it carries on.
@@ -125,10 +115,9 @@ test('failed items: an error that ends the turn, one the agent works past, and C
   assert.equal(c.sessions.has('claude:c1'), false)
   ;[f] = queue(c)
   assert.deepEqual([f.kind, f.title, f.summary], ['failed', 'Claude Code stopped on an error', 'API Error: Rate limit reached'])
-  assert.equal(c.countdown.reason, 'failed', 'its last agent stopped: the countdown runs')
+  assert.deepEqual(c.notes, ['Your copilot needs you.'], 'its last agent stopped: a notification')
   c.handle(hook('claude', 'c1', 'activity'))
   assert.deepEqual(queue(c), [], 'back at work: handled')
-  assert.equal(c.countdown, null)
 
   // Copilot's abort comes from its session log.
   const sid = 'ab-' + Math.random().toString(36).slice(2, 8)
@@ -138,64 +127,45 @@ test('failed items: an error that ends the turn, one the agent works past, and C
   fs.writeFileSync(path.join(dir, 'events.jsonl'),
     JSON.stringify({ type: 'session.mode_changed', data: { newMode: 'autopilot' }, timestamp: new Date(t0 - 1000).toISOString() }) + '\n' +
     JSON.stringify({ type: 'abort', data: { reason: 'user_initiated' }, timestamp: new Date(t0 + 500).toISOString() }) + '\n')
-  const d = mk(testnet, {}, { watchLogs: true })
+  const d = mk({ watchLogs: true })
   t.after(() => d.shutdown())
   d.handle({ ...hook('copilot', sid, 'activity'), ts: t0 })
   assert.deepEqual(queue(d).map(a => [a.kind, a.sid, a.title]), [['failed', sid, 'Copilot CLI was interrupted']])
-  assert.equal(d.countdown.reason, 'abort')
+  assert.deepEqual(d.notes, ['Your copilot needs you.'])
 })
 
-test('focus: one agent at a time keeps the pull-back; with more, the queue takes over; autochat config focus', { timeout: 90000 }, async (t) => {
-  const testnet = await createTestnet(3)
-  t.after(() => testnet.destroy())
-  t.after(() => saveConfig({ focus: 'auto' }))
-  // Agents run side by side, then all of them finish. countdownSeconds 0: pulled back at once.
+test('notifications: when the last agent at work stops, one says what waits; focus never moves by itself', () => {
+  // Agents run side by side, then all of them finish.
   const run = (sids) => {
-    const c = mk(testnet, { countdownSeconds: 0 })
-    t.after(() => c.shutdown())
+    const c = mk()
     for (const sid of sids) c.handle(hook('copilot', sid, 'activity'))
     for (const sid of sids) c.handle(hook('copilot', sid, 'complete', { summary: 'done ' + sid }))
-    assert.equal(c.phase, 'reality', 'the last agent stopping pulls you back')
     return c
   }
 
   const one = run(['s1'])
-  assert.deepEqual(one.focused, [[{ tmuxPane: '%s1' }, 'copilot']], 'one agent: focus goes back to it, as before')
-  assert.deepEqual(queue(one), [], 'and its result counts as handled')
-  assert.equal(one.notes.at(-1), 'Back to reality: your copilot finished.')
+  assert.deepEqual(one.notes, ['Your copilot finished.'])
+  assert.deepEqual(one.focused, [], 'focus stays where it is')
+  assert.deepEqual(queue(one).map(a => [a.sid, a.kind]), [['s1', 'finished']], 'its result waits in the queue')
 
   const two = run(['m1', 'm2'])
-  assert.deepEqual(two.focused, [], 'with more than one, autochat never steals focus')
+  assert.deepEqual(two.notes, ['2 of your agents need you.'], 'one notification, when the last one stops')
+  assert.deepEqual(two.focused, [])
   assert.deepEqual(queue(two).map(a => [a.sid, a.kind, a.summary]), [['m1', 'finished', 'done m1'], ['m2', 'finished', 'done m2']])
-  assert.equal(two.notes.at(-1), 'Back to reality: 2 of your agents need you.')
 
-  saveConfig({ focus: 'always' })
-  const always = run(['w1', 'w2'])
-  assert.deepEqual(always.focused, [[{ tmuxPane: '%w2' }, 'copilot']], 'always: the last one to finish')
-  assert.deepEqual(queue(always).map(a => a.sid), ['w1'])
-
-  saveConfig({ focus: 'never' })
-  const never = run(['n1'])
-  assert.deepEqual(never.focused, [])
-  assert.deepEqual(queue(never).map(a => a.sid), ['n1'], 'never: the queue keeps it')
-
-  // One at a time is still one agent: the countdown cancelled by the next run keeps the count.
-  saveConfig({ focus: 'auto' })
-  const c = mk(testnet)
-  t.after(() => c.shutdown())
+  // One at a time, a notification each; activity alone never repeats one.
+  const c = mk()
   c.handle(hook('copilot', 'q1', 'activity'))
   c.handle(hook('copilot', 'q1', 'complete'))
   c.handle(hook('copilot', 'q2', 'activity'))
-  c.handle(hook('copilot', 'q2', 'complete'))
-  await c.command({ cmd: 'returnNow' })
-  assert.deepEqual(c.focused, [[{ tmuxPane: '%q2' }, 'copilot']])
-  assert.deepEqual(queue(c).map(a => a.sid), ['q1'], "the earlier run's result is still yours to look at")
+  c.handle(hook('copilot', 'q2', 'waiting'))
+  assert.deepEqual(c.notes, ['Your copilot finished.', 'Your copilot needs you.'])
+  assert.deepEqual(queue(c).map(a => [a.sid, a.title]), [['q1', 'Copilot CLI finished'], ['q2', 'Copilot CLI is waiting for you']])
+  assert.deepEqual(c.focused, [])
 })
 
 test('Claude Code from its recorded hooks: the queue alongside its request merging', { timeout: 60000 }, async (t) => {
-  const testnet = await createTestnet(3)
-  t.after(() => testnet.destroy())
-  const c = mk(testnet, { idleMs: 300 })
+  const c = mk({ idleMs: 300 })
   t.after(() => c.shutdown())
   const claude = H.adapter('claude')
   const fixture = (name) => JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'claude', name + '.json'), 'utf8')).events
@@ -233,9 +203,7 @@ test('Claude Code from its recorded hooks: the queue alongside its request mergi
 })
 
 test('jumpTo and dismissAttention over the socket; attention in every snapshot', { timeout: 60000 }, async (t) => {
-  const testnet = await createTestnet(3)
-  t.after(() => testnet.destroy())
-  const c = mk(testnet)
+  const c = mk()
   t.after(() => c.shutdown())
   const server = await serve((msg) => c.handle(msg), { state: () => c.snapshot(), command: (msg) => c.command(msg) })
   t.after(() => server.close())
@@ -283,20 +251,20 @@ test('jumpTo and dismissAttention over the socket; attention in every snapshot',
   await next(m => m.type === 'state' && m.attention.length === 0, 'dismissed')
 })
 
-test('autochat config focus auto|never|always', () => {
+test('autochat config lounge on|off', () => {
   const env = {
     ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(AUTOCHAT|LOLCHAT)_/.test(k))),
     HOME: path.join(tmp, 'home'),
     AUTOCHAT_HOME: path.join(tmp, 'cli')
   }
   const cli = (...args) => spawnSync(process.execPath, [BIN, 'config', ...args], { env, encoding: 'utf8' })
-  assert.equal(cli('focus').stdout.trim(), '"auto"', 'the default')
-  const set = cli('focus', 'never')
+  assert.equal(cli('lounge').stdout.trim(), '"on"', 'the default')
+  const set = cli('lounge', 'off')
   assert.equal(set.status, 0, set.stderr)
-  assert.equal(JSON.parse(set.stdout).focus, 'never')
-  assert.equal(cli('focus').stdout.trim(), '"never"')
-  const bad = cli('focus', 'sometimes')
+  assert.equal(JSON.parse(set.stdout).lounge, 'off')
+  assert.equal(cli('lounge').stdout.trim(), '"off"')
+  const bad = cli('lounge', 'maybe')
   assert.equal(bad.status, 1)
-  assert.match(bad.stderr, /usage: autochat config focus auto\|never\|always/)
-  assert.equal(cli('focus').stdout.trim(), '"never"', 'unchanged')
+  assert.match(bad.stderr, /usage: autochat config lounge on\|off/)
+  assert.equal(cli('lounge').stdout.trim(), '"off"', 'unchanged')
 })

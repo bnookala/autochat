@@ -3,24 +3,22 @@ import path from 'node:path'
 import { home, ensureDir } from './paths.js'
 import { DEFAULT_ROOM, parseRoom } from './protocol.js'
 
+// Keys from older versions (idleMs, countdownSeconds, focus) are ignored.
 export const DEFAULTS = {
   room: DEFAULT_ROOM,
   // auto | app | tmux | ghostty | iterm | terminal | notify | off (see LAUNCH_METHODS)
   launch: 'auto',
   tmuxSplit: 'v',
-  idleMs: 45000,
+  // on | off: in the lounge's room while autochat runs
+  lounge: 'on',
   announce: true,
-  // seconds you stay in the room after autopilot ends; 0 = pulled back immediately
-  countdownSeconds: 30,
-  // focus back on the agent at the end of the countdown: auto (only if one agent was at work) | never | always
-  focus: 'auto',
   // set by agents.ack: the human saw "Agents read your messages as input…"
   agentsInterventionAck: false,
   // on | off: after their tool calls, tell agents in the agent room what's waiting for them
   doorbell: 'on'
 }
 
-export const FOCUS_MODES = ['auto', 'never', 'always']
+export const LOUNGE_MODES = ['on', 'off']
 export const DOORBELL_MODES = ['on', 'off']
 
 export const configPath = () => path.join(home(), 'config.json')

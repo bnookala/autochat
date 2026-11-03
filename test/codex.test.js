@@ -4,7 +4,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import createTestnet from 'hyperdht/testnet.js'
 import { tmpDir } from './helpers/tmp.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -528,14 +527,11 @@ test('CLI: setup offers Codex, setup --harness codex installs it and says to tru
   assert.equal(u.read(), userText)
 })
 
-test('Controller: a codex exec run puts you in the lounge until it ends; the TUI asks you, and never does', { timeout: 60000 }, async (t) => {
-  const testnet = await createTestnet(3)
-  t.after(() => testnet.destroy())
+test('Controller: a codex exec run counts until it ends; the TUI asks you, and never counts', { timeout: 60000 }, async (t) => {
   const c = new Controller({
     identity: ephemeralIdentity(),
-    config: { room: 'lc1-codex-' + Math.random().toString(36).slice(2, 12), idleMs: 300, announce: false, countdownSeconds: 30 },
-    bootstrap: testnet.bootstrap,
-    roomOpts: { graceMs: 1200, heartbeatMs: 300, expireMs: 3000, refreshMs: [300, 800, 1500, 2500], refreshEveryMs: 2000 },
+    config: { room: 'lc1-codex-' + Math.random().toString(36).slice(2, 12), announce: false },
+    idleMs: 300,
     focus: () => {},
     notify: () => {},
     watchLogs: false
@@ -543,18 +539,18 @@ test('Controller: a codex exec run puts you in the lounge until it ends; the TUI
   t.after(() => c.shutdown())
   const send = (e, config) => c.handle(hookMessage(H.sessionEvent(codex, e.event, e.payload, { env: { CODEX_HOME, ...e.env }, config }), e.event))
   const state = (events) => c.sessions.get(`codex:${events[0].payload.session_id}`)?.state ?? null
+  const item = (events) => c.snapshot().attention.find(a => a.sid === events[0].payload.session_id)
 
   const run = fixture('exec')
   assert.equal(send(run[0]).tracked, false, 'SessionStart alone tracks nothing')
   send(run[1])
-  assert.equal(c.phase, 'room')
   const sid = run[0].payload.session_id
   assert.deepEqual(c.snapshot().sessions, [{ sid, state: 'running', cwd: '/Users/me/code/demo', harness: 'codex' }])
   for (const e of run.slice(2, 9)) send(e)
   send(run[9])
   assert.equal(c.sessions.size, 0)
-  assert.equal(c.countdown?.reason, 'end')
-  assert.match(c.countdown?.summary, /^Done with work: /)
+  assert.equal(item(run).title, 'Codex session ended')
+  assert.match(item(run).summary, /^Done with work: /)
 
   // A subagent's calls neither end the run nor start one.
   const sub = fixture('exec-subagent')
@@ -576,7 +572,7 @@ test('Controller: a codex exec run puts you in the lounge until it ends; the TUI
   const stopped = fixture('exec-interrupt')
   for (const e of stopped.slice(0, 4)) send(e)
   assert.equal(state(stopped), null)
-  assert.equal(c.countdown?.reason, 'end')
+  assert.equal(item(stopped).title, 'Codex session ended')
 
   // The TUI with `autochat config trigger codex default`: an approval is a request card, and so
   // is a question in Plan mode, but not one Codex refuses (Default mode); an interrupt means

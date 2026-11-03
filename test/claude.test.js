@@ -4,7 +4,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import createTestnet from 'hyperdht/testnet.js'
 import { tmpDir } from './helpers/tmp.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -321,13 +320,10 @@ test('CLI: setup offers Claude Code, setup --harness claude installs it, the hoo
 })
 
 test('Controller: Claude Code sessions from their recorded hooks: questions, the permission notification 6 s late, refusals, API errors', { timeout: 60000 }, async (t) => {
-  const testnet = await createTestnet(3)
-  t.after(() => testnet.destroy())
   const c = new Controller({
     identity: ephemeralIdentity(),
-    config: { room: 'lc1-claude-' + Math.random().toString(36).slice(2, 12), idleMs: 300, announce: false, countdownSeconds: 30 },
-    bootstrap: testnet.bootstrap,
-    roomOpts: { graceMs: 1200, heartbeatMs: 300, expireMs: 3000, refreshMs: [300, 800, 1500, 2500], refreshEveryMs: 2000 },
+    config: { room: 'lc1-claude-' + Math.random().toString(36).slice(2, 12), announce: false },
+    idleMs: 300,
     focus: () => {},
     notify: () => {},
     watchLogs: false,
@@ -341,7 +337,6 @@ test('Controller: Claude Code sessions from their recorded hooks: questions, the
   const q = fixture('interactive-auto-question')
   assert.equal(send(q[0]).tracked, false, 'SessionStart alone tracks nothing')
   send(q[1])
-  assert.equal(c.phase, 'room')
   const sid = q[0].payload.session_id
   assert.deepEqual(c.snapshot().sessions, [{ sid, state: 'running', cwd: '/Users/me/code/demo', harness: 'claude' }])
   send(q[2])
@@ -352,8 +347,7 @@ test('Controller: Claude Code sessions from their recorded hooks: questions, the
   assert.equal(c.currentRequest().resolved, true, 'answered: the agent moved on')
   send(q[5])
   await new Promise(resolve => setTimeout(resolve, 600))
-  assert.deepEqual([c.countdown?.reason, c.countdown?.summary], ['idle', 'Red'], 'Stop, then nothing for idleMs')
-  assert.deepEqual(item(sid), [['finished', 'Claude Code is waiting for you', 'Red']])
+  assert.deepEqual(item(sid), [['finished', 'Claude Code is waiting for you', 'Red']], 'Stop, then nothing for idleMs')
   assert.equal(send(q[6]).tracked, false, 'already done')
 
   // In auto mode a permission prompt: the bare notification 6 s later keeps the detail.
@@ -383,18 +377,14 @@ test('Controller: Claude Code sessions from their recorded hooks: questions, the
   send(f[2])
   assert.equal(c.sessions.has(`claude:${fsid}`), false)
   assert.deepEqual(item(fsid), [['failed', 'Claude Code stopped on an error', "There's an issue with the selected model (claude-nonexistent-model-0). It may not exist or you may not have access to it. Run /model to pick a different model."]])
-  assert.equal(c.countdown?.reason, 'failed')
   assert.equal(send(f[3]).tracked, false, '/exit afterwards: already done')
 })
 
 test('Controller: a Claude Code session ends once its process is gone, without a SessionEnd', { timeout: 60000 }, async (t) => {
-  const testnet = await createTestnet(3)
-  t.after(() => testnet.destroy())
   const c = new Controller({
     identity: ephemeralIdentity(),
-    config: { room: 'lc1-claude-' + Math.random().toString(36).slice(2, 12), idleMs: 60000, announce: false, countdownSeconds: 30 },
-    bootstrap: testnet.bootstrap,
-    roomOpts: { graceMs: 1200, heartbeatMs: 300, expireMs: 3000, refreshMs: [300, 800, 1500, 2500], refreshEveryMs: 2000 },
+    config: { room: 'lc1-claude-' + Math.random().toString(36).slice(2, 12), announce: false },
+    idleMs: 60000,
     focus: () => {},
     notify: () => {},
     watchLogs: false,

@@ -7,7 +7,6 @@ import { syncBuiltinESMExports } from 'node:module'
 import { Writable } from 'node:stream'
 import { EventEmitter } from 'node:events'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import createTestnet from 'hyperdht/testnet.js'
 import { tmpDir } from './helpers/tmp.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -448,12 +447,11 @@ test('autochat hook --harness opencode: a headless run opens autochat; the TUI n
 
 // --- the Controller -----------------------------------------------------------------------------------
 
-function controller (testnet, opts = {}) {
+function controller (opts = {}) {
   return new Controller({
     identity: ephemeralIdentity(),
-    config: { room: 'lc1-opencode-' + Math.random().toString(36).slice(2, 12), idleMs: 300, announce: false, countdownSeconds: 30 },
-    bootstrap: testnet.bootstrap,
-    roomOpts: { graceMs: 1200, heartbeatMs: 300, expireMs: 3000, refreshMs: [300, 800, 1500, 2500], refreshEveryMs: 2000 },
+    config: { room: 'lc1-opencode-' + Math.random().toString(36).slice(2, 12), announce: false },
+    idleMs: 300,
     focus: () => {},
     notify: () => {},
     requestLingerMs: 500,
@@ -462,21 +460,18 @@ function controller (testnet, opts = {}) {
   })
 }
 
-test('Controller: an opencode run in the room, whatever order its hooks land in', { timeout: 60000 }, async (t) => {
-  const testnet = await createTestnet(3)
-  t.after(() => testnet.destroy())
-  const c = controller(testnet)
+test('Controller: an opencode run, whatever order its hooks land in', { timeout: 60000 }, async (t) => {
+  const c = controller()
   t.after(() => c.shutdown())
   const messages = async (name) => (await forwarded(name)).map(s => hookMessage(H.sessionEvent(opencode, s.args[4], s.payload, { env: {} }), s.args[4]))
 
-  // In order: the run puts you in the room, and its end starts the countdown with its last words.
+  // In order: the run counts, and its end leaves its last words in the attention queue.
   const run = await messages('run')
   for (const m of run.slice(0, 3)) c.handle(m)
-  assert.equal(c.phase, 'room')
   assert.deepEqual(c.snapshot().sessions, [{ sid: 'ses_e6a1f692dffeqhcmzhmJZQOKx0', state: 'running', cwd: '/Users/me/code/demo', harness: 'opencode' }])
   // The end overtook the idle: the summary still comes through, and the stale idle changes nothing.
   c.handle(run[4])
-  assert.deepEqual([c.countdown?.reason, c.countdown?.summary], ['end', 'Done with glob.'])
+  assert.deepEqual(c.snapshot().attention.map(a => [a.kind, a.title, a.summary]), [['finished', 'opencode session ended', 'Done with glob.']])
   assert.equal(c.handle(run[3]).tracked, false)
   // So does an activity from before the end: it doesn't bring the finished session back.
   assert.equal(c.handle(run[2]).tracked, false)
@@ -502,9 +497,7 @@ test('Controller: an opencode run in the room, whatever order its hooks land in'
 })
 
 test('Controller: Ctrl+C kills opencode run without a word; the session ends once its process is gone', { timeout: 60000 }, async (t) => {
-  const testnet = await createTestnet(3)
-  t.after(() => testnet.destroy())
-  const c = controller(testnet, { pidCheckMs: 50 })
+  const c = controller({ pidCheckMs: 50 })
   t.after(() => c.shutdown())
   // A stand-in for the opencode process, and the question that hangs its run.
   const opencodeProcess = cp.spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
@@ -520,6 +513,6 @@ test('Controller: Ctrl+C kills opencode run without a word; the session ends onc
   await new Promise(resolve => opencodeProcess.once('exit', resolve))
   for (let i = 0; i < 40 && c.sessions.has(key); i++) await new Promise(resolve => setTimeout(resolve, 50))
   assert.equal(c.sessions.has(key), false)
-  assert.equal(c.countdown?.reason, 'end')
+  assert.deepEqual(c.snapshot().attention.map(a => [a.kind, a.title]), [['finished', 'opencode session ended']])
   assert.equal(c.currentRequest(), null)
 })

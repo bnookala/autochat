@@ -38,12 +38,12 @@ test('AUTOCHAT_* env vars fall back to LOLCHAT_*', () => {
 
   // Through the CLI: LOLCHAT_HOME alone still picks the state dir.
   const old = path.join(tmp, 'legacy-env')
-  assert.equal(cli(['config', 'countdown', '7'], { LOLCHAT_HOME: old }).status, 0)
-  assert.equal(JSON.parse(fs.readFileSync(path.join(old, 'config.json'), 'utf8')).countdownSeconds, 7)
+  assert.equal(cli(['config', 'lounge', 'off'], { LOLCHAT_HOME: old }).status, 0)
+  assert.equal(JSON.parse(fs.readFileSync(path.join(old, 'config.json'), 'utf8')).lounge, 'off')
   const both = path.join(tmp, 'new-env')
-  assert.equal(cli(['config', 'countdown', '9'], { LOLCHAT_HOME: old, AUTOCHAT_HOME: both }).status, 0)
-  assert.equal(JSON.parse(fs.readFileSync(path.join(both, 'config.json'), 'utf8')).countdownSeconds, 9)
-  assert.equal(JSON.parse(fs.readFileSync(path.join(old, 'config.json'), 'utf8')).countdownSeconds, 7)
+  assert.equal(cli(['config', 'doorbell', 'off'], { LOLCHAT_HOME: old, AUTOCHAT_HOME: both }).status, 0)
+  assert.equal(JSON.parse(fs.readFileSync(path.join(both, 'config.json'), 'utf8')).doorbell, 'off')
+  assert.equal(JSON.parse(fs.readFileSync(path.join(old, 'config.json'), 'utf8')).doorbell, 'on')
 })
 
 test('first run moves ~/.lolchat to ~/.autochat, keeping the identity and handle', () => {

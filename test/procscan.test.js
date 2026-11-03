@@ -194,7 +194,7 @@ function client () {
   return { lines, send: (m) => sock.write(JSON.stringify(m) + '\n'), close: () => sock.end() }
 }
 
-test('the daemon: detected agents in the lounge snapshot and in status, and you stay in the lounge', { timeout: 60000 }, async (t) => {
+test('the daemon: detected agents in the lounge snapshot and in status, never a session', { timeout: 60000 }, async (t) => {
   const home = path.join(tmp, 'd')
   const list = path.join(tmp, 'processes.json')
   fs.writeFileSync(list, JSON.stringify(PROCS.map(p => ({ ...p, cwd: `/Users/me/code/p${p.pid}` }))))
@@ -211,6 +211,9 @@ test('the daemon: detected agents in the lounge snapshot and in status, and you 
   }
   process.env.AUTOCHAT_HOME = home
   t.after(() => { process.env.AUTOCHAT_HOME = path.join(tmp, 'ac') })
+  // These tests need the agent room, not the lounge: off, so the daemon never joins a room.
+  fs.mkdirSync(home, { recursive: true })
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ lounge: 'off' }))
   const daemon = spawn(process.execPath, [BIN, 'daemon'], { env, stdio: ['ignore', 'ignore', 'pipe'] })
   let err = ''
   daemon.stderr.on('data', (d) => { err += d })
@@ -244,6 +247,6 @@ test('the daemon: detected agents in the lounge snapshot and in status, and you 
   for (let i = 0; i < 50 && latest().detected.agents.length !== 3; i++) await sleep(50)
   assert.deepEqual(latest().detected.agents.map(a => a.harness), ['copilot', 'gemini', 'pi'])
   await sleep(400)
-  assert.ok(c.lines.filter(m => m.type === 'state').every(m => m.phase === 'lounge' && m.sessions.length === 0), 'detection never tracks a session')
+  assert.ok(c.lines.filter(m => m.type === 'state').every(m => m.sessions.length === 0), 'detection never tracks a session')
   assert.deepEqual((await send({ type: 'status' })).sessions, [])
 })
