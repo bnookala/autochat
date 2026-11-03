@@ -1,8 +1,8 @@
 import { AGENT_PROTOCOL, TIER, fail, isStr, label } from './limits.js'
 
 // Humans: the `agents` stream snapshot, the lounge's summary of the room, and the agents-stream
-// commands `agents.ack`, `agents.say`, and Connect agents' `agents.setupPlan` and `agents.setup`.
-// See docs/agent-room/human.md.
+// commands `agents.ack`, `agents.say`, Connect agents' `agents.setupPlan` and `agents.setup`, and
+// `agents.open`. See docs/agent-room/human.md.
 
 // Connect agents: the daemon passes `harnesses` ({planAgents, setupAgents}, src/harness-jobs.js).
 // Their plans carry src/harness/index.js's actions; the protocol says `ok` for `none`.
@@ -13,6 +13,9 @@ const SETUP_ACTIONS = new Map([['add', 'add'], ['update', 'update'], ['none', 'o
 const HARNESS_REFRESH_MS = 15 * 60 * 1000
 const MAX_HARNESSES = 16
 const UNAVAILABLE = 'connecting agents needs the autochat daemon'
+// agents.open: the daemon passes `terminals` ({open}, src/terminals.js).
+const OPENED = ['rex', 'tmux', 'terminal', 'app', 'new-tab']
+const NO_TERMINALS = 'opening sessions needs the autochat daemon'
 
 export const methods = {
   snapshot () {
@@ -154,8 +157,44 @@ export const methods = {
   _refreshHarnesses () {
     if (!this.harnesses || this.closed || this.now() - this.harnessPlan.checkedAt < HARNESS_REFRESH_MS) return
     this._planHarnesses().catch((err) => this.emit('error-log', err))
+  },
+
+  // --- agents.open ---------------------------------------------------------------------------
+
+  // Shows the agent's session: its terminal (Rex pane, tmux pane, terminal app), the app it runs
+  // in, or its harness's resume command in a new tab. The daemon's `terminals` does the work, from
+  // the agent's hello; its errors are one line for the human.
+  async _open (msg) {
+    if (!isStr(msg.agent) || !msg.agent) fail('agent must be an agent id')
+    const agent = this.agents.get(msg.agent)
+    if (!agent) fail(`unknown agent: ${label(msg.agent)}`)
+    if (!this.terminals) fail(NO_TERMINALS)
+    const sharers = agent.harnessPid ? this.helloPids.get(agent.harnessPid) : null
+    let r
+    try {
+      r = await this.terminals.open({
+        id: agent.id,
+        name: agent.name,
+        title: this._titleOf(agent),
+        harness: agent.harness,
+        present: !agent.left,
+        pid: agent.pid,
+        harnessPid: agent.harnessPid,
+        // Other agents in the same harness process (Codex's app-server): it shows no one session.
+        shared: !!sharers && [...sharers].some(id => id !== agent.id),
+        sessionId: agent.sessionId,
+        cwd: agent.cwd,
+        terminal: agent.terminal ? structuredClone(agent.terminal) : null
+      })
+    } catch (err) {
+      fail(oneLine(err?.message) || `couldn't open ${agent.name}'s session`)
+    }
+    if (!OPENED.includes(r?.opened)) throw new Error(`terminals.open() returned ${label(r?.opened)}`)
+    return { opened: r.opened, detail: oneLine(r.detail) || null }
   }
 }
+
+const oneLine = (s) => isStr(s) ? s.replace(/\s+/g, ' ').trim().slice(0, 300) : ''
 
 function harnessIds (v) {
   if (!Array.isArray(v) || v.some(id => !isStr(id))) fail('harnesses must be a list of harness ids')
@@ -174,4 +213,5 @@ export function register (r) {
   r.humanCommand('agents.say', methods._say)
   r.humanCommand('agents.setupPlan', methods._setupPlan)
   r.humanCommand('agents.setup', methods._setupAgents)
+  r.humanCommand('agents.open', methods._open)
 }

@@ -63,12 +63,13 @@ export const registry = {
  * joined | away | back | left.
  */
 export class AgentRoom extends EventEmitter {
-  constructor ({ human, ack = false, onAck = () => {}, now = Date.now, limits = {}, harnesses = null } = {}) {
+  constructor ({ human, ack = false, onAck = () => {}, now = Date.now, limits = {}, harnesses = null, terminals = null } = {}) {
     super()
     this.human = human || 'me'
     this.ack = !!ack
     this.onAck = onAck
     this.harnesses = harnesses // human.js: the daemon's {planAgents, setupAgents}, for Connect agents
+    this.terminals = terminals // human.js: the daemon's {open}, for agents.open
     this.now = now
     this.limits = { ...LIMITS, ...limits }
     this.agents = new Map()

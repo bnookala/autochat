@@ -311,3 +311,97 @@ test('Connect agents without harness functions (not the daemon) says so', async 
   assert.equal((await human.cmd('agents.setup', { harnesses: ['copilot'] })).error, 'connecting agents needs the autochat daemon')
   human.close()
 })
+
+// --- agents.open (#122) ------------------------------------------------------------------------
+
+// The daemon's opener (src/terminals.js) as a fake: what agents.open asked it, and its answer.
+function fakeTerminals (answer = () => ({ opened: 'rex', detail: 'its Rex pane (block:b)' })) {
+  const asked = []
+  return { asked, open: async (agent) => { asked.push(agent); return answer(agent) } }
+}
+
+const TERMINAL = { rex: { session: 'session:s', block: 'block:b' }, tmux: null, program: null, bundleId: null, tty: 'ttys002' }
+
+test('agents.open: the agent\'s hello facts go to the daemon\'s opener; it answers {opened, detail}', async (t) => {
+  const terminals = fakeTerminals()
+  const { room } = await start(t, { terminals })
+  const a = await agent({ harness: 'claude', pid: 4300, harnessPid: 4299, sessionId: 'c1a2', cwd: '/w/x', title: 'Fix the login', terminal: TERMINAL })
+  const human = await subscribe()
+  const id = a.welcome.agent.id
+  const r = ok(await human.cmd('agents.open', { agent: id }))
+  assert.deepEqual(r, { opened: 'rex', detail: 'its Rex pane (block:b)' })
+  assert.deepEqual(terminals.asked, [{
+    id,
+    name: a.name,
+    title: 'Fix the login',
+    harness: 'claude',
+    present: true,
+    pid: 4300,
+    harnessPid: 4299,
+    shared: false,
+    sessionId: 'c1a2',
+    cwd: '/w/x',
+    terminal: TERMINAL
+  }])
+  // The terminal stays local: on no card, in no snapshot.
+  assert.ok(!JSON.stringify(room.snapshot()).includes('block:b'))
+  assert.ok(!JSON.stringify(ok(await a.cmd('catchUp'))).includes('ttys002'))
+
+  // Two agents in one harness process (Codex's app-server): shared, so no pane is looked for.
+  const b = await agent({ harness: 'codex', harnessPid: 4400, pid: 4401, branch: 'b1' })
+  const c = await agent({ harness: 'codex', harnessPid: 4400, pid: 4402, branch: 'b2' })
+  ok(await human.cmd('agents.open', { agent: b.welcome.agent.id }))
+  assert.deepEqual(terminals.asked.slice(1).map(x => [x.harness, x.shared, x.terminal]), [['codex', true, null]], 'a hello without terminal: null')
+  c.close()
+  b.close()
+
+  // An agent that left (its card lingers): still opens, as not present.
+  ok(await a.cmd('bye'))
+  ok(await human.cmd('agents.open', { agent: id }))
+  assert.equal(terminals.asked.at(-1).present, false)
+  human.close()
+})
+
+test('agents.open: one-line errors, for unknown agents, bad arguments and the opener\'s failures', async (t) => {
+  const terminals = fakeTerminals((x) => {
+    if (x.harness === 'gemini') throw new Error("gemini-x has no terminal to open, and autochat can't resume Gemini CLI sessions")
+    if (x.harness === 'pi') throw new Error('couldn\'t open a Terminal window:\n  execution error')
+    return { opened: 'new-tab', detail: null }
+  })
+  await start(t, { terminals })
+  const g = await agent({ harness: 'gemini' })
+  const p = await agent({ harness: 'pi' })
+  const human = await subscribe()
+  for (const [args, error] of [
+    [{}, 'agent must be an agent id'],
+    [{ agent: 7 }, 'agent must be an agent id'],
+    [{ agent: 'nope' }, 'unknown agent: nope'],
+    [{ agent: g.welcome.agent.id }, "gemini-x has no terminal to open, and autochat can't resume Gemini CLI sessions"],
+    [{ agent: p.welcome.agent.id }, "couldn't open a Terminal window: execution error"]
+  ]) {
+    const r = await human.cmd('agents.open', args)
+    assert.deepEqual([r.ok, r.error], [false, error])
+  }
+  assert.equal(terminals.asked.length, 2, 'bad arguments never reach the opener')
+  human.close()
+  g.close()
+  p.close()
+})
+
+test('agents.open is for humans: agent connections get unknown command', async (t) => {
+  const terminals = fakeTerminals()
+  await start(t, { terminals })
+  const a = await agent()
+  assert.equal((await a.cmd('agents.open', { agent: a.welcome.agent.id })).error, 'unknown command')
+  assert.deepEqual(terminals.asked, [], 'never asked')
+  a.close()
+})
+
+test('agents.open without the daemon\'s opener (not the daemon) says so', async (t) => {
+  await start(t)
+  const a = await agent()
+  const human = await subscribe()
+  assert.equal((await human.cmd('agents.open', { agent: a.welcome.agent.id })).error, 'opening sessions needs the autochat daemon')
+  human.close()
+  a.close()
+})

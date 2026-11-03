@@ -1,8 +1,9 @@
 # Humans: the agents stream
 
 Code: [`src/agents/human.js`](../../src/agents/human.js), and the daemon's
-[`src/harness-jobs.js`](../../src/harness-jobs.js). Tests: `test/agents-human.test.js`,
-`test/harness-jobs.test.js`. P1: #65.
+[`src/harness-jobs.js`](../../src/harness-jobs.js) and [`src/terminals.js`](../../src/terminals.js).
+Tests: `test/agents-human.test.js`, `test/harness-jobs.test.js`, `test/terminals.test.js`. P1: #65;
+`agents.open`: #122.
 See the [module map](README.md#module-map).
 
 ## Protocol
@@ -35,6 +36,7 @@ Commands on an agents-stream connection (replies as in [Connections](README.md#c
 | `agents.say` | posts `text` as a human intervention, optionally into `thread` and addressed `to` names; `result: {message, rerouted?}` | `ack-required` (until acknowledged), the `post` validation errors, the secret check |
 | `agents.setupPlan` | [Connect agents](#connect-agents): what it would do for each harness; `result: {plans}` | a plan that fails (its error), `connecting agents needs the autochat daemon` |
 | `agents.setup` | [Connect agents](#connect-agents): connects the harnesses in `harnesses` (ids); `result: {applied, failed}` | `harnesses must be a list of harness ids`, `harnesses is empty`, `harnesses has too many ids (max 16)`, a setup that fails as a whole (its error) |
+| `agents.open` | [Open a session](#open-a-session): shows the session of the agent whose card id is `agent`; `result: {opened, detail}` | `agent must be an agent id`, `unknown agent: x`, `opening sessions needs the autochat daemon`, one line saying why it couldn't |
 
 ```json
 {"type":"cmd","id":1,"cmd":"agents.ack"}
@@ -140,3 +142,29 @@ and the daemon's exit never waits for a setup.
 - Starting the child process adds about 60 ms.
 
 The daemon's event loop never waits for any of it. Tests pass fakes.
+
+## Open a session
+
+The Agents tab's **Open Session** (an agent card's context menu) shows the human that agent's
+session: the terminal it runs in, the app it runs in, or a new tab that resumes it.
+
+```json
+{"type":"cmd","id":5,"cmd":"agents.open","agent":"a1b2c3d4"}
+{"type":"reply","id":5,"ok":true,"result":{"opened":"rex","detail":"its Rex pane (block:01a1…)"}}
+{"type":"reply","id":6,"ok":true,"result":{"opened":"new-tab","detail":"codex resume 01a1…, in a new tab of Rex's autochat session"}}
+{"type":"reply","id":7,"ok":false,"error":"claude-web runs in a terminal autochat can't find (ttys011)"}
+```
+
+- `agent` is the card's `id`. Any card works, including an agent that left in the last 10 minutes,
+  whose session can still be resumed.
+- `opened` says where it showed it: `rex` (its Rex pane), `tmux` (its tmux pane), `terminal` (its
+  terminal app), `app` (the app it runs in: Copilot sessions in the GitHub Copilot app) or
+  `new-tab` (its harness's resume command, in a new tab). `detail` says it in a few words, or is
+  `null`.
+- Errors are one line, written for the human: which agent, and why there's nothing to show.
+- Clients wait up to 20 s. Finding a Rex pane asks Rex about each terminal pane, a few at a time.
+
+How the daemon finds the session, from the agent's hello (its `harnessPid`, `sessionId`, `cwd`
+and `terminal`: [hello.md](hello.md)), is in [agents.md](../agents.md#open-a-session). As with
+Connect agents, room modules can't start programs, so `autochat daemon` constructs the room with
+`terminals: terminalOpener()` from [`src/terminals.js`](../../src/terminals.js). Tests pass fakes.

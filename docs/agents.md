@@ -301,6 +301,63 @@ ask again (`agentsInterventionAck` in `~/.autochat/config.json`, shared with Aut
 `--yes` skips the question, for scripts. When everyone in `--to` has left the room, it goes to the
 main stream instead, still addressed to them, and `say` says so.
 
+## Open a session
+
+**Open Session**, in an agent card's context menu in AutoChat.app's Agents tab, shows you that
+agent's session (`agents.open`: [protocol](agent-room/human.md#open-a-session)). The daemon looks
+for it from the agent's hello (its harness process, session id, directory and
+[`terminal`](agent-room/hello.md)), in this order:
+
+1. **Rex:** the pane whose processes hold the harness (its foreground process, the ones between it
+   and the pane's own process, or one the foreground process started, is the harness or an
+   ancestor that shares its terminal). The pane named by the hello's `REX_SESSION`/`REX_BLOCK` is
+   checked first, then every terminal pane. Rex shows that session and tab, focused on the pane,
+   and comes to the front.
+2. **tmux:** the hello's pane (`TMUX_PANE`), or another pane of that server, that started the
+   harness. Its window and pane are selected, a tmux client switches to it, and the terminal that
+   client runs in comes to the front.
+3. **Terminal, iTerm, Ghostty…:** a harness that shares its terminal with its shell: its terminal
+   app (`TERM_PROGRAM`, `__CFBundleIdentifier`) comes to the front, as for the lounge's pull back.
+4. **No terminal:** Copilot in the GitHub Copilot app opens there, at
+   `ghapp://sessions/<COPILOT_AGENT_SESSION_ID>`. Anything else gets its harness's resume command,
+   in its directory, in a new tab named after its title, in a Rex session labelled `autochat` (made
+   once, then reused). Without Rex (no `rex`, no Rex server running, or no Rex window open), a new
+   Terminal window runs it.
+
+| Harness | Resume command | Without a session id |
+| --- | --- | --- |
+| Codex | `codex resume <id>` | `codex resume` (its picker) |
+| Claude Code | `claude --resume <id>`; a background session: `claude attach <job>` | `claude --resume` (its picker) |
+| Copilot CLI | `copilot --resume=<id>` | `copilot --resume` (its picker) |
+| opencode | `opencode -s <id>` | `opencode` (its TUI lists sessions) |
+| pi | `pi --session <id>` | `pi --resume` (its picker) |
+
+A live harness in a terminal autochat can't name (over ssh, say) gets an error rather than a second
+copy of its session, and so does a harness with no resume command (Gemini CLI). autochat never
+types into a pane, and never closes a pane, tab or session.
+
+How each harness is found, as they run on a Mac today:
+
+- **In a terminal** (Copilot CLI, Claude Code, opencode, pi, Codex with `--no-daemon`): the harness
+  is its pane's foreground process, or under it, so steps 1 to 3 find it.
+- **Copilot in the GitHub Copilot app:** each session runs in the app's own Copilot runtime, with no
+  terminal; `autochat mcp` gets the session id and the app's bundle id, so it opens in the app.
+- **Codex's TUI:** by default it runs sessions in Codex's app-server, a daemon with no terminal that
+  hosts them all (it's every agent's `harnessPid`; while the first TUI is open, it's that TUI's
+  child), and Codex starts MCP servers with a filtered environment (no `CODEX_*`, `REX_*` or
+  `TERM_PROGRAM`). No pane holds a session's own process, so it opens `codex resume <id>`: another
+  TUI on the same session, from the same daemon. The id comes with the agent's first tool call
+  ([hello](agent-room/hello.md#a-session-id-learned-later)); until then, it's the picker.
+- **Claude Code background sessions** (`claude --bg`, the agents view): Claude Code's daemon runs
+  each on a terminal of its own (`claude bg-spare`), which no app shows, and the `REX_SESSION`/
+  `REX_BLOCK` it inherited name the pane where `claude` was first started, which holds none of it.
+  It opens `claude attach <job>`, with the job's id from `claude agents --json` (Claude Code
+  2.1.317), else `claude --resume <id>`.
+
+`AUTOCHAT_REX` is the `rex` to use (`off`: none). Otherwise it's `rex` on `PATH`, then
+`$REX_BIN_DIR/rex`, then the Rex Server app's. autochat never starts a Rex server
+(`--autostart=false`).
+
 ## Security model (local tier)
 
 - **Who's in the room:** only processes of your own OS user on this machine. The room lives in the

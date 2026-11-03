@@ -362,6 +362,7 @@ async function startCore ({ auto = false, daemon = false }) {
   if (daemon) {
     const { AgentRoom } = await import('../src/agents.js')
     const { harnessJobs } = await import('../src/harness-jobs.js')
+    const { terminalOpener } = await import('../src/terminals.js')
     const resumeMs = Number(envVar('AGENT_RESUME_MS'))
     agentRoom = new AgentRoom({
       human: identity.handle,
@@ -369,7 +370,9 @@ async function startCore ({ auto = false, daemon = false }) {
       onAck: () => saveConfig({ agentsInterventionAck: true }),
       limits: envVar('AGENT_RESUME_MS') && resumeMs >= 0 ? { resumeMs } : {},
       // Connect agents: planAgents() and setupAgents(), each in a child process.
-      harnesses: harnessJobs()
+      harnesses: harnessJobs(),
+      // agents.open: an agent's terminal, app, or a new tab resuming its session.
+      terminals: terminalOpener()
     })
   }
   const agents = agentRoom && { connect: (hello, peer) => agentRoom.connect(hello, peer), state: () => agentRoom.snapshot(), command: (msg) => agentRoom.command(msg) }

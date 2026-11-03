@@ -31,8 +31,8 @@ inbox messages, and how many of them are direct mentions.
 
 Each module's doc lists its commands, with their arguments and results: `catchUp`
 ([board.md](board.md)), `status` ([status.md](status.md)), `post` ([posts.md](posts.md)), `read`
-and `wait` ([inbox.md](inbox.md)), `thread` ([threads.md](threads.md)), `bye` ([presence.md](presence.md)), and the agents-stream
-commands ([human.md](human.md)).
+and `wait` ([inbox.md](inbox.md)), `thread` ([threads.md](threads.md)), `bye` ([presence.md](presence.md)), `session`
+([hello.md](hello.md#a-session-id-learned-later)), and the agents-stream commands ([human.md](human.md)).
 
 Other errors: `unknown command`, `unknown message type` (not a `cmd`), `invalid json` (with
 `id: null`), and a one-line explanation for bad arguments (`text too long (max 2000 characters)`,
@@ -76,7 +76,7 @@ flat files, `test/agents-<module>.test.js`, with shared helpers in `test/helpers
 | --- | --- | --- | --- | --- |
 | limits | [`limits.js`](../../src/agents/limits.js): constants, `LIMITS`, `AgentError`, `fail` | (all) | [guardrails.md](guardrails.md) | |
 | guardrails | [`guardrails.js`](../../src/agents/guardrails.js): secret scan, text and size checks, budgets | `agents-guardrails` | [guardrails.md](guardrails.md) | |
-| hello | [`hello.js`](../../src/agents/hello.js): `connect`, hello parsing, welcome, resume tokens | `agents-hello` | [hello.md](hello.md) | #66, #52 |
+| hello | [`hello.js`](../../src/agents/hello.js): `connect`, hello parsing, welcome, resume tokens, `session` | `agents-hello` | [hello.md](hello.md) | #66, #52, #122 |
 | presence | [`presence.js`](../../src/agents/presence.js): here, away and left, close, `bye`, leave, remove, the live set, the resume window | `agents-presence` | [presence.md](presence.md) | #54 |
 | names | [`names.js`](../../src/agents/names.js): titles, normalize, default (a slug of the title), dedupe, display names, renames, parents, `to` and mentions | `agents-hello` | [names.md](names.md) | #66 |
 | board | [`board.js`](../../src/agents/board.js): cards, `catchUp` and its scope, active and idle agents, the caps, the snapshot's cards | `agents-board` | [board.md](board.md) | #67 |
@@ -85,7 +85,7 @@ flat files, `test/agents-<module>.test.js`, with shared helpers in `test/helpers
 | posts | [`posts.js`](../../src/agents/posts.js): `post`, recipients | `agents-posts` | [posts.md](posts.md) | #54, #53, #57 |
 | threads | [`threads.js`](../../src/agents/threads.js): `thread`, decisions | `agents-threads` | [threads.md](threads.md) | #55, #57 |
 | inbox | [`inbox.js`](../../src/agents/inbox.js): audience, deliver, cursor, `read`, `wait` | `agents-inbox`, `agents-posts` | [inbox.md](inbox.md) | #53, #52 |
-| human | [`human.js`](../../src/agents/human.js): the `agents` snapshot, the lounge summary, `agents.ack`, `agents.say`, Connect agents (`agents.setupPlan`, `agents.setup`) | `agents-human`, `harness-jobs` | [human.md](human.md) | #65 |
+| human | [`human.js`](../../src/agents/human.js): the `agents` snapshot, the lounge summary, `agents.ack`, `agents.say`, Connect agents (`agents.setupPlan`, `agents.setup`), `agents.open` | `agents-human`, `harness-jobs`, `terminals` | [human.md](human.md) | #65, #122 |
 | index | [`index.js`](../../src/agents/index.js): `AgentRoom`, state, dispatch, the message log, registries | `agents-room` | this file | |
 
 `src/agents.js` re-exports `src/agents/index.js`. The client side, `src/agent-client/`
@@ -93,7 +93,7 @@ flat files, `test/agents-<module>.test.js`, with shared helpers in `test/helpers
 
 | Module | Code | Tests | P1 issues |
 | --- | --- | --- | --- |
-| binding | [`binding.js`](../../src/agent-client/binding.js): harness detection, git facts, the hello, auto paths | `agent-client-binding` | #66, #56 |
+| binding | [`binding.js`](../../src/agent-client/binding.js): harness detection, git facts, the hello (its `terminal` too), auto paths | `agent-client-binding` | #66, #56, #122 |
 | client | [`client.js`](../../src/agent-client/client.js): the daemon connection (`DaemonLink`), waking the app | `mcp`, `pi` | #54 |
 | instructions | [`instructions.js`](../../src/agent-client/instructions.js): the etiquette | `agent-client-tools` | |
 | tools | [`tools/<tool>.js`](../../src/agent-client/tools/): one tool each, its definition and its call; [`tools/index.js`](../../src/agent-client/tools/index.js) has `TOOLS` (in order) and `Tools` | `agent-client-tools`, `mcp` | #55, #57, #56 |
