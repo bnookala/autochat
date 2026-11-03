@@ -20,7 +20,6 @@ const env = {
   ...process.env,
   AUTOCHAT_HOME: home,
   COPILOT_HOME: path.join(tmp, 'copilot'),
-  AUTOCHAT_LAUNCH_RECORD: path.join(tmp, 'launches.jsonl'),
   AUTOCHAT_APP_DIRS: path.join(tmp, 'no-apps'),
   AUTOCHAT_DEBUG: '',
   TMUX: '',
@@ -96,7 +95,7 @@ function hook (args, payload, extraEnv = {}) {
   })
 }
 
-const setLaunch = (launch) => fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ launch }))
+const setConfig = (cfg) => fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify(cfg))
 
 test('the message: harness, session id and pid, nothing odd', () => {
   assert.deepEqual(doorbellMessage({ harness: 'claude', sessionId: 's-1', pid: 4242 }), { type: 'doorbell', harness: 'claude', sessionId: 's-1', pid: 4242 })
@@ -147,7 +146,7 @@ test('hooks print the line in their harness\'s format, on their doorbell event o
   let r = await hook(['preToolUse'], { sessionId: 'cp-1', cwd: tmp, toolName: 'bash', toolArgs: { command: 'ls' } })
   assert.equal(r.code, 0)
   assert.equal(r.stdout, JSON.stringify({ additionalContext: LINE }) + '\n')
-  assert.equal(r.result.action, 'delivered', 'the lounge still gets its hook message')
+  assert.equal(r.result.action, 'delivered', 'the core still gets its hook message')
   assert.deepEqual(d.doorbells(), [{ type: 'doorbell', harness: 'copilot', sessionId: 'cp-1', pid: process.pid }], 'pid: the process that ran the hook')
   // Older Copilot CLIs batch preToolUse.
   r = await hook(['preToolUse'], { sessionId: 'cp-1', toolCalls: [{ name: 'view', args: {} }] })
@@ -196,13 +195,13 @@ test('hooks print the line in their harness\'s format, on their doorbell event o
   assert.equal(d.doorbells().length, n)
 })
 
-test('hooks stay silent and quick without a clear answer; the doorbell rings while the lounge is paused', async (t) => {
+test('hooks stay silent and quick without a clear answer; the doorbell rings whether or not you\'re in the lounge', async (t) => {
   const payload = { sessionId: 'cp-2', cwd: tmp, toolName: 'bash', toolArgs: {} }
   // No daemon at all.
   fs.rmSync(path.join(home, 'run'), { recursive: true, force: true })
-  setLaunch('off')
+  setConfig({ lounge: 'off' })
   let r = await hook(['preToolUse'], payload)
-  assert.deepEqual([r.code, r.stdout, r.result.action], [0, '', 'disabled'])
+  assert.deepEqual([r.code, r.stdout, r.result.action], [0, '', 'not-running'])
 
   const d = await fakeDaemon(() => ({ ok: true, text: null }))
   t.after(() => d.close())
@@ -213,13 +212,13 @@ test('hooks stay silent and quick without a clear answer; the doorbell rings whi
     assert.deepEqual([r.code, r.stdout], [0, ''], JSON.stringify(answer))
     assert.ok(r.ms < 2500, `${JSON.stringify(answer)}: ${r.ms} ms`)
   }
-  // launch off pauses the lounge, not the agent room: it rings, and sends no hook message.
+  // Out of the lounge, it rings, and the hook message still goes to the attention queue.
   d.answer = () => ({ ok: true, text: LINE })
   const hooks = d.got.filter(m => m?.type === 'hook').length
   r = await hook(['preToolUse'], payload)
   assert.equal(JSON.parse(r.stdout).additionalContext, LINE)
-  assert.equal(r.result.action, 'disabled')
-  assert.equal(d.got.filter(m => m?.type === 'hook').length, hooks)
+  assert.equal(r.result.action, 'delivered')
+  assert.equal(d.got.filter(m => m?.type === 'hook').length, hooks + 1)
   // `autochat config doorbell off`: the hooks don't even ask.
   const asked = d.doorbells().length
   fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ doorbell: 'off' }))

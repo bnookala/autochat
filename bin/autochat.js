@@ -83,8 +83,8 @@ const switchText = () => loadConfig().lounge === 'off'
 const HELP = `autochat: ephemeral, serverless chat rooms (the lounge) for people whose coding agents are at work,
 and a local agent room where those agents meet
 
-  autochat setup              install Copilot CLI hooks (~/.copilot/hooks/autochat.json);
-                              on macOS, hooks wake AutoChat.app if it's installed (launch=app)
+  autochat setup              install Copilot CLI hooks (~/.copilot/hooks/autochat.json): they tell
+                              autochat when an agent working on its own needs you or is done
   autochat setup --harness H[,H…] [--dry-run]
                               install the hooks of these harnesses (docs/harnesses.md)
   autochat setup --agents [--harness H[,H…]] [--dry-run]
@@ -107,8 +107,7 @@ and a local agent room where those agents meet
   autochat agents [--json]    watch the agent room (live; --json prints one snapshot)
   autochat agents say "<text>" [--thread ID] [--to NAME] [--yes]
                               step in: post to the agents as a human (asks once to confirm)
-  autochat config [k] [v]     show/set config (launch: auto|app|tmux|ghostty|iterm|terminal|notify|off,
-                              lounge: on|off, in the lounge while autochat runs;
+  autochat config [k] [v]     show/set config (lounge: on|off, in the lounge while autochat runs;
                               doorbell: on|off, tell agents in the agent room what's waiting
                               for them, after their tool calls)
   autochat config trigger [harness] [mode,…|never|default]
@@ -138,7 +137,8 @@ async function main () {
         if (r.failed.length) process.exitCode = 1
         return
       }
-      const { removeLegacyHooks, legacyHooksFile, configureLaunch, APP_INSTALL_STEPS, APP_INSTALL_URL } = await import('../src/setup.js')
+      const { removeLegacyHooks, legacyHooksFile, APP_INSTALL_STEPS, APP_INSTALL_URL } = await import('../src/setup.js')
+      const { appInstalled } = await import('../src/launcher.js')
       const id = loadIdentity()
       // By default, setup installs Copilot's hooks; it offers the other harnesses' below.
       const files = []
@@ -150,30 +150,20 @@ async function main () {
       const { migratedHome } = await import('../src/paths.js')
       if (migratedHome) console.log(dim(`moved ${migratedHome.from} → ${migratedHome.to} (same identity and handle)`))
       if (removeLegacyHooks()) console.log(dim(`removed the old lolchat hooks: ${legacyHooksFile()}`))
-      const launch = configureLaunch()
-      const room = parseRoom(loadConfig().room)
-      const launchLine = launch.launch === 'off'
-        ? 'off (paused)'
-        : launch.app
-          ? `app (${launch.app})${launch.previous !== 'app' ? dim(` · was ${launch.previous}`) : ''}`
-          : `${launch.launch}${launch.launch === 'auto' ? ` (→ ${launch.method})` : ''}`
-      const opens = launch.method === 'app'
-        ? 'AutoChat.app in your menu bar puts you'
-        : 'a chat window opens and you\'re'
-      const next = launch.launch === 'off'
-        ? `autochat is paused, so autopilot runs won't open anything. Resume with ${bold('autochat config launch ' + (launch.app ? 'app' : 'auto'))}.`
-        : `Next time a Copilot CLI session goes into autopilot (new sessions pick up hooks),\n${opens} in the room with everyone else on autopilot.`
+      const cfg = loadConfig()
+      const room = parseRoom(cfg.room)
+      const app = process.platform === 'darwin' ? appInstalled() : null
       console.log(`${bold('autochat is set up.')}
   hooks     ${file}
   you are   ${id.handle}
-  room      ${room.display}
-  launch    ${launchLine}
+  room      ${room.display}${cfg.lounge === 'off' ? dim(' (lounge off: autochat config lounge on)') : ''}
 
-${next}
+While autochat runs (${app ? 'AutoChat.app, in your menu bar' : `${bold('autochat')} in a terminal`}), you're in the lounge with everyone else.
+New Copilot CLI sessions pick up the hooks: autochat hears when an agent working on its own needs you or is done.
 Invite people: ${bold('autochat host')} (private) or just share ${bold('#' + DEFAULT_ROOM)}.`)
-      if (process.platform === 'darwin' && !launch.app) {
+      if (process.platform === 'darwin' && !app) {
         console.log(`
-${bold('Get the menu bar app')} (no terminal windows; a status panel and a 30 s countdown instead):
+${bold('Get the menu bar app')} (always on, with your agents' attention queue):
 ${APP_INSTALL_STEPS.map(l => '  ' + l).join('\n')}
 ${dim('More: ' + APP_INSTALL_URL)}`)
       }
@@ -253,10 +243,6 @@ ${inviteText(room)}`)
         const v = rest[1]
         const val = /^\d+$/.test(v) ? Number(v) : v === 'true' ? true : v === 'false' ? false : v
         if (k === 'room') parseRoom(v)
-        if (k === 'launch') {
-          const { LAUNCH_METHODS } = await import('../src/launcher.js')
-          if (!LAUNCH_METHODS.includes(v)) throw new Error('usage: autochat config launch ' + LAUNCH_METHODS.join('|'))
-        }
         if (k === 'lounge' && !LOUNGE_MODES.includes(val)) throw new Error('usage: autochat config lounge on|off')
         if (k === 'doorbell' && !DOORBELL_MODES.includes(val)) throw new Error('usage: autochat config doorbell on|off')
         console.log(JSON.stringify(saveConfig({ [k]: val }), null, 2))
@@ -309,7 +295,7 @@ async function offerHooks () {
   const plans = planHooks(offeredHooks(ctx), ctx).filter(p => p.apply)
   if (!plans.length) return
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    console.log(`\nAlso found ${plans.map(p => p.name).join(', ')}. To go to the lounge from ${plans.length > 1 ? 'them' : 'it'} too: ${bold('autochat setup --harness ' + plans.map(p => p.id).join(','))}`)
+    console.log(`\nAlso found ${plans.map(p => p.name).join(', ')}. To hear from ${plans.length > 1 ? 'them' : 'it'} too: ${bold('autochat setup --harness ' + plans.map(p => p.id).join(','))}`)
     return
   }
   for (const p of plans) {
@@ -356,10 +342,9 @@ const runningIn = (info) => info?.daemon ? `the menu bar app (autochat daemon, p
 
 // The Controller + hook socket shared by the terminal UI and the headless daemon. Once it owns the
 // socket, it joins the lounge (unless that's off).
-async function startCore ({ auto = false, daemon = false }) {
+async function startCore ({ daemon = false }) {
   const { Controller } = await import('../src/controller.js')
   const { serve } = await import('../src/ipc.js')
-  const { readSpool, releaseLaunchLock } = await import('../src/hook.js')
   const identity = loadIdentity()
   const config = loadConfig()
   const controller = new Controller({ identity, config, loadConfig, saveConfig, daemon, bootstrap: bootstrap() })
@@ -407,8 +392,6 @@ async function startCore ({ auto = false, daemon = false }) {
   } catch (err) {
     agentRoom?.close()
     throw err
-  } finally {
-    if (auto || daemon) releaseLaunchLock()
   }
   controller.on('change', () => server.publish())
   controller.start()
@@ -428,10 +411,6 @@ async function startCore ({ auto = false, daemon = false }) {
     scanner.on('change', () => server.publish('lounge'))
     scanner.start()
   }
-  // Hooks that fire while a UI is starting (or a second launch loses the race) queue events in the spool.
-  const drain = () => { for (const m of readSpool()) if (Date.now() - (m.ts || 0) < 60000) controller.handle(m) }
-  drain()
-  const drainTimer = setInterval(drain, 1000)
 
   // Also follow sessions that never call the hooks (say, their process predates them): each
   // adapter's fallback observer (Copilot: the session-state scan).
@@ -441,7 +420,6 @@ async function startCore ({ auto = false, daemon = false }) {
   })
 
   const stop = async () => {
-    clearInterval(drainTimer)
     stopObserving()
     scanner?.stop()
     agentRoom?.close()
@@ -452,27 +430,23 @@ async function startCore ({ auto = false, daemon = false }) {
 }
 
 async function ui () {
-  const { values } = parseArgs({ args: rest, options: { auto: { type: 'boolean' } } })
+  parseArgs({ args: rest, options: {} })
   const { TUI } = await import('../src/tui.js')
   const { send } = await import('../src/ipc.js')
   const { hooksInstalled } = await import('../src/setup.js')
   // The menu bar app owns the room: don't fight it for the socket (or open a TUI at all).
   const running = await send({ type: 'ping' }, 400)
   if (running?.daemon) {
-    if (values.auto) (await import('../src/hook.js')).releaseLaunchLock()
-    else console.log(`autochat is running in ${runningIn(running)}.`)
+    console.log(`autochat is running in ${runningIn(running)}.`)
     return
   }
   if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('autochat needs an interactive terminal')
 
   let core
   try {
-    core = await startCore({ auto: !!values.auto })
+    core = await startCore({})
   } catch (err) {
-    if (err.code === 'ALREADY_RUNNING') {
-      if (values.auto) process.exit(0)
-      throw new Error(`autochat is already running in ${runningIn(err.info)}`)
-    }
+    if (err.code === 'ALREADY_RUNNING') throw new Error(`autochat is already running in ${runningIn(err.info)}`)
     throw err
   }
   const { controller } = core
@@ -484,15 +458,11 @@ async function ui () {
     exiting = true
     tui.stop()
     await core.stop()
-    const { closeOwnTerminal } = await import('../src/launcher.js')
-    closeOwnTerminal()
     process.exit(0)
   }
   controller.on('exit', exit)
   for (const sig of ['SIGTERM', 'SIGHUP', 'SIGINT']) process.on(sig, exit)
   tui.start()
-  // Launched by a hook but nothing to track (e.g. lost race): don't linger.
-  if (values.auto) setTimeout(() => { if (controller.phase === 'lounge') exit() }, 20000).unref()
 }
 
 // Headless core for GUI clients (the macOS menu bar app). It runs until a signal: SIGTERM/SIGINT
@@ -643,7 +613,7 @@ async function doctorProcesses (ok) {
   for (const a of found.agents) {
     if (a.harness === 'copilot') continue
     const what = `${a.harness} (pid ${a.pid})${a.cwd ? ` in ${tilde(a.cwd, ctx)}` : ''}`
-    if (a.hooks === 'missing') ok(false, `${what} has no autochat hooks, so it can't open autochat (autochat setup --harness ${a.harness})`)
+    if (a.hooks === 'missing') ok(false, `${what} has no autochat hooks, so it misses the attention queue and the doorbell (autochat setup --harness ${a.harness})`)
     else if (a.hooks === 'unsupported') console.log(`… ${what}: autochat can't follow ${a.harness} yet`)
   }
 }
@@ -687,19 +657,18 @@ async function doctor () {
   const cfg = loadConfig()
   await doctorHooks(ok, cfg)
   ok(true, `identity ${loadIdentity().handle}`)
-  const { pickMethod, appInstalled } = await import('../src/launcher.js')
-  const method = pickMethod(cfg, process.env)
-  ok(true, `room ${parseRoom(cfg.room).display}, launch=${cfg.launch}${cfg.launch === 'auto' ? ` (→ ${method})` : ''}`)
+  ok(true, `room ${parseRoom(cfg.room).display}${cfg.lounge === 'off' ? ', lounge off (autochat config lounge on)' : ''}`)
+  const { appInstalled } = await import('../src/launcher.js')
   const app = appInstalled()
   if (process.platform === 'darwin' || app) {
-    if (app) ok(true, `AutoChat.app installed: ${app}${method === 'app' ? '' : ` (not used: launch=${cfg.launch})`}`)
-    else console.log(`… AutoChat.app not installed: hooks open a terminal instead (get the app: ${APP_INSTALL_URL})`)
+    if (app) ok(true, `AutoChat.app installed: ${app}`)
+    else console.log(`… AutoChat.app not installed: run \`autochat\` in a terminal instead (get the app: ${APP_INSTALL_URL})`)
   }
   const ping = await send({ type: 'ping' }, 500)
   const where = ping?.phase === 'room' ? 'in the lounge' : 'not in the lounge'
   if (ping?.daemon) ok(true, `autochat daemon running (pid ${ping.pid}, ${where})`)
   else if (ping) ok(true, `autochat UI running in a terminal (${where})`)
-  else console.log(`… autochat not running${method === 'app' ? ': AutoChat.app starts its daemon on the next autopilot run' : ''}`)
+  else console.log('… autochat not running: open AutoChat.app, or run `autochat`')
   await doctorAgents(ping, ok)
   const { liveSessions, processStartMs } = await import('../src/scan.js')
   const { hooksInstalledAt } = await import('../src/setup.js')
@@ -712,7 +681,7 @@ async function doctor () {
     const what = `${l.sid.slice(0, 8)} ${l.mode || 'unknown mode'}${l.running ? ', running' : ''} · ${l.cwd || '?'}`
     if (hooked) ok(true, `${what} (hooks loaded)`)
     else if (started === null || installedAt === null) ok(true, `${what} (hooks: unknown)`)
-    else ok(false, `${what}\n    its Copilot process started before autochat's hooks were installed, so it can't open autochat.\n    fix: run /restart in that session (or exit and \`copilot --resume=${l.sid}\`). meanwhile, run \`autochat\` to join manually.`)
+    else ok(false, `${what}\n    its Copilot process started before autochat's hooks were installed, so it misses the attention queue and the doorbell.\n    fix: run /restart in that session (or exit and \`copilot --resume=${l.sid}\`).`)
   }
   await doctorProcesses(ok)
   console.log('… testing P2P (two local peers via the public DHT, up to 40s)')

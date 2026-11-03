@@ -480,7 +480,7 @@ test('CLI: setup offers Codex, setup --harness codex installs it and says to tru
 
   const plain = cli('setup')
   assert.equal(plain.status, 0, plain.stderr)
-  assert.match(plain.stdout, /Also found Codex\. To go to the lounge from it too: autochat setup --harness codex/)
+  assert.match(plain.stdout, /Also found Codex\. To hear from it too: autochat setup --harness codex/)
   assert.equal(u.read(), userText, 'plain setup without a terminal never touches it')
 
   const dry = cli('setup', '--harness', 'codex', '--dry-run')

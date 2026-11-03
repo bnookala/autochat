@@ -3,12 +3,9 @@ import path from 'node:path'
 import { home, ensureDir } from './paths.js'
 import { DEFAULT_ROOM, parseRoom } from './protocol.js'
 
-// Keys from older versions (idleMs, countdownSeconds, focus) are ignored.
+// Keys from older versions (launch, tmuxSplit, idleMs, countdownSeconds, focus) are ignored.
 export const DEFAULTS = {
   room: DEFAULT_ROOM,
-  // auto | app | tmux | ghostty | iterm | terminal | notify | off (see LAUNCH_METHODS)
-  launch: 'auto',
-  tmuxSplit: 'v',
   // on | off: in the lounge's room while autochat runs
   lounge: 'on',
   announce: true,

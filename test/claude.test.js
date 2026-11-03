@@ -274,7 +274,7 @@ test('CLI: setup offers Claude Code, setup --harness claude installs it, the hoo
 
   const plain = cli('setup')
   assert.equal(plain.status, 0, plain.stderr)
-  assert.match(plain.stdout, /Also found Claude Code\. To go to the lounge from it too: autochat setup --harness claude/)
+  assert.match(plain.stdout, /Also found Claude Code\. To hear from it too: autochat setup --harness claude/)
   assert.equal(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'), userText, 'plain setup without a terminal never touches it')
 
   const dry = cli('setup', '--harness', 'claude', '--dry-run')

@@ -187,7 +187,7 @@ test('CLI: setup offers pi, setup --harness pi and --agents write the extension,
   const cli = (...args) => spawnSync(process.execPath, [BIN, ...args], { env, encoding: 'utf8' })
   const plain = cli('setup')
   assert.equal(plain.status, 0, plain.stderr)
-  assert.match(plain.stdout, /Also found pi\. To go to the lounge from it too: autochat setup --harness pi/)
+  assert.match(plain.stdout, /Also found pi\. To hear from it too: autochat setup --harness pi/)
   assert.equal(fs.existsSync(u.file), false, 'plain setup without a terminal writes nothing for pi')
 
   const dry = cli('setup', '--harness', 'pi', '--dry-run')

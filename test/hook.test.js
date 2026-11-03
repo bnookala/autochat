@@ -12,9 +12,7 @@ const env = {
   ...process.env,
   COPILOT_HOME: path.join(tmp, 'copilot'),
   AUTOCHAT_HOME: path.join(tmp, 'lc'),
-  AUTOCHAT_LAUNCH_RECORD: path.join(tmp, 'launches.jsonl'),
   AUTOCHAT_DEBUG: '1',
-  // An installed AutoChat.app must not change which launcher these tests see.
   AUTOCHAT_APP_DIRS: path.join(tmp, 'no-apps'),
   TMUX: '', TMUX_PANE: ''
 }
@@ -28,11 +26,10 @@ const writeSession = (sid, mode) => {
 }
 
 const hook = (event, payload, extraEnv = {}) => {
+  const t0 = Date.now()
   const r = spawnSync(process.execPath, [BIN, 'hook', event], { input: typeof payload === 'string' ? payload : JSON.stringify(payload), env: { ...env, ...extraEnv }, encoding: 'utf8' })
-  return { code: r.status, stdout: r.stdout, result: r.stderr ? JSON.parse(r.stderr.trim().split('\n').pop()) : null }
+  return { code: r.status, stdout: r.stdout, result: r.stderr ? JSON.parse(r.stderr.trim().split('\n').pop()) : null, ms: Date.now() - t0 }
 }
-
-const launches = () => { try { return fs.readFileSync(env.AUTOCHAT_LAUNCH_RECORD, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) } catch { return [] } }
 
 test('hook never fails or prints, even on garbage input', () => {
   for (const input of ['', 'not json', '{"sessionId": "../../etc"}', '[]']) {
@@ -43,51 +40,28 @@ test('hook never fails or prints, even on garbage input', () => {
   }
 })
 
-test('hook launches the UI only for sessions in autopilot', async () => {
-  writeSession('s-interactive', 'interactive')
+test('with no core running, a hook does nothing and exits at once: no launch, spool or notification', () => {
   writeSession('s-auto', 'autopilot')
-  let r = hook('postToolUse', { sessionId: 's-interactive', toolName: 'bash', cwd: '/x' })
-  assert.equal(r.code, 0)
-  assert.equal(r.stdout, '')
-  assert.equal(r.result.action, 'ignored')
-  assert.equal(launches().length, 0)
-
-  r = hook('agentStop', { sessionId: 's-auto' })
-  assert.equal(r.result.action, 'ignored', 'stop events never launch')
-
-  // Inside tmux, so the hook opens a UI on every platform (CI's Linux runners have no terminal or DISPLAY).
-  r = hook('postToolUse', { sessionId: 's-auto', toolName: 'bash', cwd: '/x' }, { TMUX: '/x/tmux,1,0', TMUX_PANE: '%1' })
-  assert.equal(r.result.action, 'launched')
-  assert.equal(r.stdout, '')
-  const l = launches()
-  assert.equal(l.length, 1)
-  assert.ok(l[0].cmd.includes('ui') && l[0].cmd.includes('--auto'))
-
-  // While the first launch is pending, every event (even completions) is queued, never dropped.
-  r = hook('preToolUse', { sessionId: 's-auto', toolCalls: [{ name: 'view', args: {} }] })
-  assert.equal(r.result.action, 'spooled')
-  r = hook('postToolUse', { sessionId: 's-auto', toolName: 'task_complete', toolArgs: { summary: 'quick' } })
-  assert.equal(r.result.action, 'spooled')
-  assert.equal(launches().length, 1)
-  const { readSpool } = await import('../src/hook.js')
-  assert.deepEqual(readSpool().map(m => m.kind), ['activity', 'activity', 'complete'], 'spool drains in order')
-})
-
-test('notify-only launches nudge once per session', () => {
-  const home = path.join(tmp, 'lc-notify')
-  spawnSync(process.execPath, [BIN, 'config', 'launch', 'notify'], { env: { ...env, AUTOCHAT_HOME: home } })
-  const e = { AUTOCHAT_HOME: home }
-  assert.equal(hook('preToolUse', { sessionId: 's-auto', toolCalls: [{ name: 'bash' }] }, e).result.action, 'launched')
-  assert.equal(hook('preToolUse', { sessionId: 's-auto', toolCalls: [{ name: 'bash' }] }, e).result.action, 'ignored')
-  const run = fs.readdirSync(path.join(home, 'run'))
-  assert.equal(run.filter(f => f.startsWith('spool-')).length, 0, 'no spool files pile up')
-})
-
-test('hook picks tmux when inside tmux', () => {
-  fs.rmSync(path.join(env.AUTOCHAT_HOME, 'run'), { recursive: true, force: true })
-  fs.rmSync(env.AUTOCHAT_LAUNCH_RECORD, { force: true })
-  const r = hook('userPromptSubmitted', { sessionId: 's-auto', prompt: 'go' }, { TMUX: '/tmp/tmux-1/default,1,0', TMUX_PANE: '%3' })
-  assert.equal(r.result.method, 'tmux')
+  // Keys from before always-on (AutoChat.app, tmux) are ignored, even with the app installed.
+  const apps = path.join(tmp, 'apps')
+  fs.mkdirSync(path.join(apps, 'AutoChat.app', 'Contents'), { recursive: true })
+  fs.writeFileSync(path.join(apps, 'AutoChat.app', 'Contents', 'Info.plist'), '<plist><string>com.bnookala.autochat</string></plist>')
+  fs.mkdirSync(env.AUTOCHAT_HOME, { recursive: true })
+  fs.writeFileSync(path.join(env.AUTOCHAT_HOME, 'config.json'), JSON.stringify({ launch: 'app', tmuxSplit: 'h', idleMs: 1000, countdownSeconds: 5, focus: 'always' }))
+  const inTmux = { AUTOCHAT_APP_DIRS: apps, TMUX: '/x/tmux,1,0', TMUX_PANE: '%1' }
+  for (const [event, payload] of [
+    ['userPromptSubmitted', { sessionId: 's-auto', prompt: 'go' }],
+    ['preToolUse', { sessionId: 's-auto', toolCalls: [{ name: 'bash', args: {} }] }],
+    ['notification', { sessionId: 's-auto', notificationType: 'permission_prompt', title: 'Permission needed', message: 'go?' }],
+    ['postToolUse', { sessionId: 's-auto', toolName: 'task_complete', toolArgs: { summary: 'done' } }]
+  ]) {
+    const r = hook(event, payload, inTmux)
+    assert.deepEqual([r.code, r.stdout, r.result.action], [0, '', 'not-running'], event)
+    assert.ok(r.ms < 2500, `${event}: ${r.ms} ms`)
+  }
+  // Copilot's mode cache is all it writes: no spool, launch lock, opt-out or notification stamp.
+  assert.deepEqual(fs.readdirSync(env.AUTOCHAT_HOME).sort(), ['cache', 'config.json'])
+  fs.rmSync(path.join(env.AUTOCHAT_HOME, 'config.json'))
 })
 
 test('hook delivers to a running UI and maps requests', async () => {
@@ -128,72 +102,17 @@ test('hook delivers to a running UI and maps requests', async () => {
   }
 })
 
-test('pickMethod prefers AutoChat.app on macOS; an explicit launch setting still wins', async () => {
-  const { pickMethod, appInstalled, APP_BUNDLE_ID } = await import('../src/launcher.js')
-  const apps = path.join(tmp, 'apps')
+test('appInstalled finds AutoChat.app by its bundle id', async () => {
+  const { appInstalled, APP_BUNDLE_ID } = await import('../src/launcher.js')
+  const apps = path.join(tmp, 'apps-check')
   const app = path.join(apps, 'AutoChat.app')
   fs.mkdirSync(path.join(app, 'Contents'), { recursive: true })
-  const e = { AUTOCHAT_APP_DIRS: path.join(tmp, 'nowhere') + path.delimiter + apps, TMUX: '/x/tmux,1,0', TMUX_PANE: '%1' }
+  const e = { AUTOCHAT_APP_DIRS: path.join(tmp, 'nowhere') + path.delimiter + apps }
   assert.equal(appInstalled(e), null, 'a bundle without Info.plist is not the app')
   fs.writeFileSync(path.join(app, 'Contents', 'Info.plist'), '<plist><dict><key>CFBundleIdentifier</key><string>com.example.other</string></dict></plist>')
   assert.equal(appInstalled(e), null, 'some other app named AutoChat.app')
   fs.writeFileSync(path.join(app, 'Contents', 'Info.plist'), `<plist><dict><key>CFBundleIdentifier</key><string>${APP_BUNDLE_ID}</string></dict></plist>`)
   assert.equal(appInstalled(e), app)
-  assert.equal(pickMethod({ launch: 'auto' }, e, 'darwin'), 'app', 'the app beats tmux and terminals')
-  assert.equal(pickMethod({ launch: 'tmux' }, e, 'darwin'), 'tmux', 'explicit config wins')
-  assert.equal(pickMethod({ launch: 'auto' }, e, 'linux'), 'tmux', 'macOS only')
-  assert.equal(pickMethod({ launch: 'auto' }, { AUTOCHAT_APP_DIRS: path.join(tmp, 'nowhere') }, 'darwin'), 'terminal', 'not installed: terminals as before')
-
-  // Through the hook, auto-detected on macOS.
-  if (process.platform === 'darwin') {
-    const home = path.join(tmp, 'lc-app-auto')
-    const r = hook('userPromptSubmitted', { sessionId: 's-auto', prompt: 'go' }, { AUTOCHAT_HOME: home, AUTOCHAT_APP_DIRS: apps })
-    assert.equal(r.result.method, 'app')
-  }
-  const bad = spawnSync(process.execPath, [BIN, 'config', 'launch', 'nope'], { env: { ...env, AUTOCHAT_HOME: path.join(tmp, 'lc-app-bad') }, encoding: 'utf8' })
-  assert.equal(bad.status, 1)
-  assert.match(bad.stderr, /auto\|app\|tmux/)
-})
-
-test('launch=app wakes AutoChat.app (never a terminal) and spools events until its daemon is up', async () => {
-  const home = path.join(tmp, 'lc-app')
-  const e = { AUTOCHAT_HOME: home }
-  const cfg = spawnSync(process.execPath, [BIN, 'config', 'launch', 'app'], { env: { ...env, ...e }, encoding: 'utf8' })
-  assert.equal(cfg.status, 0, cfg.stderr)
-  fs.rmSync(env.AUTOCHAT_LAUNCH_RECORD, { force: true })
-  let r = hook('userPromptSubmitted', { sessionId: 's-auto', prompt: 'go' }, e)
-  assert.deepEqual(r.result, { action: 'launched', method: 'app' })
-  assert.deepEqual(launches(), [{ method: 'app', cmd: ['open', '-g', '-b', 'com.bnookala.autochat'] }])
-
-  // A cold app start takes a few seconds: hooks in the meantime queue instead of relaunching.
-  r = hook('preToolUse', { sessionId: 's-auto', toolCalls: [{ name: 'bash' }] }, e)
-  assert.equal(r.result.action, 'spooled')
-  assert.equal(launches().length, 1)
-
-  process.env.AUTOCHAT_HOME = home
-  try {
-    const { serve } = await import('../src/ipc.js')
-    const { readSpool } = await import('../src/hook.js')
-    const server = await serve(() => ({}))
-    try {
-      assert.deepEqual(readSpool().map(m => m.kind), ['activity', 'activity'], 'the daemon drains everything the hooks queued')
-      const done = await new Promise((resolve) => {
-        import('node:child_process').then(({ spawn }) => {
-          const c = spawn(process.execPath, [BIN, 'hook', 'postToolUse'], { env: { ...env, ...e } })
-          let err = ''
-          c.stderr.on('data', (d) => { err += d })
-          c.stdin.end(JSON.stringify({ sessionId: 's-auto', toolName: 'task_complete', toolArgs: { summary: 'ok' } }))
-          c.on('exit', () => resolve(JSON.parse(err.trim().split('\n').pop())))
-        })
-      })
-      assert.equal(done.action, 'delivered')
-    } finally {
-      server.close()
-    }
-  } finally {
-    process.env.AUTOCHAT_HOME = env.AUTOCHAT_HOME
-  }
-  assert.equal(launches().length, 1)
 })
 
 test('setup writes fail-safe hooks for the right events', async () => {
@@ -201,7 +120,7 @@ test('setup writes fail-safe hooks for the right events', async () => {
   const cfg = buildHooksConfig()
   assert.equal(cfg.version, 1)
   assert.deepEqual(Object.keys(cfg.hooks).sort(), ['agentStop', 'notification', 'postToolUse', 'preToolUse', 'sessionEnd', 'userPromptSubmitted'])
-  assert.equal(cfg.hooks.preToolUse[0].matcher, undefined, 'preToolUse sees every tool so rooms open immediately')
+  assert.equal(cfg.hooks.preToolUse[0].matcher, undefined, 'preToolUse sees every tool: requests, and the doorbell')
   assert.equal(cfg.hooks.postToolUse[0].matcher, 'task_complete')
   for (const [, entries] of Object.entries(cfg.hooks)) assert.match(entries[0].bash, /\|\| true$/)
 })

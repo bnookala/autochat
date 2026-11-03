@@ -10,8 +10,6 @@ const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'bi
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'autochat-setup-'))
 process.env.AUTOCHAT_HOME = path.join(tmp, 'ac')
 process.env.COPILOT_HOME = path.join(tmp, 'copilot')
-const { configureLaunch } = await import('../src/setup.js')
-const { loadConfig, saveConfig } = await import('../src/config.js')
 const { APP_BUNDLE_ID } = await import('../src/launcher.js')
 
 const apps = path.join(tmp, 'apps')
@@ -20,38 +18,29 @@ fs.writeFileSync(path.join(apps, 'AutoChat.app', 'Contents', 'Info.plist'), `<pl
 const withApp = { AUTOCHAT_APP_DIRS: apps }
 const noApp = { AUTOCHAT_APP_DIRS: path.join(tmp, 'nowhere') }
 
-test('configureLaunch switches to launch=app only on macOS with AutoChat.app installed', () => {
-  saveConfig({ launch: 'auto' })
-  assert.deepEqual(configureLaunch({ platform: 'darwin', env: noApp }), { app: null, launch: 'auto', previous: 'auto', method: 'terminal' })
-  assert.deepEqual(configureLaunch({ platform: 'linux', env: withApp }), { app: null, launch: 'auto', previous: 'auto', method: 'notify' })
-  assert.equal(loadConfig().launch, 'auto')
-
-  saveConfig({ launch: 'tmux' })
-  const r = configureLaunch({ platform: 'darwin', env: withApp })
-  assert.deepEqual(r, { app: path.join(apps, 'AutoChat.app'), launch: 'app', previous: 'tmux', method: 'app' })
-  assert.equal(loadConfig().launch, 'app')
-  assert.equal(configureLaunch({ platform: 'darwin', env: withApp }).previous, 'app', 'idempotent')
-
-  saveConfig({ launch: 'off' })
-  assert.equal(configureLaunch({ platform: 'darwin', env: withApp }).launch, 'off', "doesn't undo the app's Pause")
-  assert.equal(loadConfig().launch, 'off')
-})
-
-test('autochat setup says what it did about the app', { skip: process.platform !== 'darwin' && 'macOS only' }, () => {
+test('autochat setup: the lounge while autochat runs, and how to get the app', { skip: process.platform !== 'darwin' && 'macOS only' }, () => {
   const run = (home, env) => spawnSync(process.execPath, [BIN, 'setup'], {
     env: { ...process.env, AUTOCHAT_HOME: path.join(tmp, home), ...env },
     encoding: 'utf8'
   })
   const without = run('cli-no-app', noApp)
   assert.equal(without.status, 0, without.stderr)
-  assert.match(without.stdout, /launch {4}auto/)
+  assert.match(without.stdout, /While autochat runs \(autochat in a terminal\), you're in the lounge/)
   assert.match(without.stdout, /Get the menu bar app/)
   assert.match(without.stdout, /macos\/scripts\/build-app\.sh --install/)
+  assert.doesNotMatch(without.stdout, /launch/)
 
+  // A config from before always-on: its old keys change nothing, and setup leaves them be.
+  const old = path.join(tmp, 'cli-app')
+  fs.mkdirSync(old, { recursive: true })
+  fs.writeFileSync(path.join(old, 'config.json'), JSON.stringify({ launch: 'off', countdownSeconds: 5, focus: 'never', idleMs: 1000, tmuxSplit: 'h' }))
   const withIt = run('cli-app', withApp)
   assert.equal(withIt.status, 0, withIt.stderr)
-  assert.match(withIt.stdout, /launch {4}app \(.*AutoChat\.app\)/)
-  assert.doesNotMatch(withIt.stdout, /Get the menu bar app/)
-  const cfg = JSON.parse(fs.readFileSync(path.join(tmp, 'cli-app', 'config.json'), 'utf8'))
-  assert.equal(cfg.launch, 'app')
+  assert.match(withIt.stdout, /While autochat runs \(AutoChat\.app, in your menu bar\), you're in the lounge/)
+  assert.match(withIt.stdout, /room {6}#lobby\n/)
+  assert.doesNotMatch(withIt.stdout, /Get the menu bar app|paused|launch/)
+  assert.equal(JSON.parse(fs.readFileSync(path.join(old, 'config.json'), 'utf8')).launch, 'off')
+
+  fs.writeFileSync(path.join(old, 'config.json'), JSON.stringify({ lounge: 'off' }))
+  assert.match(run('cli-app', withApp).stdout, /room {6}#lobby \(lounge off: autochat config lounge on\)/)
 })

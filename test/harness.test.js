@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { tmpDir } from './helpers/tmp.js'
 
@@ -24,7 +24,6 @@ const env = {
   HOME: path.join(tmp, 'home'),
   AUTOCHAT_HOME: process.env.AUTOCHAT_HOME,
   COPILOT_HOME: process.env.COPILOT_HOME,
-  AUTOCHAT_LAUNCH_RECORD: path.join(tmp, 'launches.jsonl'),
   AUTOCHAT_APP_DIRS: path.join(tmp, 'no-apps'),
   AUTOCHAT_HARNESS_PATH: path.join(tmp, 'no-harnesses'),
   AUTOCHAT_DEBUG: '1'
@@ -145,35 +144,49 @@ test('Copilot adapter: hook payloads map to SessionEvents, with the mode from it
   assert.deepEqual(Object.keys(a.detect(H.harnessContext({ env }))).sort(), ['binary', 'installed', 'paths'])
 })
 
-test('autochat hook --harness: the old form is copilot; unknown harnesses are ignored quietly; the trigger config applies', () => {
+test('autochat hook --harness: the old form is copilot; unknown harnesses are ignored quietly; the trigger config applies', async (t) => {
+  // A stand-in core: what each hook sends it.
+  const { serve } = await import('../src/ipc.js')
+  const got = []
+  const server = await serve((m) => { got.push(m); return {} })
+  t.after(() => server.close())
+  const hook = (args, input) => new Promise((resolve) => {
+    const c = spawn(process.execPath, [BIN, 'hook', ...args], { env })
+    let stderr = ''
+    c.stderr.on('data', (d) => { stderr += d })
+    c.stdin.end(input)
+    c.on('close', () => {
+      const n = got.length
+      resolve({ result: JSON.parse(stderr.trim().split('\n').pop()), msg: n ? got[n - 1] : null })
+      got.length = 0
+    })
+  })
+  const fields = (m) => [m.type, m.harness, m.sessionId, m.kind, m.mode, m.autonomy]
+
   copilotSession('h-plan', 'plan')
   const payload = JSON.stringify({ sessionId: 'h-plan', toolName: 'bash', cwd: '/x' })
-  assert.equal(cli(['hook', 'preToolUse'], payload).result.action, 'ignored', 'plan mode does not count by default')
-  assert.equal(cli(['hook', '--harness', 'copilot', 'preToolUse'], payload).result.action, 'ignored')
-  assert.equal(cli(['hook', '--harness=copilot', 'preToolUse'], payload).result.action, 'ignored')
+  for (const args of [['preToolUse'], ['--harness', 'copilot', 'preToolUse'], ['--harness=copilot', 'preToolUse']]) {
+    const r = await hook(args, payload)
+    assert.equal(r.result.action, 'delivered')
+    assert.deepEqual(fields(r.msg), ['hook', 'copilot', 'h-plan', 'activity', 'plan', 'interactive'], 'plan mode does not count by default')
+  }
 
   const quiet = spawnSync(process.execPath, [BIN, 'hook', '--harness', 'nope', 'Stop'], { input: payload, env: { ...env, AUTOCHAT_DEBUG: '' }, encoding: 'utf8' })
   assert.deepEqual([quiet.status, quiet.stdout, quiet.stderr], [0, '', ''])
-  assert.equal(cli(['hook', '--harness', 'nope', 'Stop'], payload).result.action, 'unknown-harness')
-  assert.equal(cli(['hook', '--harness'], payload).result.action, 'unknown-harness')
-  assert.equal(cli(['hook', '--harness', 'claude', 'Stop'], payload).result.action, 'no-session', 'no claude session id in it')
+  assert.deepEqual(await hook(['--harness', 'nope', 'Stop'], payload), { result: { action: 'unknown-harness' }, msg: null })
+  assert.deepEqual(await hook(['--harness'], payload), { result: { action: 'unknown-harness' }, msg: null })
+  assert.deepEqual(await hook(['--harness', 'claude', 'Stop'], payload), { result: { action: 'no-session' }, msg: null }, 'no claude session id in it')
 
-  // `autochat config trigger copilot autopilot,plan`: now plan mode opens autochat.
+  // `autochat config trigger copilot autopilot,plan`: now plan mode counts as working on its own.
   const set = cli(['config', 'trigger', 'copilot', 'autopilot,plan'])
   assert.equal(set.code, 0, set.stderr)
   assert.deepEqual(JSON.parse(set.stdout).copilot, ['autopilot', 'plan'])
   assert.deepEqual(JSON.parse(cli(['config', 'trigger', 'copilot']).stdout), ['autopilot', 'plan'])
-  const r = cli(['hook', 'preToolUse'], payload, { TMUX: '/x/tmux,1,0', TMUX_PANE: '%1' })
-  assert.equal(r.result.action, 'launched')
-  assert.equal(r.stdout, '')
-  const spooled = fs.readdirSync(path.join(env.AUTOCHAT_HOME, 'run')).filter(f => f.startsWith('spool-'))
-  const msg = JSON.parse(fs.readFileSync(path.join(env.AUTOCHAT_HOME, 'run', spooled[0]), 'utf8'))
-  assert.deepEqual([msg.type, msg.harness, msg.sessionId, msg.kind, msg.mode, msg.autonomy], ['hook', 'copilot', 'h-plan', 'activity', 'plan', 'autonomous'])
+  assert.deepEqual(fields((await hook(['preToolUse'], payload)).msg), ['hook', 'copilot', 'h-plan', 'activity', 'plan', 'autonomous'])
 
   assert.equal(cli(['config', 'trigger', 'copilot', 'never']).code, 0)
-  fs.rmSync(path.join(env.AUTOCHAT_HOME, 'run'), { recursive: true, force: true })
   copilotSession('h-auto', 'autopilot')
-  assert.equal(cli(['hook', 'preToolUse'], JSON.stringify({ sessionId: 'h-auto' })).result.action, 'ignored', 'never: not even autopilot')
+  assert.equal((await hook(['preToolUse'], JSON.stringify({ sessionId: 'h-auto' }))).msg.autonomy, 'interactive', 'never: not even autopilot')
   assert.equal(cli(['config', 'trigger', 'copilot', 'default']).code, 0)
   assert.deepEqual(JSON.parse(cli(['config', 'trigger']).stdout).copilot, ['autopilot'])
   const bad = cli(['config', 'trigger', 'copilot', 'yolo'])

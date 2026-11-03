@@ -1,9 +1,7 @@
 import net from 'node:net'
-import fs from 'node:fs'
-import path from 'node:path'
 import { EventEmitter } from 'node:events'
 import { spawn } from 'node:child_process'
-import { sockPath, home } from '../paths.js'
+import { sockPath } from '../paths.js'
 import { envVar } from '../env.js'
 import { appInstalled, APP_BUNDLE_ID } from '../launcher.js'
 
@@ -172,12 +170,9 @@ export class DaemonLink extends EventEmitter {
 }
 
 // Wake AutoChat.app (it starts `autochat daemon`), only for the default AUTOCHAT_HOME, which is
-// the only one the app serves, and never while autochat is paused (launch=off).
+// the only one the app serves.
 export function wakeApp (env = process.env) {
   if (process.platform !== 'darwin' || envVar('HOME', env) || !appInstalled(env)) return false
-  try {
-    if (JSON.parse(fs.readFileSync(path.join(home(), 'config.json'), 'utf8')).launch === 'off') return false
-  } catch {}
   const child = spawn('open', ['-g', '-b', APP_BUNDLE_ID], { detached: true, stdio: 'ignore' })
   child.on('error', () => {})
   child.unref()

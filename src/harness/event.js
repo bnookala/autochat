@@ -65,7 +65,7 @@ export class SessionMap extends Map {
 export const originFrom = (env) => ({ tmux: env.TMUX, tmuxPane: env.TMUX_PANE, termProgram: env.TERM_PROGRAM, bundleId: env.__CFBundleIdentifier })
 
 /**
- * A SessionEvent as it travels on the socket (and in the spool): a `hook` message in the shape
+ * A SessionEvent as it travels on the socket: a `hook` message in the shape
  * daemons have always read (`sessionId`, Copilot's `mode`, `stop` for idle), plus the new fields.
  */
 export function hookMessage (ev, event, ts = Date.now()) {

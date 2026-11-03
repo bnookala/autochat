@@ -14,7 +14,7 @@ const BIN = path.join(ROOT, 'bin', 'autochat.js')
 const tmp = tmpDir()
 process.env.AUTOCHAT_HOME = path.join(tmp, 'ac')
 process.env.COPILOT_HOME = path.join(tmp, 'copilot')
-// The plugin's hook processes inherit this environment: none of them may open a real terminal.
+// The plugin's hook processes inherit this environment: none of them may focus a real terminal.
 process.env.AUTOCHAT_LAUNCH_RECORD = path.join(tmp, 'launches.jsonl')
 process.env.AUTOCHAT_APP_DIRS = path.join(tmp, 'no-apps')
 const H = await import('../src/harness/index.js')
@@ -379,7 +379,7 @@ test('CLI: setup offers opencode; setup --harness opencode installs the plugin, 
 
   const plain = cli('setup')
   assert.equal(plain.status, 0, plain.stderr)
-  assert.match(plain.stdout, /Also found opencode\. To go to the lounge from it too: autochat setup --harness opencode/)
+  assert.match(plain.stdout, /Also found opencode\. To hear from it too: autochat setup --harness opencode/)
   assert.deepEqual(snapshot(dir), before, 'plain setup without a terminal never touches it')
 
   const dry = cli('setup', '--harness', 'opencode', '--dry-run')
@@ -427,21 +427,30 @@ test('CLI: setup offers opencode; setup --harness opencode installs the plugin, 
   assert.deepEqual(snapshot(dir), before)
 })
 
-test('autochat hook --harness opencode: a headless run opens autochat; the TUI never does', () => {
-  const env = { ...baseEnv, HOME: path.join(tmp, 'hook-home'), AUTOCHAT_HOME: path.join(tmp, 'hook-ac'), AUTOCHAT_LAUNCH_RECORD: path.join(tmp, 'hook-launches.jsonl'), AUTOCHAT_APP_DIRS: path.join(tmp, 'no-apps'), AUTOCHAT_DEBUG: '1', TMUX: '/x/tmux,1,0', TMUX_PANE: '%1' }
-  const hook = (event, payload) => {
-    const r = spawnSync(process.execPath, [BIN, 'hook', '--harness', 'opencode', event], { input: JSON.stringify(payload), env, encoding: 'utf8' })
-    assert.equal(r.stdout, '')
-    return JSON.parse(r.stderr.trim().split('\n').pop()).action
-  }
+test('autochat hook --harness opencode: a headless run works on its own; the TUI never does', async (t) => {
+  const env = { ...baseEnv, HOME: path.join(tmp, 'hook-home'), AUTOCHAT_HOME: process.env.AUTOCHAT_HOME, AUTOCHAT_APP_DIRS: path.join(tmp, 'no-apps'), AUTOCHAT_DEBUG: '1' }
+  // A stand-in core: what each hook sends it.
+  const { serve } = await import('../src/ipc.js')
+  const got = []
+  const server = await serve((m) => { got.push(m); return {} })
+  t.after(() => server.close())
+  const hook = (event, payload) => new Promise((resolve) => {
+    const c = cp.spawn(process.execPath, [BIN, 'hook', '--harness', 'opencode', event], { env })
+    let stdout = ''
+    c.stdout.on('data', (d) => { stdout += d })
+    c.stdin.end(JSON.stringify(payload))
+    c.on('close', () => {
+      assert.equal(stdout, '')
+      resolve(got.filter(m => m.type === 'hook').pop())
+      got.length = 0
+    })
+  })
   const tui = { sessionID: 'ses_tui', agent: 'build', argv: ['/$bunfs/root/src/cli/cmd/tui/worker.js'], directory: '/w' }
-  assert.equal(hook('chat.message', { ...tui, event: 'chat.message' }), 'ignored')
-  assert.equal(hook('permission.asked', { ...tui, event: 'permission.asked', properties: { permission: 'bash', patterns: ['ls'] } }), 'ignored')
+  assert.equal((await hook('chat.message', { ...tui, event: 'chat.message' })).autonomy, 'interactive')
+  assert.equal((await hook('permission.asked', { ...tui, event: 'permission.asked', properties: { permission: 'bash', patterns: ['ls'] } })).autonomy, 'interactive')
   const run = { sessionID: 'ses_run', agent: 'build', argv: ['/$bunfs/root/src/index.js', 'run', 'x'], directory: '/w', at: 1793516097200 }
-  assert.equal(hook('session.created', { ...run, event: 'session.created' }), 'ignored', 'starting is not working')
-  assert.equal(hook('chat.message', { ...run, event: 'chat.message' }), 'launched')
-  const spool = path.join(env.AUTOCHAT_HOME, 'run')
-  const msg = JSON.parse(fs.readFileSync(path.join(spool, fs.readdirSync(spool).find(f => f.startsWith('spool-'))), 'utf8'))
+  assert.equal((await hook('session.created', { ...run, event: 'session.created' })).kind, 'start', 'starting is not working')
+  const msg = await hook('chat.message', { ...run, event: 'chat.message' })
   assert.deepEqual([msg.harness, msg.sessionId, msg.kind, msg.mode, msg.headless, msg.autonomy, msg.at], ['opencode', 'ses_run', 'activity', 'build', true, 'autonomous', 1793516097200])
 })
 
