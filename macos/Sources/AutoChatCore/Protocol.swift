@@ -21,6 +21,9 @@ public enum Command: Sendable, Equatable {
     case agentsSetupPlan
     /// Connect these harnesses (their ids) to the agent room: `result: {applied, failed}`.
     case agentsSetup(harnesses: [String])
+    /// Show the session of the agent with this card id (issue #123): its terminal, the app it
+    /// runs in, or a new tab resuming it. `result: {opened, detail}`.
+    case agentsOpen(agent: String)
 
     public var name: String {
         switch self {
@@ -36,13 +39,15 @@ public enum Command: Sendable, Equatable {
         case .dismissAttention: "dismissAttention"
         case .agentsSetupPlan: "agents.setupPlan"
         case .agentsSetup: "agents.setup"
+        case .agentsOpen: "agents.open"
         }
     }
 
     /// `{"type":"cmd","id":7,"cmd":"say","text":"lol same"}`, for an intervention
     /// `{"type":"cmd","id":2,"cmd":"agents.say","text":"…","thread":null,"to":[]}`, for the
     /// attention queue `{"type":"cmd","id":3,"cmd":"jumpTo","item":"7"}` (`id` is the command's),
-    /// and for Connect agents… `{"type":"cmd","id":4,"cmd":"agents.setup","harnesses":["codex"]}`.
+    /// for Connect agents… `{"type":"cmd","id":4,"cmd":"agents.setup","harnesses":["codex"]}`,
+    /// and for Open Session `{"type":"cmd","id":5,"cmd":"agents.open","agent":"a1b2c3d4"}`.
     public func encodedLine(id: Int) -> Data {
         struct Envelope: Encodable {
             let type = "cmd"
@@ -51,6 +56,7 @@ public enum Command: Sendable, Equatable {
             let text: String?
             var item: String?
             var harnesses: [String]?
+            var agent: String?
         }
         struct SayEnvelope: Encodable {
             let id: Int
@@ -84,6 +90,8 @@ public enum Command: Sendable, Equatable {
             data = (try? encoder.encode(Envelope(id: id, cmd: name, text: nil, item: item))) ?? Data()
         case let .agentsSetup(harnesses):
             data = (try? encoder.encode(Envelope(id: id, cmd: name, text: nil, harnesses: harnesses))) ?? Data()
+        case let .agentsOpen(agent):
+            data = (try? encoder.encode(Envelope(id: id, cmd: name, text: nil, agent: agent))) ?? Data()
         default:
             data = (try? encoder.encode(Envelope(id: id, cmd: name, text: nil))) ?? Data()
         }

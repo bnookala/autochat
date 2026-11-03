@@ -257,6 +257,14 @@ struct AgentsDecodingTests {
         #expect(Command.agentsSetup(harnesses: []).name == "agents.setup")
     }
 
+    @Test func encodesOpenSession() throws {
+        let open = Command.agentsOpen(agent: "a1b2c3d4").encodedLine(id: 6)
+        #expect(String(decoding: open, as: UTF8.self) == "{\"agent\":\"a1b2c3d4\",\"cmd\":\"agents.open\",\"id\":6,\"type\":\"cmd\"}\n")
+        #expect(Command.agentsOpen(agent: "").name == "agents.open")
+        // The other commands don't grow an agent field.
+        #expect(String(decoding: Command.agentsSetupPlan.encodedLine(id: 7), as: UTF8.self) == "{\"cmd\":\"agents.setupPlan\",\"id\":7,\"type\":\"cmd\"}\n")
+    }
+
     @Test func setupPlansAndResultsDecodeLeniently() throws {
         let plans = try #require(try JSONDecoder().decode(JSONValue.self, from: Data(#"""
         {"plans":[{"id":"copilot","name":"Copilot CLI","action":"add","where":"~/.copilot/mcp-config.json","detail":"Adds the autochat MCP server."},

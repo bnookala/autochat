@@ -18,6 +18,10 @@ public final class AgentsModel {
     public private(set) var idleExpanded = false
     /// The Connect agents… sheet (issue #65).
     public private(set) var setup = AgentsSetup()
+    /// Open Session (issue #123): the cards whose session is being opened, and why the last try
+    /// failed, by card id. A failure shows on its card for a few seconds.
+    public private(set) var opening: Set<String> = []
+    public private(set) var openErrors: [String: String] = [:]
     public var draft: String = "" {
         didSet { if draft.count > AgentsRules.maxSayLength { draft = String(draft.prefix(AgentsRules.maxSayLength)) } }
     }
@@ -38,6 +42,7 @@ public final class AgentsModel {
     @ObservationIgnored private var receivedAt: Date?
     /// Bumped per Connect agents… sheet, so a late answer can't land in a newer one.
     @ObservationIgnored private var setupRun = 0
+    @ObservationIgnored private var openErrorClears: [String: DispatchWorkItem] = [:]
 
     /// How long the subscription outlives the window, so a quick hide/show doesn't resubscribe.
     static let idleGrace: TimeInterval = 15
@@ -64,7 +69,8 @@ public final class AgentsModel {
     /// Static model for snapshot rendering: nothing connects, actions are no-ops.
     public init(
         fixture: AgentsSnapshot?, selection: AgentStream = .main, intervening: Bool = false, draft: String = "",
-        collapsedChildren: Set<String> = [], idleExpanded: Bool = false, setup: AgentsSetup = AgentsSetup()
+        collapsedChildren: Set<String> = [], idleExpanded: Bool = false, setup: AgentsSetup = AgentsSetup(),
+        openErrors: [String: String] = [:]
     ) {
         self.socketPath = nil
         self.sendOverride = nil
@@ -76,6 +82,7 @@ public final class AgentsModel {
         self.collapsedChildren = collapsedChildren
         self.idleExpanded = idleExpanded
         self.setup = setup
+        self.openErrors = openErrors
         gate.update(daemonAck: fixture?.ack ?? false)
         if intervening { gate.requestIntervene() }
     }
@@ -299,6 +306,49 @@ public final class AgentsModel {
     public func closeSetup() {
         setupRun += 1
         setup.close()
+    }
+
+    // MARK: Open Session (issue #123)
+
+    /// How long the daemon may take: finding an agent's Rex pane asks Rex about every pane.
+    static let openTimeout: TimeInterval = 20
+    /// How long a failure stays on its card.
+    @ObservationIgnored var openErrorSeconds: TimeInterval = 6
+
+    /// Open Session, in a card's context menu: `agents.open` with the card's id. The daemon
+    /// brings the agent's terminal or app to the front, or opens a tab that resumes its session;
+    /// if it can't, the card says why for a few seconds.
+    public func openSession(_ cardID: String) async {
+        guard !frozen, !opening.contains(cardID) else { return }
+        opening.insert(cardID)
+        showOpenError(nil, on: cardID)
+        defer { opening.remove(cardID) }
+        do {
+            let reply = try await send(.agentsOpen(agent: cardID), timeout: Self.openTimeout)
+            if !reply.ok { showOpenError(Self.openErrorText(reply.error), on: cardID) }
+        } catch {
+            showOpenError(error.localizedDescription, on: cardID)
+        }
+    }
+
+    /// The daemon's one-line reason, or what to do about a daemon from before `agents.open`.
+    static func openErrorText(_ error: String?) -> String {
+        guard let error = error.map({ PlainText.clean($0) }), !error.isEmpty else { return "autochat couldn't open this session." }
+        return error == "unknown command" ? "This autochat can't open sessions yet: update it." : error
+    }
+
+    private func showOpenError(_ message: String?, on cardID: String) {
+        openErrorClears.removeValue(forKey: cardID)?.cancel()
+        openErrors[cardID] = message
+        guard message != nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                self?.openErrors[cardID] = nil
+                self?.openErrorClears[cardID] = nil
+            }
+        }
+        openErrorClears[cardID] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + openErrorSeconds, execute: work)
     }
 
     private func report(_ message: String) {

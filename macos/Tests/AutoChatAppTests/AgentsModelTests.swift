@@ -489,3 +489,81 @@ struct AgentsPlainTextTests {
         #expect(AgentMessageRow.emphasis(.unknown("x")) == nil)
     }
 }
+
+@Suite("App model: open session")
+@MainActor
+struct AgentsOpenSessionTests {
+    private let card = "e5f6a7b8"
+
+    @Test func openSessionSendsAgentsOpenWithTheCardsID() async {
+        let daemon = FakeAgentsDaemon()
+        daemon.replies["agents.open"] = Reply(id: 1, ok: true, result: try? JSONDecoder().decode(JSONValue.self, from: Data(#"{"opened":"rex","detail":"its Rex pane"}"#.utf8)))
+        let model = AgentsModel(send: { try await daemon.send($0) })
+        model.apply(Fixtures.agents(now: Date()))
+        await model.openSession(card)
+        #expect(daemon.sent == [.agentsOpen(agent: card)])
+        #expect(model.openErrors.isEmpty)
+        #expect(model.opening.isEmpty)
+        #expect(model.lastError == nil, "the intervention bar's error is for interventions")
+    }
+
+    @Test func aRefusalShowsOnItsCardForAFewSeconds() async throws {
+        let daemon = FakeAgentsDaemon()
+        daemon.replies["agents.open"] = Reply(id: 1, ok: false, error: "claude-web runs in a terminal autochat can't find (ttys011)")
+        let model = AgentsModel(send: { try await daemon.send($0) })
+        model.apply(Fixtures.agents(now: Date()))
+        await model.openSession(card)
+        #expect(model.openErrors == [card: "claude-web runs in a terminal autochat can't find (ttys011)"])
+        #expect(model.openErrors["a1b2c3d4"] == nil, "only on that card")
+        // Trying again clears it while the daemon thinks; success leaves it clear.
+        daemon.replies["agents.open"] = nil
+        await model.openSession(card)
+        #expect(model.openErrors.isEmpty)
+        // It goes by itself (after 6 s; here, sooner).
+        #expect(model.openErrorSeconds == 6)
+        model.openErrorSeconds = 0.2
+        daemon.replies["agents.open"] = Reply(id: 3, ok: false, error: "x")
+        await model.openSession(card)
+        #expect(model.openErrors[card] == "x")
+        let deadline = Date().addingTimeInterval(5)
+        while model.openErrors[card] != nil, Date() < deadline { try await Task.sleep(nanoseconds: 100_000_000) }
+        #expect(model.openErrors[card] == nil)
+    }
+
+    @Test func oldDaemonsAndTransportFailuresSaySo() async {
+        let model = AgentsModel(send: { _ in Reply(id: 1, ok: false, error: "unknown command") })
+        await model.openSession(card)
+        #expect(model.openErrors[card] == "This autochat can't open sessions yet: update it.")
+        let gone = AgentsModel(send: { _ in throw CommandError.disconnected })
+        await gone.openSession(card)
+        #expect(gone.openErrors[card] == CommandError.disconnected.localizedDescription)
+        #expect(AgentsModel.openErrorText(nil) == "autochat couldn't open this session.")
+        #expect(AgentsModel.openErrorText("bad\u{202E}\nline") == "bad line", "plain text, one line")
+    }
+
+    @Test func oneOpenAtATimePerCard() async {
+        let gate = ReplyGate()
+        var sent: [Command] = []
+        let model = AgentsModel(send: { command in
+            sent.append(command)
+            await gate.wait()
+            return Reply(id: 1, ok: true)
+        })
+        let first = Task { await model.openSession(card) }
+        while !gate.isWaiting { await Task.yield() }
+        #expect(model.opening == [card])
+        await model.openSession(card)
+        #expect(sent.count == 1, "a second click while the first is on its way does nothing")
+        gate.open()
+        await first.value
+        #expect(model.opening.isEmpty)
+    }
+
+    @Test func fixturesNeverSendButCanShowAnError() async {
+        let model = AgentsModel(fixture: Fixtures.agents(now: Date()), openErrors: [card: "no terminal"])
+        await model.openSession(card)
+        #expect(model.opening.isEmpty)
+        #expect(model.openErrors == [card: "no terminal"])
+        #expect(AgentCardView.openTitle == "Open Session")
+    }
+}

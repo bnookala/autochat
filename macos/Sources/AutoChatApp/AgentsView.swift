@@ -131,8 +131,13 @@ private struct AgentsSidebar: View {
                         ForEach(agents.boardRows) { row in
                             switch row {
                             case let .card(card, depth):
-                                AgentCardView(card: card, now: now, tier: snapshot.tier)
-                                    .padding(.leading, AgentsSidebarLayout.indent(depth))
+                                AgentCardView(
+                                    card: card, now: now, tier: snapshot.tier,
+                                    openError: agents.openErrors[card.id], opening: agents.opening.contains(card.id)
+                                ) {
+                                    Task { await agents.openSession(card.id) }
+                                }
+                                .padding(.leading, AgentsSidebarLayout.indent(depth))
                             case let .children(parent, count, depth, expanded):
                                 BoardDisclosure(title: AgentsRules.childrenLabel(count), expanded: expanded) {
                                     agents.toggleChildren(of: parent)
@@ -297,6 +302,14 @@ struct AgentCardView: View {
     /// The daemon's clock, for "left 4 min ago".
     var now: Date?
     var tier: String? = "local"
+    /// Why Open Session failed just now (issue #123), shown under the card for a few seconds.
+    var openError: String?
+    /// Open Session is on its way: the menu item waits for the answer.
+    var opening = false
+    /// Open Session, in the card's context menu; no menu without it.
+    var onOpen: (() -> Void)?
+
+    static let openTitle = "Open Session"
 
     var body: some View {
         let label = AgentsRules.cardLabel(card, tier: tier)
@@ -344,6 +357,17 @@ struct AgentCardView: View {
                 .foregroundStyle(Theme.overlap)
                 .lineLimit(2)
             }
+            if let openError {
+                Label {
+                    Text(verbatim: openError)
+                } icon: {
+                    Image(systemName: "exclamationmark.circle.fill")
+                }
+                .font(.caption)
+                .foregroundStyle(Palette.red)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -352,6 +376,7 @@ struct AgentCardView: View {
         .opacity(Self.opacity(card.presence))
         .help(help(label))
         .accessibilityElement(children: .combine)
+        .modifier(OpenSessionMenu(opening: opening, action: onOpen))
     }
 
     /// The title with its handle beside it when both fit on a line, else the handle on its own
@@ -425,7 +450,30 @@ struct AgentCardView: View {
         case .left: if let leftAt = card.leftAt { lines.append("Left at \(AgentText.time(leftAt))") }
         }
         if let focus = AgentsRules.focusHelp(card) { lines.append(focus) }
+        if onOpen != nil { lines.append("Right-click to open its session.") }
         return lines.joined(separator: "\n")
+    }
+}
+
+/// Open Session (issue #123): an agent card's context menu, and the same action for VoiceOver.
+/// Cards have no ⋯ button, so the context menu is the only menu.
+private struct OpenSessionMenu: ViewModifier {
+    let opening: Bool
+    let action: (() -> Void)?
+
+    func body(content: Content) -> some View {
+        if let action {
+            content
+                .contextMenu {
+                    Button(action: action) {
+                        Label(AgentCardView.openTitle, systemImage: "terminal")
+                    }
+                    .disabled(opening)
+                }
+                .accessibilityAction(named: AgentCardView.openTitle, action)
+        } else {
+            content
+        }
     }
 }
 
