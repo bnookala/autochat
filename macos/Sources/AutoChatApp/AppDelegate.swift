@@ -49,6 +49,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         // (⌘C, ⌘V, ⌘W…) work in the chat either way.
         NSApp.mainMenu = MainMenu.make()
         model.start()
+        LoginItem.enableOnFirstLaunch()
     }
 
     public func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

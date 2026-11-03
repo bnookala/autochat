@@ -2,7 +2,7 @@ export const APP_INSTALL_URL = 'https://github.com/bnookala/autochat#macos-menu-
 export const APP_INSTALL_STEPS = [
   'git clone https://github.com/bnookala/autochat && cd autochat',
   'macos/scripts/build-app.sh --install    # → ~/Applications/AutoChat.app',
-  'open ~/Applications/AutoChat.app        # then turn on Launch at Login in its menu'
+  'open ~/Applications/AutoChat.app        # it opens at login from then on'
 ]
 
 // Copilot CLI's hooks are part of its adapter now (src/harness/copilot.js).
