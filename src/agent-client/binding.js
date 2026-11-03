@@ -7,8 +7,9 @@ import { envVar } from '../env.js'
 import { sanitize } from '../text.js'
 import { findSecret } from '../secrets.js'
 
-// The session binding: which harness runs us (its process, its session id), the git facts for
-// the agent's hello and card, and the paths it touches (auto paths for `status`).
+// The session binding: which harness runs us (its process, its session id, where it shows the
+// session), the git facts for the agent's hello and card, and the paths it touches (auto paths for
+// `status`).
 
 export const HARNESSES = ['copilot', 'claude', 'codex', 'opencode', 'gemini', 'pi']
 
@@ -41,16 +42,31 @@ export function matchHarness (command) {
   return null
 }
 
-// pid → {ppid, command} for every process, from one `ps` call.
+// pid → {ppid, tty, command} for every process, from one `ps` call. tty is null without one.
 export function psTable () {
   if (process.platform === 'win32') return new Map()
-  const r = spawnSync('ps', ['-A', '-ww', '-o', 'pid=,ppid=,command='], { encoding: 'utf8', timeout: 3000, maxBuffer: 32 * 1024 * 1024 })
+  const r = spawnSync('ps', ['-A', '-ww', '-o', 'pid=,ppid=,tty=,command='], { encoding: 'utf8', timeout: 3000, maxBuffer: 32 * 1024 * 1024 })
+  return parsePs(r.stdout)
+}
+
+/** `ps -o pid=,ppid=,tty=,command=` output as a table (psTable). */
+export function parsePs (out) {
   const table = new Map()
-  for (const line of (r.stdout || '').split('\n')) {
-    const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line)
-    if (m) table.set(Number(m[1]), { ppid: Number(m[2]), command: m[3] })
+  for (const line of String(out || '').split('\n')) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(\S+)(?:\s+(.*))?$/.exec(line)
+    if (m) table.set(Number(m[1]), { ppid: Number(m[2]), tty: ttyName(m[3]), command: m[4] || '' })
   }
   return table
+}
+
+// A terminal's name as ps prints it (ttys001 on macOS, pts/3 on Linux), or null for none (??).
+const ttyName = (t) => typeof t === 'string' && /^(?:tty[\w]{1,12}|pts\/\d{1,6}|console)$/.test(t) ? t : null
+
+/** One process's terminal (psTable's tty), or null. */
+export function processTty (pid) {
+  if (process.platform === 'win32' || !(pid > 0)) return null
+  const r = spawnSync('ps', ['-o', 'tty=', '-p', String(pid)], { encoding: 'utf8', timeout: 3000 })
+  return ttyName((r.stdout || '').trim())
 }
 
 function ancestors (table, pid) {
@@ -163,8 +179,42 @@ export function sessionTitle ({ harness, sessionId = null, env = process.env }) 
   }
 }
 
+/**
+ * Where the harness shows its session (docs/agent-room/hello.md), for `agents.open`: from the env
+ * the client inherited from its harness, and the harness process's terminal. Every field is null
+ * when unknown.
+ *   rex       {session, block}  REX_SESSION, REX_BLOCK: the Rex pane it was started in
+ *   tmux      {socket, pane}    TMUX (its socket path), TMUX_PANE
+ *   program   TERM_PROGRAM      bundleId  __CFBundleIdentifier (the app it was started from)
+ *   tty       the harness's terminal, as ps names it (ttys001)
+ */
+export function terminalInfo ({ env = process.env, tty = null } = {}) {
+  const str = (v, re) => typeof v === 'string' && re.test(v) ? v : null
+  const rex = { session: str(env.REX_SESSION, /^session:[\w-]{1,80}$/), block: str(env.REX_BLOCK, /^block:[\w-]{1,80}$/) }
+  const socket = typeof env.TMUX === 'string' ? env.TMUX.split(',')[0] : ''
+  const pane = str(env.TMUX_PANE, /^%\d{1,9}$/)
+  return {
+    rex: rex.session && rex.block ? rex : null,
+    tmux: pane && path.isAbsolute(socket) && socket.length <= 300 ? { socket, pane } : null,
+    program: str(env.TERM_PROGRAM, /^[\w .+-]{1,40}$/),
+    bundleId: str(env.__CFBundleIdentifier, /^[A-Za-z0-9.-]{1,100}$/),
+    tty: ttyName(tty)
+  }
+}
+
+/**
+ * The harness's session id from a tool call's `_meta`, for harnesses that start MCP servers
+ * without it: Codex sends `sessionId` and `threadId` (and its turn metadata's `session_id`) with
+ * every tool call. Null when there's none.
+ */
+export function metaSessionId (harness, meta) {
+  if (harness !== 'codex' || !meta || typeof meta !== 'object') return null
+  const turn = meta['x-codex-turn-metadata']
+  return [meta.sessionId, meta.threadId, turn && typeof turn === 'object' ? turn.session_id : null].find(isValidSessionId) || null
+}
+
 /** The agent-hello line (docs/agent-room/hello.md): who the agent is and where it works. */
-export function agentHello ({ harness, pid, harnessPid = null, sessionId = null, cwd, git: g = gitInfo(cwd), env = process.env, title = null }) {
+export function agentHello ({ harness, pid, harnessPid = null, sessionId = null, cwd, git: g = gitInfo(cwd), env = process.env, title = null, terminal = terminalInfo({ env }) }) {
   return {
     type: 'agent-hello',
     v: 1,
@@ -178,6 +228,7 @@ export function agentHello ({ harness, pid, harnessPid = null, sessionId = null,
     branch: g.branch,
     worktree: g.worktree,
     title,
+    terminal,
     resume: null
   }
 }
@@ -185,13 +236,15 @@ export function agentHello ({ harness, pid, harnessPid = null, sessionId = null,
 /**
  * Who we are: harness (--harness, else the nearest harness among our ancestor processes, else
  * env hints, else "agent"), the harness pid, its session id when the env exposes one, its title
- * when we can read it, and the git facts. Builds the agent-hello line.
+ * when we can read it, where it shows the session (terminalInfo), and the git facts. Builds the
+ * agent-hello line.
  */
 export function bindSession ({ harness: flag = null, env = process.env, cwd = process.cwd(), ps = psTable, pid = process.pid } = {}) {
   let harness = flag ? String(flag).toLowerCase().replace(/[^a-z0-9-]+/g, '-').slice(0, 20) : null
   let harnessPid = null
+  let table = new Map()
   let chain = []
-  try { chain = ancestors(ps(), pid) } catch {}
+  try { table = ps(); chain = ancestors(table, pid) } catch {}
   for (const a of chain) {
     const h = matchHarness(a.command)
     if (h && (!harness || h === harness)) {
@@ -207,6 +260,7 @@ export function bindSession ({ harness: flag = null, env = process.env, cwd = pr
   const g = gitInfo(cwd)
   // Sessions often get their title after the harness starts us: the status tool reads it again.
   const readTitle = () => sessionTitle({ harness, sessionId, env })
+  const terminal = terminalInfo({ env, tty: harnessPid ? table.get(harnessPid)?.tty : null })
   return {
     harness,
     harnessPid,
@@ -214,7 +268,7 @@ export function bindSession ({ harness: flag = null, env = process.env, cwd = pr
     cwd,
     top: g.top,
     readTitle,
-    hello: agentHello({ harness, pid, harnessPid, sessionId, cwd, git: g, env, title: readTitle() })
+    hello: agentHello({ harness, pid, harnessPid, sessionId, cwd, git: g, env, title: readTitle(), terminal })
   }
 }
 

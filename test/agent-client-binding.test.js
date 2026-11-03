@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process'
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'autochat-binding-'))
 process.env.AUTOCHAT_HOME = path.join(tmp, 'ac')
-const { matchHarness, parseRemote, bindSession, changedPaths, parseStatusV2, livePaths, syncLivePaths } = await import('../src/agent-client.js')
+const { matchHarness, parseRemote, bindSession, changedPaths, parseStatusV2, livePaths, syncLivePaths, parsePs, terminalInfo, metaSessionId } = await import('../src/agent-client.js')
 
 test('harness detection: package paths and binaries; remotes → owner/repo', () => {
   assert.equal(matchHarness('node /Users/me/.nvm/versions/node/v22/bin/copilot --autopilot'), 'copilot')
@@ -71,7 +71,7 @@ test('session titles: Copilot\'s session name from its workspace.yaml, in the he
   assert.equal(unnamed.readTitle(), 'Lolchat macos menu bar app', 'read again later')
   const named = bindSession({ harness: 'copilot', env, cwd: none, ps: () => new Map(), pid: 100 })
   assert.equal(named.hello.title, 'Lolchat macos menu bar app')
-  assert.deepEqual(Object.keys(named.hello), ['type', 'v', 'harness', 'name', 'pid', 'harnessPid', 'sessionId', 'cwd', 'repo', 'branch', 'worktree', 'title', 'resume'])
+  assert.deepEqual(Object.keys(named.hello), ['type', 'v', 'harness', 'name', 'pid', 'harnessPid', 'sessionId', 'cwd', 'repo', 'branch', 'worktree', 'title', 'terminal', 'resume'])
   assert.equal(bindSession({ harness: 'claude', env: { ...env, CLAUDE_CODE_SESSION_ID: sid }, cwd: none, ps: () => new Map(), pid: 100 }).hello.title, null, 'only Copilot\'s')
   assert.equal(sessionTitle({ harness: 'copilot', sessionId: '../../etc', env }), null, 'session ids are checked')
   fs.writeFileSync(path.join(ws, 'workspace.yaml'), `name: "${'x'.repeat(120)}"\n`)
@@ -291,4 +291,50 @@ test('syncLivePaths: the timer runs while connected, stops on disconnect; a reco
   await sleep(20)
   assert.deepEqual(quiet.sent, [])
   for (const s of [live, off]) s.stop()
+})
+
+test('the hello\'s terminal: Rex, tmux, the terminal app and the harness\'s tty, from the env and ps (#122)', () => {
+  const env = {
+    REX_SESSION: 'session:01a18e77-270d-7599-92f7-ff984bb533dc',
+    REX_BLOCK: 'block:01a18e77-2718-7afc-b295-431aa6bd8c6f',
+    TMUX: '/private/tmp/tmux-501/default,12345,0',
+    TMUX_PANE: '%3',
+    TERM_PROGRAM: 'iTerm.app',
+    __CFBundleIdentifier: 'com.googlecode.iterm2'
+  }
+  assert.deepEqual(terminalInfo({ env, tty: 'ttys002' }), {
+    rex: { session: env.REX_SESSION, block: env.REX_BLOCK },
+    tmux: { socket: '/private/tmp/tmux-501/default', pane: '%3' },
+    program: 'iTerm.app',
+    bundleId: 'com.googlecode.iterm2',
+    tty: 'ttys002'
+  })
+  const none = { rex: null, tmux: null, program: null, bundleId: null, tty: null }
+  assert.deepEqual(terminalInfo({ env: {} }), none)
+  assert.deepEqual(terminalInfo({ env: { REX_SESSION: env.REX_SESSION }, tty: '??' }), none, 'a Rex pane needs both; ?? is no terminal')
+  assert.deepEqual(terminalInfo({ env: { REX_SESSION: 'session:$(x)', REX_BLOCK: env.REX_BLOCK, TMUX: 'rel/sock,1,0', TMUX_PANE: '%3', __CFBundleIdentifier: 'a b' } }), none)
+
+  // ps: pid, ppid, tty and command; the harness's tty goes into the hello.
+  const ps = '  100    90 ttys002  node /x/bin/autochat.js mcp\n   90    80 ttys002  /bin/sh -c node x\n   80    70 ttys002  claude\n   70     1 ??       /sbin/launchd-ish\n  60 1 ??\n'
+  const table = parsePs(ps)
+  assert.deepEqual(table.get(80), { ppid: 70, tty: 'ttys002', command: 'claude' })
+  assert.deepEqual(table.get(70), { ppid: 1, tty: null, command: '/sbin/launchd-ish' })
+  assert.deepEqual(table.get(60), { ppid: 1, tty: null, command: '' })
+  assert.equal(parsePs('    7 1 pts/3 vim').get(7).tty, 'pts/3')
+  const none2 = path.join(tmp, 'not-a-repo-2')
+  fs.mkdirSync(none2, { recursive: true })
+  const s = bindSession({ env: { TERM_PROGRAM: 'Apple_Terminal' }, cwd: none2, ps: () => table, pid: 100 })
+  assert.deepEqual([s.harness, s.harnessPid, s.hello.terminal], ['claude', 80, { ...none, program: 'Apple_Terminal', tty: 'ttys002' }])
+})
+
+test('Codex\'s session id, from a tool call\'s _meta (#122)', () => {
+  const id = '01a19f95-d3ba-70d1-9923-51b76cd8291f'
+  // As Codex 0.166.0 sends it (recorded).
+  const meta = { callId: 'call_4', 'x-codex-turn-metadata': { session_id: id, thread_id: id, turn_id: '01a19f8b-4b0c', sandbox: 'seatbelt' }, threadId: id, sessionId: id, windowId: `${id}:0`, itemId: 'fc_4', progressToken: 1 }
+  assert.equal(metaSessionId('codex', meta), id)
+  assert.equal(metaSessionId('codex', { threadId: id }), id)
+  assert.equal(metaSessionId('codex', { 'x-codex-turn-metadata': { session_id: id } }), id)
+  assert.equal(metaSessionId('codex', { sessionId: '../x' }), null)
+  assert.equal(metaSessionId('codex', null), null)
+  assert.equal(metaSessionId('copilot', meta), null, 'only Codex: the others send theirs in the env')
 })

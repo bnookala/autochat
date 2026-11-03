@@ -1,10 +1,28 @@
-import { AGENT_PROTOCOL, TIER, hex, isStr, int } from './limits.js'
+import { AGENT_PROTOCOL, TIER, hex, isStr, int, fail } from './limits.js'
 import { normalizeName, defaultName, dedupeName } from './names.js'
 import { pathIndex } from './overlap.js'
 import { sanitize } from '../text.js'
 
 // Hello: an agent connects, its hello is parsed, it gets a welcome and a resume token, and a
 // resume reclaims the same agent. See docs/agent-room/hello.md.
+
+const SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/
+
+// The hello's `terminal`: where the harness shows its session, for agents.open (human.js). Kept
+// on the agent only: it's on no card and in no snapshot. A field that doesn't look right is null.
+function terminalOf (t) {
+  if (!t || typeof t !== 'object' || Array.isArray(t)) return null
+  const str = (v, re) => isStr(v) && re.test(v) ? v : null
+  const rex = t.rex && typeof t.rex === 'object' ? { session: str(t.rex.session, /^session:[\w-]{1,80}$/), block: str(t.rex.block, /^block:[\w-]{1,80}$/) } : {}
+  const tmux = t.tmux && typeof t.tmux === 'object' ? { socket: str(t.tmux.socket, /^\/[^\0\n]{0,299}$/), pane: str(t.tmux.pane, /^%\d{1,9}$/) } : {}
+  return {
+    rex: rex.session && rex.block ? rex : null,
+    tmux: tmux.socket && tmux.pane ? tmux : null,
+    program: str(t.program, /^[\w .+-]{1,40}$/),
+    bundleId: str(t.bundleId, /^[A-Za-z0-9.-]{1,100}$/),
+    tty: str(t.tty, /^(?:tty\w{1,12}|pts\/\d{1,6}|console)$/)
+  }
+}
 
 export const methods = {
   /**
@@ -98,8 +116,21 @@ export const methods = {
       cwd: str(h.cwd, 300),
       repo,
       branch: str(h.branch, 200),
-      worktree: str(h.worktree, 100)
+      worktree: str(h.worktree, 100),
+      terminal: terminalOf(h.terminal)
     }
+  },
+
+  // `session`: the harness's session id, when the client learns it after its hello (Codex's tool
+  // calls carry it). The doorbell's index follows.
+  _session (agent, msg) {
+    const id = isStr(msg.sessionId) && SESSION_ID.test(msg.sessionId) ? msg.sessionId : null
+    if (!id) fail('sessionId must be a session id')
+    if (id !== agent.sessionId) {
+      agent.sessionId = id
+      this._indexHello(agent)
+    }
+    return {}
   },
 
   _newAgentId () {
@@ -182,6 +213,7 @@ export const methods = {
 export function register (r) {
   // Resume tokens → agent ids, while an agent can still resume.
   r.on('init', function () { this.tokens = new Map() })
+  r.command('session', methods._session)
   // board.js: a first status makes the agent active. Registered here, before overlap.js, so its
   // "<name> joined" comes before that status's overlap notices.
   r.on('status', function (agent) { this._activate(agent) })

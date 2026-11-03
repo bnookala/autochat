@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { envVar } from './env.js'
-import { INSTRUCTIONS, TOOLS, bindSession, DaemonLink, Tools, syncLivePaths } from './agent-client.js'
+import { INSTRUCTIONS, TOOLS, bindSession, metaSessionId, DaemonLink, Tools, syncLivePaths } from './agent-client.js'
 
 // `autochat mcp`: a stdio MCP server, one per agent session, started by the harness. It's a
 // thin client of the daemon's agent protocol (docs/protocol.md, "Agent room (local)") over
@@ -39,10 +39,12 @@ const rpcError = (id, code, message, data) => ({ jsonrpc: '2.0', id: id ?? null,
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 
 export class McpServer {
-  constructor ({ tools, write, log = () => {} }) {
+  constructor ({ tools, write, log = () => {}, onToolMeta = () => {} }) {
     this.tools = tools
     this.write = write
     this.log = log
+    // Sees each tools/call's `_meta` before the call runs (runMcp: Codex's session id).
+    this.onToolMeta = onToolMeta
     this.inflight = new Map()
     this.legacyVersion = null
   }
@@ -133,6 +135,7 @@ export class McpServer {
         if (!TOOL_NAMES.has(name)) return rpcError(id, -32602, `Unknown tool: ${name}`)
         const args = params.arguments ?? {}
         if (!isObj(args)) return rpcError(id, -32602, 'Invalid params: arguments must be an object')
+        try { this.onToolMeta(isObj(params._meta) ? params._meta : null) } catch {}
         const result = await this.tools.call(name, args, cancelled)
         return result === null ? null : ok(result)
       }
@@ -152,7 +155,21 @@ export async function runMcp ({ harness = null, stdin = process.stdin, stdout = 
   // While connected, the files changed in git go to the card as live paths (#56).
   const live = syncLivePaths({ link, top: session.top, env, log })
   const tools = new Tools({ link, session, onCall: live.poke })
-  const server = new McpServer({ tools, log, write: (obj) => stdout.write(JSON.stringify(obj) + '\n') })
+  // Codex starts MCP servers without its session id, but its tool calls carry it: the hello of a
+  // later (re)connect has it, and `session` tells the daemon now (docs/agent-room/hello.md).
+  let learned = null
+  const tell = () => { if (learned && link.connected) link.request('session', { sessionId: learned }).catch(() => {}) }
+  link.on('connected', tell)
+  const onToolMeta = (meta) => {
+    const id = metaSessionId(session.harness, meta)
+    if (!id || id === link.hello.sessionId) return
+    learned = id
+    session.sessionId = id
+    link.hello = { ...link.hello, sessionId: id }
+    log(`session id from the tool call: ${id}`)
+    tell()
+  }
+  const server = new McpServer({ tools, log, onToolMeta, write: (obj) => stdout.write(JSON.stringify(obj) + '\n') })
   let joinTimer = null
   const joinSoon = () => {
     if (joinTimer) return

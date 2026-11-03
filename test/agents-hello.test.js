@@ -229,3 +229,76 @@ test('an idle agent\'s name follows a title that comes later, until it speaks, p
   assert.equal(ok(await g.cmd('status', { title: 'Signup form' })).card.name, 'repo-g')
   for (const x of [a, b2, c2, d, e, f, g]) x.close()
 })
+
+test('the hello\'s terminal: kept on the agent only, each field checked; `session` sets a session id learned later (Codex)', async (t) => {
+  const { room } = await start(t)
+  const terminal = { rex: { session: 'session:01a1-x', block: 'block:01a1-y' }, tmux: { socket: '/private/tmp/tmux-501/default', pane: '%3' }, program: 'Apple_Terminal', bundleId: 'com.apple.Terminal', tty: 'ttys004' }
+  const a = await agent({ harness: 'claude', terminal })
+  const agentOf = (c) => room.agents.get(c.welcome.agent.id)
+  assert.deepEqual(agentOf(a).terminal, terminal)
+  for (const [bad, field] of [
+    [{ ...terminal, rex: { session: 'session:x; rm -rf ~', block: 'block:y' } }, 'rex'],
+    [{ ...terminal, tmux: { socket: 'relative/sock', pane: '%3' } }, 'tmux'],
+    [{ ...terminal, tmux: { socket: '/s', pane: '3' } }, 'tmux'],
+    [{ ...terminal, program: 'x'.repeat(41) }, 'program'],
+    [{ ...terminal, bundleId: 'com.x;y' }, 'bundleId'],
+    [{ ...terminal, tty: '??' }, 'tty']
+  ]) {
+    const b = await agent({ harness: 'claude', terminal: bad, pid: 9000 })
+    assert.equal(agentOf(b).terminal[field], null, field)
+    b.close()
+  }
+  for (const odd of [null, 'ttys001', [1], { toString: 0 }]) {
+    const b = await agent({ harness: 'claude', terminal: odd, pid: 9001 })
+    const kept = agentOf(b).terminal
+    assert.ok(kept === null || Object.values(kept).every(v => v === null), JSON.stringify(odd))
+    b.close()
+  }
+  assert.ok(!JSON.stringify(room.snapshot()).includes('ttys004'), 'on no card')
+
+  // Codex starts MCP servers without its session id: the client sends it at its first tool call,
+  // and the doorbell finds the agent by it from then on.
+  const c = await agent({ harness: 'codex', sessionId: null, harnessPid: 7000, pid: 7001 })
+  const d = await agent({ harness: 'codex', sessionId: null, harnessPid: 7000, pid: 7002, branch: 'two' })
+  assert.deepEqual(ok(await c.cmd('session', { sessionId: '01a19f95-d3ba-70d1-9923-51b76cd8291f' })), {})
+  assert.equal(agentOf(c).sessionId, '01a19f95-d3ba-70d1-9923-51b76cd8291f')
+  assert.equal(room._sessionAgent({ harness: 'codex', sessionId: '01a19f95-d3ba-70d1-9923-51b76cd8291f', pid: 1 })?.id, c.welcome.agent.id, 'not the one that joined last (d)')
+  for (const sessionId of [undefined, '', 'a b', 'x'.repeat(129), 7]) {
+    assert.equal((await c.cmd('session', { sessionId })).error, 'sessionId must be a session id')
+  }
+  assert.equal(agentOf(c).sessionId, '01a19f95-d3ba-70d1-9923-51b76cd8291f')
+  for (const x of [a, c, d]) x.close()
+})
+
+test('autochat mcp under Codex: the session id from the first tool call\'s _meta reaches the daemon (`session`), and later hellos', async (t) => {
+  const { PassThrough } = await import('node:stream')
+  const { runMcp } = await import('../src/mcp.js')
+  const { room } = await start(t)
+  const stdin = new PassThrough()
+  const stdout = new PassThrough()
+  const out = []
+  let buf = ''
+  stdout.setEncoding('utf8')
+  stdout.on('data', (d) => {
+    buf += d
+    for (let i; (i = buf.indexOf('\n')) !== -1; buf = buf.slice(i + 1)) out.push(JSON.parse(buf.slice(0, i)))
+  })
+  const env = { ...process.env, AUTOCHAT_AGENT_PATHS_MS: '0', AUTOCHAT_AGENT_NAME: 'codex-meta' }
+  const { link, done } = await runMcp({ harness: 'codex', stdin, stdout, env, presenceDelayMs: 20 })
+  t.after(() => { stdin.end(); return done })
+  const reply = async (id) => { for (let i = 0; i < 200; i++) { const m = out.find(x => x.id === id); if (m) return m; await sleep(10) } throw new Error(`no reply ${id}`) }
+  stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'codex-mcp-client', version: '0.166.0' } } }) + '\n')
+  await reply(1)
+  const mine = () => [...room.agents.values()].find(a => a.name === 'codex-meta')
+  for (let i = 0; i < 200 && !mine(); i++) await sleep(10)
+  assert.equal(mine().sessionId, null, 'Codex starts MCP servers without its session id')
+
+  const id = '01a19f95-d3ba-70d1-9923-51b76cd8291f'
+  const meta = { callId: 'call_4', 'x-codex-turn-metadata': { session_id: id, thread_id: id }, threadId: id, sessionId: id, progressToken: 1 }
+  stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'catch_up', arguments: {}, _meta: meta } }) + '\n')
+  const r = await reply(2)
+  assert.ok(!r.result.isError, JSON.stringify(r))
+  assert.equal(mine().sessionId, id, 'sent before the tool call')
+  assert.equal(link.hello.sessionId, id, 'and in the hello of a reconnect')
+  assert.equal(room._sessionAgent({ harness: 'codex', sessionId: id, pid: 1 })?.name, 'codex-meta')
+})

@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import { spawn } from 'node:child_process'
 import { envVar } from '../env.js'
 import { TOOLS, instructions, agentHello, gitInfo, DaemonLink, Tools, syncLivePaths } from '../agent-client.js'
-import { titleLine } from '../agent-client/binding.js'
+import { titleLine, terminalInfo, processTty } from '../agent-client/binding.js'
 import { ring as ringDoorbell } from '../doorbell.js'
 
 // The autochat extension for pi (#35). pi has no hooks and no MCP, so the stub that autochat
@@ -196,7 +196,9 @@ function agentRoom (pi, { env, log, joinDelayMs = JOIN_DELAY_MS }) {
     try { cwd = fs.realpathSync(cwd) } catch {}
     const git = gitInfo(cwd)
     const sessionId = ctx.sessionManager?.getSessionId?.() ?? null
-    const hello = agentHello({ harness: 'pi', pid: process.pid, harnessPid: process.pid, sessionId, cwd, git, env, title: sessionName(ctx) })
+    // Where pi shows the session (agents.open): pi's own env and terminal.
+    const terminal = terminalInfo({ env, tty: processTty(process.pid) })
+    const hello = agentHello({ harness: 'pi', pid: process.pid, harnessPid: process.pid, sessionId, cwd, git, env, title: sessionName(ctx), terminal })
     link = new DaemonLink({ hello, env, log })
     if (sessionId) {
       link.token = resumeTokens().get(sessionId) ?? null
